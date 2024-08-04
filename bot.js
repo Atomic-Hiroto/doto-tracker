@@ -83,7 +83,7 @@ async function unregisterUser(message) {
 
 
 async function checkNewMatches() {
-  const guild = client.guilds.cache.first(); // Get the first guild the bot is in
+  const guild = client.guilds.cache.first();
   if (!guild) {
     console.error('Bot is not in any guild');
     return;
@@ -95,6 +95,8 @@ async function checkNewMatches() {
     return;
   }
 
+  const recentMatches = new Map();
+
   for (const [discordId, steamId] of users) {
     try {
       const response = await axios.get(`https://api.opendota.com/api/players/${steamId}/recentMatches`);
@@ -102,10 +104,22 @@ async function checkNewMatches() {
 
       if (!lastCheckedMatch.has(discordId) || lastCheckedMatch.get(discordId) !== recentMatch.match_id) {
         lastCheckedMatch.set(discordId, recentMatch.match_id);
-        await displayMatchStats(discordId, recentMatch, channel);
+        
+        if (!recentMatches.has(recentMatch.match_id)) {
+          recentMatches.set(recentMatch.match_id, []);
+        }
+        recentMatches.get(recentMatch.match_id).push({ discordId, steamId, match: recentMatch });
       }
     } catch (error) {
       console.error(`Error fetching recent matches for user ${discordId}:`, error);
+    }
+  }
+
+  for (const [matchId, players] of recentMatches) {
+    if (players.length > 1) {
+      await displayCombinedScoreboard(matchId, players, channel);
+    } else {
+      await displayMatchStats(players[0].discordId, players[0].match, channel);
     }
   }
 
@@ -157,7 +171,8 @@ async function displayMatchStats(discordId, match, channel) {
       { name: 'Duration', value: `${Math.floor(match.duration / 60)}:${(match.duration % 60).toString().padStart(2, '0')}`, inline: true }
     )
     .setTimestamp()
-    .setFooter({ text: `Match ID: ${match.match_id}` });
+    .setFooter({ text: `Match ID: ${match.match_id}` })
+    .setURL(`https://www.opendota.com/matches/${match.match_id}`);
 
   try {
     await channel.send({ embeds: [embed] });
@@ -166,6 +181,43 @@ async function displayMatchStats(discordId, match, channel) {
   }
 }
 
+async function displayCombinedScoreboard(matchId, players, channel) {
+  try {
+    const response = await axios.get(`https://api.opendota.com/api/matches/${matchId}`);
+    const match = response.data;
+
+    const radiantPlayers = match.players.filter(p => p.isRadiant);
+    const direPlayers = match.players.filter(p => !p.isRadiant);
+
+    const formatPlayer = (player) => {
+      const isRegisteredUser = players.some(p => p.steamId === player.account_id.toString());
+      const heroName = getHeroName(player.hero_id);
+      const playerName = isRegisteredUser ? `**${player.personaname || 'Unknown'}**` : (player.personaname || 'Unknown');
+      return `${playerName} (${heroName}): ${player.kills}/${player.deaths}/${player.assists}`;
+    };
+
+    const radiantScoreboard = radiantPlayers.map(formatPlayer).join('\n');
+    const direScoreboard = direPlayers.map(formatPlayer).join('\n');
+
+    const embed = new EmbedBuilder()
+      .setColor('#0099ff')
+      .setTitle(`Combined Match Scoreboard`)
+      .addFields(
+        { name: 'Radiant', value: radiantScoreboard, inline: false },
+        { name: 'Dire', value: direScoreboard, inline: false },
+        { name: 'Result', value: match.radiant_win ? 'Radiant Victory' : 'Dire Victory', inline: true },
+        { name: 'Duration', value: `${Math.floor(match.duration / 60)}:${(match.duration % 60).toString().padStart(2, '0')}`, inline: true }
+      )
+      .setTimestamp()
+      .setFooter({ text: `Match ID: ${matchId}` })
+      .setURL(`https://www.opendota.com/matches/${matchId}`);
+
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error displaying combined scoreboard:', error);
+    channel.send('An error occurred while fetching the combined scoreboard. Please try again later.');
+  }
+}
 
 async function getHeroName(heroId) {
   try {
@@ -259,7 +311,6 @@ function clearConversationHistory(message) {
 
 client.login(BOT_TOKEN);
 
-// Add this line to the end of the 'ready' event handler
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   loadUsers();
