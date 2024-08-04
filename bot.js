@@ -26,13 +26,13 @@ client.on('messageCreate', async (message) => {
   const command = args.shift().toLowerCase();
 
   if (command === 'help') {
-    message.reply('Available commands:\n+register <steam_id> - Register your Steam ID\n+rs - Show your most recent match stats\n+help - Show this help message');
+    message.reply('Available commands:\n+register <steam_id> - Register your Steam ID\n+rs [@user] - Show your or mentioned user\'s most recent match stats\n+help - Show this help message');
   } else if (command === 'register') {
     registerUser(message, args);
   } else if (command === 'unregister') {
     await unregisterUser(message, args);
   } else if (command === 'rs') {
-    await getRecentStats(message);
+    await getRecentStats(message, args);
   } else if (command === 'gpat') {
     await getAIText(message, args);
   } else if (command === 'gpatclear') {
@@ -127,12 +127,24 @@ async function checkNewMatches() {
   setTimeout(checkNewMatches, 20 * 60 * 1000);
 }
 
-async function getRecentStats(message) {
-  const discordId = message.author.id;
-  const steamId = users.get(discordId);
+async function getRecentStats(message, args) {
+  let discordId;
+  let steamId;
+
+  if (message.mentions.users.size > 0) {
+    // If a user is mentioned, get their Discord ID
+    discordId = message.mentions.users.first().id;
+    steamId = users.get(discordId);
+  } else {
+    // If no user is mentioned, use the message author's ID
+    discordId = message.author.id;
+    steamId = users.get(discordId);
+  }
 
   if (!steamId) {
-    return message.reply("You haven't registered your Steam ID yet. Use +register <steam_id> to register.");
+    return message.reply(discordId === message.author.id 
+      ? "You haven't registered your Steam ID yet. Use +register <steam_id> to register."
+      : "The mentioned user hasn't registered their Steam ID yet.");
   }
 
   try {
@@ -142,11 +154,13 @@ async function getRecentStats(message) {
     if (recentMatch) {
       await displayMatchStats(discordId, recentMatch, message.channel);
     } else {
-      message.reply("No recent matches found.");
+      message.reply(discordId === message.author.id
+        ? "No recent matches found for you."
+        : "No recent matches found for the mentioned user.");
     }
   } catch (error) {
     console.error(`Error fetching recent match for user ${discordId}:`, error);
-    message.reply("An error occurred while fetching your recent match. Please try again later.");
+    message.reply("An error occurred while fetching the recent match. Please try again later.");
   }
 }
 
