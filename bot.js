@@ -14,14 +14,10 @@ const client = new Client({
 const prefix = '+';
 const users = new Map();
 const lastCheckedMatch = new Map();
+const conversationHistory = new Map();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}!`);
-  loadUsers();
-  checkNewMatches();
-});
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 client.on('messageCreate', async (message) => {
   if (!message.content.startsWith(prefix) || message.author.bot) return;
@@ -37,6 +33,12 @@ client.on('messageCreate', async (message) => {
     await unregisterUser(message, args);
   } else if (command === 'rs') {
     await getRecentStats(message);
+  } else if (command === 'gpat') {
+    await getAIText(message, args);
+  } else if (command === 'gpatclear') {
+    clearConversationHistory(message);
+  } else if (command === 'caow') {
+    message.reply('Thrower hai');
   }
 });
 
@@ -71,7 +73,7 @@ async function registerUser(message, args) {
 
 async function unregisterUser(message) {
   const steamId = users.get(message.author.id);
-  if(!users.has(message.author.id)){
+  if (!users.has(message.author.id)) {
     return message.reply('You are not registered');
   }
   users.delete(message.author.id);
@@ -110,6 +112,7 @@ async function checkNewMatches() {
   // Check again after 20 minutes
   setTimeout(checkNewMatches, 20 * 60 * 1000);
 }
+
 async function getRecentStats(message) {
   const discordId = message.author.id;
   const steamId = users.get(discordId);
@@ -175,6 +178,84 @@ async function getHeroName(heroId) {
   }
 }
 
+// Not related to doto
+async function getAIText(message, args) {
+  if (args.length === 0) {
+    return message.reply('Please provide a prompt. Usage: +gpat <your prompt here>');
+  }
+
+  const prompt = args.join(' ');
+  message.channel.sendTyping();
+
+  const userId = message.author.id;
+  if (!conversationHistory.has(userId)) {
+    conversationHistory.set(userId, []);
+  }
+
+  const userHistory = conversationHistory.get(userId);
+  userHistory.push({ role: "user", content: prompt });
+
+  try {
+    const response = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        //model: "anthropic/claude-3.5-sonnet:beta",
+        model: "mistralai/mistral-nemo",
+        //model: "openai/gpt-4o-mini",
+        //model: "meta-llama/llama-3.1-8b-instruct",
+        //model: "gryphe/mythomax-l2-13b",
+        messages: [
+          { role: "system", content: "You are a human assistant in a Discord chat. Act humane, be quirky, have personality." },
+          ...userHistory
+        ],
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
+      const aiResponse = response.data.choices[0].message.content;
+      userHistory.push({ role: "assistant", content: aiResponse });
+
+      // Trim history if it gets too long
+      if (userHistory.length > 10) {
+        userHistory.splice(1, 2); // Remove oldest user-assistant pair
+      }
+
+      // Split the response into chunks of 2000 characters or less
+      const chunks = aiResponse.match(/(.|[\r\n]){1,2000}/g);
+
+      for (const chunk of chunks) {
+        await message.reply(chunk);
+      }
+    } else {
+      console.error('Unexpected API response structure:', response.data);
+      message.reply('Received an unexpected response from the AI service. Please try again later.');
+    }
+  } catch (error) {
+    console.error('Error getting AI text:', error);
+    if (error.response) {
+      console.error('API response:', error.response.data);
+      message.reply(`An error occurred while getting the AI-generated text. Status: ${error.response.status}. Please try again later.`);
+    } else if (error.request) {
+      console.error('No response received:', error.request);
+      message.reply('No response received from the AI service. Please check your internet connection and try again.');
+    } else {
+      console.error('Error details:', error.message);
+      message.reply('An unexpected error occurred. Please try again later.');
+    }
+  }
+}
+
+function clearConversationHistory(message) {
+  const userId = message.author.id;
+  conversationHistory.delete(userId);
+  message.reply('Your AI conversation history has been cleared.');
+}
 
 client.login(BOT_TOKEN);
 
@@ -182,5 +263,5 @@ client.login(BOT_TOKEN);
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
   loadUsers();
-  checkNewMatches();
+  setTimeout(checkNewMatches, 20 * 60 * 1000);
 });
