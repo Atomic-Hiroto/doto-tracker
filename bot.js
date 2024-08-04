@@ -204,7 +204,7 @@ async function displayCombinedScoreboard(matchId, players, channel) {
     const direPlayers = match.players.filter(p => !p.isRadiant);
 
     const formatPlayer = (player) => {
-      const isRegisteredUser = players.some(p => p.steamId === player.account_id.toString());
+      const isRegisteredUser = players.some(p => p.steamId === (player.account_id ? player.account_id.toString() : null));
       const heroName = getHeroName(player.hero_id);
       const playerName = isRegisteredUser ? `**${player.personaname || 'Unknown'}**` : (player.personaname || 'Unknown');
       return `${playerName} (${heroName}): ${player.kills}/${player.deaths}/${player.assists}`;
