@@ -164,73 +164,10 @@ async function getRecentStats(message, args) {
   }
 }
 
-async function displayMatchStats(discordId, match, channel) {
-  if (!channel) {
-    console.error('No channel provided to displayMatchStats');
-    return;
-  }
-
-  const user = await client.users.fetch(discordId);
-  const heroName = await getHeroName(match.hero_id);
-
-  const embed = new EmbedBuilder()
-    .setColor('#0099ff')
-    .setTitle(`Recent Match for ${user.username}`)
-    .addFields(
-      { name: 'Hero', value: heroName, inline: true },
-      { name: 'K/D/A', value: `${match.kills}/${match.deaths}/${match.assists}`, inline: true },
-      { name: 'GPM/XPM', value: `${match.gold_per_min}/${match.xp_per_min}`, inline: true },
-      { name: 'Last Hits', value: match.last_hits.toString(), inline: true },
-      { name: 'Result', value: match.player_slot <= 127 ? (match.radiant_win ? 'Win' : 'Loss') : (match.radiant_win ? 'Loss' : 'Win'), inline: true },
-      { name: 'Duration', value: `${Math.floor(match.duration / 60)}:${(match.duration % 60).toString().padStart(2, '0')}`, inline: true }
-    )
-    .setTimestamp()
-    .setFooter({ text: `Match ID: ${match.match_id}` })
-    .setURL(`https://www.opendota.com/matches/${match.match_id}`);
-
-  try {
-    await channel.send({ embeds: [embed] });
-  } catch (error) {
-    console.error('Error sending match stats:', error);
-  }
-}
-
-async function displayCombinedScoreboard(matchId, players, channel) {
-  try {
-    const response = await axios.get(`https://api.opendota.com/api/matches/${matchId}`);
-    const match = response.data;
-
-    const radiantPlayers = match.players.filter(p => p.isRadiant);
-    const direPlayers = match.players.filter(p => !p.isRadiant);
-
-    const formatPlayer = (player) => {
-      const isRegisteredUser = players.some(p => p.steamId === (player.account_id ? player.account_id.toString() : null));
-      const heroName = getHeroName(player.hero_id);
-      const playerName = isRegisteredUser ? `**${player.personaname || 'Unknown'}**` : (player.personaname || 'Unknown');
-      return `${playerName} (${heroName}): ${player.kills}/${player.deaths}/${player.assists}`;
-    };
-
-    const radiantScoreboard = radiantPlayers.map(formatPlayer).join('\n');
-    const direScoreboard = direPlayers.map(formatPlayer).join('\n');
-
-    const embed = new EmbedBuilder()
-      .setColor('#0099ff')
-      .setTitle(`Combined Match Scoreboard`)
-      .addFields(
-        { name: 'Radiant', value: radiantScoreboard, inline: false },
-        { name: 'Dire', value: direScoreboard, inline: false },
-        { name: 'Result', value: match.radiant_win ? 'Radiant Victory' : 'Dire Victory', inline: true },
-        { name: 'Duration', value: `${Math.floor(match.duration / 60)}:${(match.duration % 60).toString().padStart(2, '0')}`, inline: true }
-      )
-      .setTimestamp()
-      .setFooter({ text: `Match ID: ${matchId}` })
-      .setURL(`https://www.opendota.com/matches/${matchId}`);
-
-    await channel.send({ embeds: [embed] });
-  } catch (error) {
-    console.error('Error displaying combined scoreboard:', error);
-    channel.send('An error occurred while fetching the combined scoreboard. Please try again later.');
-  }
+function formatDuration(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
 async function getHeroName(heroId) {
@@ -243,6 +180,115 @@ async function getHeroName(heroId) {
     return 'Unknown Hero';
   }
 }
+
+async function getItemName(itemId) {
+  try {
+    const response = await axios.get('https://api.opendota.com/api/constants/items');
+    const item = Object.values(response.data).find(i => i.id === itemId);
+    return item ? item.dname : 'Unknown Item';
+  } catch (error) {
+    console.error('Error fetching item data:', error);
+    return 'Unknown Item';
+  }
+}
+
+async function displayMatchStats(discordId, match, channel) {
+  if (!channel) {
+    console.error('No channel provided to displayMatchStats');
+    return;
+  }
+
+  try {
+    const user = await client.users.fetch(discordId);
+    const heroName = await getHeroName(match.hero_id);
+
+    // Fetch detailed match data
+    const detailedMatch = await axios.get(`https://api.opendota.com/api/matches/${match.match_id}`);
+    const playerData = detailedMatch.data.players.find(p => p.hero_id === match.hero_id);
+
+    const isRadiant = playerData.player_slot < 128;
+    const didWin = (isRadiant && detailedMatch.data.radiant_win) || (!isRadiant && !detailedMatch.data.radiant_win);
+
+    // Fetch item names
+    const itemSlots = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5'];
+    const itemNames = await Promise.all(itemSlots.map(slot => getItemName(playerData[slot])));
+
+    const embed = new EmbedBuilder()
+      .setColor(didWin ? '#66bb6a' : '#ef5350')
+      .setTitle(`Recent Match for ${user.username}`)
+      .setDescription(`**${didWin ? 'Victory' : 'Defeat'}** as **${heroName}**`)
+      .addFields(
+        { name: 'K/D/A', value: `${playerData.kills}/${playerData.deaths}/${playerData.assists}`, inline: true },
+        { name: 'KDA Ratio', value: ((playerData.kills + playerData.assists) / (playerData.deaths || 1)).toFixed(2), inline: true },
+        { name: 'Level', value: playerData.level.toString(), inline: true },
+        { name: 'Last Hits/Denies', value: `${playerData.last_hits}/${playerData.denies || 0}`, inline: true },
+        { name: 'GPM/XPM', value: `${playerData.gold_per_min}/${playerData.xp_per_min}`, inline: true },
+        { name: 'Hero Damage', value: playerData.hero_damage.toLocaleString(), inline: true },
+        { name: 'Tower Damage', value: playerData.tower_damage.toLocaleString(), inline: true },
+        { name: 'Hero Healing', value: playerData.hero_healing.toLocaleString(), inline: true },
+        { name: 'Items', value: itemNames.map(name => name !== 'Unknown Item' ? name : 'Empty Slot').join(', '), inline: false },
+        { name: 'Gold Spent', value: playerData.gold_spent.toLocaleString(), inline: true },
+        { name: 'Team', value: isRadiant ? 'Radiant' : 'Dire', inline: true },
+        { name: 'Match ID', value: `[${match.match_id}](https://www.opendota.com/matches/${match.match_id})`, inline: true },
+        { name: 'Duration', value: formatDuration(detailedMatch.data.duration), inline: true },
+        { name: 'Game Mode', value: (detailedMatch.data.game_mode || 'Unknown').toString(), inline: true },
+        { name: 'Region', value: (detailedMatch.data.region || 'Unknown').toString(), inline: true }
+      )
+      .setTimestamp(new Date(detailedMatch.data.start_time * 1000))
+      .setFooter({ text: `Match played on ${new Date(detailedMatch.data.start_time * 1000).toLocaleString()}` })
+      .setURL(`https://www.opendota.com/matches/${match.match_id}`);
+
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error sending match stats:', error);
+    channel.send('An error occurred while fetching the detailed match stats. Please try again later.');
+  }
+}
+
+
+async function displayCombinedScoreboard(matchId, players, channel) {
+  try {
+    const response = await axios.get(`https://api.opendota.com/api/matches/${matchId}`);
+    const match = response.data;
+
+    const radiantPlayers = match.players.filter(p => p.isRadiant);
+    const direPlayers = match.players.filter(p => !p.isRadiant);
+
+    const formatPlayer = async (player) => {
+      const isRegisteredUser = players.some(p => p.steamId === (player.account_id ? player.account_id.toString() : null));
+      const heroName = await getHeroName(player.hero_id);
+      const playerName = isRegisteredUser ? `**${player.personaname || 'Unknown'}**` : (player.personaname || 'Unknown');
+      return `${playerName} (${heroName}): ${player.kills}/${player.deaths}/${player.assists} | LH: ${player.last_hits} | GPM: ${player.gold_per_min} | XPM: ${player.xp_per_min}`;
+    };
+
+    const radiantScoreboard = await Promise.all(radiantPlayers.map(formatPlayer));
+    const direScoreboard = await Promise.all(direPlayers.map(formatPlayer));
+
+    const radiantKills = radiantPlayers.reduce((sum, player) => sum + player.kills, 0);
+    const direKills = direPlayers.reduce((sum, player) => sum + player.kills, 0);
+
+    const embed = new EmbedBuilder()
+      .setColor(match.radiant_win ? '#66bb6a' : '#ef5350')
+      .setTitle(`Match ${matchId} Summary`)
+      .setDescription(`**${match.radiant_win ? 'Radiant' : 'Dire'} Victory**`)
+      .addFields(
+        { name: 'Radiant', value: radiantScoreboard.join('\n'), inline: false },
+        { name: 'Dire', value: direScoreboard.join('\n'), inline: false },
+        { name: 'Score', value: `Radiant ${radiantKills} - ${direKills} Dire`, inline: true },
+        { name: 'Duration', value: formatDuration(match.duration), inline: true },
+        { name: 'Game Mode', value: match.game_mode_name || 'Unknown', inline: true }
+      )
+      .setTimestamp(new Date(match.start_time * 1000))
+      .setFooter({ text: `Match ID: ${matchId}` })
+      .setURL(`https://www.opendota.com/matches/${matchId}`);
+
+    await channel.send({ embeds: [embed] });
+  } catch (error) {
+    console.error('Error displaying combined scoreboard:', error);
+    channel.send('An error occurred while fetching the combined scoreboard. Please try again later.');
+  }
+}
+
 
 // Not related to doto
 async function getAIText(message, args) {
