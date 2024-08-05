@@ -12,12 +12,45 @@ const client = new Client({
 });
 
 const prefix = '+';
-const users = new Map();
-const lastCheckedMatch = new Map();
 const conversationHistory = new Map();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const USER_DATA_FILE = 'users.json';
+
+let userData = {};
+
+function loadUserData() {
+  try {
+    const data = fs.readFileSync(USER_DATA_FILE, 'utf8');
+    const loadedData = JSON.parse(data);
+    
+    // Check if the loaded data is in the old format
+    if (typeof Object.values(loadedData)[0] === 'string') {
+      // Convert old format to new format
+      Object.keys(loadedData).forEach(discordId => {
+        userData[discordId] = {
+          steamId: loadedData[discordId],
+          autoShow: true,
+          lastCheckedMatch: null
+        };
+      });
+      console.log('Converted user data from old format to new format');
+      saveUserData(); // Save the converted data
+    } else {
+      userData = loadedData;
+    }
+    
+    console.log('User data loaded successfully');
+  } catch (error) {
+    console.error('Error loading user data:', error);
+    userData = {};
+  }
+}
+
+function saveUserData() {
+  fs.writeFileSync(USER_DATA_FILE, JSON.stringify(userData, null, 2));
+}
 
 client.on('messageCreate', async (message) => {
   if (!message.content.startsWith(prefix) || message.author.bot) return;
@@ -26,13 +59,15 @@ client.on('messageCreate', async (message) => {
   const command = args.shift().toLowerCase();
 
   if (command === 'help') {
-    message.reply('Available commands:\n+register <steam_id> - Register your Steam ID\n+rs [@user] - Show your or mentioned user\'s most recent match stats\n+help - Show this help message');
+    message.reply('Available commands:\n+register <steam_id> - Register your Steam ID\n+rs [@user] - Show your or mentioned user\'s most recent match stats\n+toggleauto - Toggle auto-showing of your recent matches\n+help - Show this help message');
   } else if (command === 'register') {
     registerUser(message, args);
   } else if (command === 'unregister') {
-    await unregisterUser(message, args);
+    await unregisterUser(message);
   } else if (command === 'rs') {
     await getRecentStats(message, args);
+  } else if (command === 'toggleauto') {
+    toggleAutoShow(message);
   } else if (command === 'gpat') {
     await getAIText(message, args);
   } else if (command === 'gpatclear') {
@@ -42,45 +77,41 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-function loadUsers() {
-  try {
-    const data = fs.readFileSync('users.json', 'utf8');
-    const loadedUsers = JSON.parse(data);
-    for (const [discordId, steamId] of Object.entries(loadedUsers)) {
-      users.set(discordId, steamId);
-    }
-    console.log('Users loaded successfully');
-  } catch (error) {
-    console.error('Error loading users:', error);
-  }
-}
-
-function saveUsers() {
-  const usersObject = Object.fromEntries(users);
-  fs.writeFileSync('users.json', JSON.stringify(usersObject, null, 2));
-}
-
-async function registerUser(message, args) {
+function registerUser(message, args) {
   if (args.length !== 1) {
     return message.reply('Please provide your Steam ID. Usage: +register <steam_id>');
   }
 
   const steamId = args[0];
-  users.set(message.author.id, steamId);
-  saveUsers();
-  message.reply(`Successfully registered Steam ID: ${steamId}`);
+  userData[message.author.id] = {
+    steamId: steamId,
+    autoShow: true,
+    lastCheckedMatch: null
+  };
+  saveUserData();
+  message.reply(`Successfully registered Steam ID: ${steamId}. Auto-show is enabled by default. Use +toggleauto to disable.`);
 }
 
 async function unregisterUser(message) {
-  const steamId = users.get(message.author.id);
-  if (!users.has(message.author.id)) {
+  if (!userData[message.author.id]) {
     return message.reply('You are not registered');
   }
-  users.delete(message.author.id);
-  saveUsers();
+  const steamId = userData[message.author.id].steamId;
+  delete userData[message.author.id];
+  saveUserData();
   message.reply(`Successfully unregistered Steam ID: ${steamId}`);
 }
 
+function toggleAutoShow(message) {
+  const userId = message.author.id;
+  if (!userData[userId]) {
+    return message.reply('You need to register first. Use +register <steam_id> to register.');
+  }
+
+  userData[userId].autoShow = !userData[userId].autoShow;
+  saveUserData();
+  message.reply(`Auto-show for your recent matches has been ${userData[userId].autoShow ? 'enabled' : 'disabled'}.`);
+}
 
 async function checkNewMatches() {
   const guild = client.guilds.cache.first();
@@ -97,23 +128,27 @@ async function checkNewMatches() {
 
   const recentMatches = new Map();
 
-  for (const [discordId, steamId] of users) {
+  for (const [discordId, user] of Object.entries(userData)) {
+    if (!user.autoShow) continue; // Skip users who have disabled auto-show
+
     try {
-      const response = await axios.get(`https://api.opendota.com/api/players/${steamId}/recentMatches`);
+      const response = await axios.get(`https://api.opendota.com/api/players/${user.steamId}/recentMatches`);
       const recentMatch = response.data[0];
 
-      if (!lastCheckedMatch.has(discordId) || lastCheckedMatch.get(discordId) !== recentMatch.match_id) {
-        lastCheckedMatch.set(discordId, recentMatch.match_id);
+      if (!user.lastCheckedMatch || user.lastCheckedMatch !== recentMatch.match_id) {
+        userData[discordId].lastCheckedMatch = recentMatch.match_id;
         
         if (!recentMatches.has(recentMatch.match_id)) {
           recentMatches.set(recentMatch.match_id, []);
         }
-        recentMatches.get(recentMatch.match_id).push({ discordId, steamId, match: recentMatch });
+        recentMatches.get(recentMatch.match_id).push({ discordId, steamId: user.steamId, match: recentMatch });
       }
     } catch (error) {
       console.error(`Error fetching recent matches for user ${discordId}:`, error);
     }
   }
+
+  saveUserData(); // Save updated lastCheckedMatch values
 
   for (const [matchId, players] of recentMatches) {
     if (players.length > 1) {
@@ -132,20 +167,18 @@ async function getRecentStats(message, args) {
   let steamId;
 
   if (message.mentions.users.size > 0) {
-    // If a user is mentioned, get their Discord ID
     discordId = message.mentions.users.first().id;
-    steamId = users.get(discordId);
   } else {
-    // If no user is mentioned, use the message author's ID
     discordId = message.author.id;
-    steamId = users.get(discordId);
   }
 
-  if (!steamId) {
+  if (!userData[discordId]) {
     return message.reply(discordId === message.author.id 
       ? "You haven't registered your Steam ID yet. Use +register <steam_id> to register."
       : "The mentioned user hasn't registered their Steam ID yet.");
   }
+
+  steamId = userData[discordId].steamId;
 
   try {
     const response = await axios.get(`https://api.opendota.com/api/players/${steamId}/recentMatches`);
@@ -373,6 +406,6 @@ client.login(BOT_TOKEN);
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
-  loadUsers();
+  loadUserData();
   setTimeout(checkNewMatches, 20 * 60 * 1000);
 });
