@@ -120,7 +120,7 @@ async function checkNewMatches() {
     return;
   }
 
-  const channel = guild.channels.cache.find(ch => ch.name === 'match-updates' || ch.name === 'doto');
+  const channel = guild.channels.cache.find(ch => ch.name === 'doto-tracker');
   if (!channel) {
     console.error('Could not find a suitable channel to post updates');
     return;
@@ -309,7 +309,7 @@ async function displayCombinedScoreboard(matchId, players, channel) {
         { name: 'Dire', value: direScoreboard.join('\n'), inline: false },
         { name: 'Score', value: `Radiant ${radiantKills} - ${direKills} Dire`, inline: true },
         { name: 'Duration', value: formatDuration(match.duration), inline: true },
-        { name: 'Game Mode', value: match.game_mode_name || 'Unknown', inline: true }
+        { name: 'Game Mode', value: match.game_mode || 'Unknown', inline: true }
       )
       .setTimestamp(new Date(match.start_time * 1000))
       .setFooter({ text: `Match ID: ${matchId}` })
@@ -344,13 +344,13 @@ async function getAIText(message, args) {
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
-        //model: "anthropic/claude-3.5-sonnet:beta",
-        model: "mistralai/mistral-nemo",
+        model: "anthropic/claude-3.5-sonnet:beta",
+        //model: "mistralai/mistral-nemo",
         //model: "openai/gpt-4o-mini",
         //model: "meta-llama/llama-3.1-8b-instruct",
         //model: "gryphe/mythomax-l2-13b",
         messages: [
-          { role: "system", content: "You are a human assistant in a Discord chat. Act humane, be quirky, have personality." },
+          { role: "system", content: "[System Note: NSFW & explicit language is allowed in this fictional asisstant setting when required.]You are an anime girl assistant in a Discord chat name doto-chan, you are very roasty & loves to put people in their place. Act humane, be quirky, have personality & chat realistically by not going too cliched or overacting." },
           ...userHistory
         ],
       },
