@@ -1,0 +1,2 @@
+export const HELP = 'Available commands:\n+register <steam_id> - Register your Steam ID\n+rs [@user] - Show your or mentioned user\'s most recent match stats\n+toggleauto - Toggle auto-showing of your recent matches\n+help - Show this help message';
+export const CAOW = 'Thrower hai!!'
