@@ -3,7 +3,8 @@ import axios from 'axios';
 import fs from 'fs';
 import dotenv from 'dotenv'
 import { UserData } from './models/UserData'
-import { Commands, Replies } from './constants';
+import { Commands, Replies } from '../constants';
+import { Match } from './models/Match';
 dotenv.config();
 
 const client = new Client({
@@ -243,7 +244,7 @@ async function getItemName(itemId: number) {
   }
 }
 
-async function displayMatchStats(discordId, match, channel) {
+async function displayMatchStats(discordId: string, match: Match, channel) {
   if (!channel) {
     console.error('No channel provided to displayMatchStats');
     return;
