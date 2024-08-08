@@ -59,7 +59,7 @@ client.on('messageCreate', async (message: Message) => {
       unregisterUser(message);
       break;
     case Commands.RECENT_STATS:
-      getRecentStats(message, args);
+      getRecentStats(message);
       break;
     case Commands.TOGGLE_AUTO:
       toggleAutoShow(message);
@@ -112,15 +112,16 @@ async function unregisterUser(message: Message) {
   message.reply(`Successfully unregistered Steam ID: ${steamId}`);
 }
 
-function toggleAutoShow(message) {
+function toggleAutoShow(message: Message) {
   const userId = message.author.id;
-  if (!userDataMap[userId]) {
+  const user = userDataMap.get(userId);
+  if (!user) {
     return message.reply('You need to register first. Use +register <steam_id> to register.');
   }
 
-  userDataMap[userId].autoShow = !userDataMap[userId].autoShow;
+  user.autoShow = !user.autoShow;
   saveUserData();
-  message.reply(`Auto-show for your recent matches has been ${userDataMap[userId].autoShow ? 'enabled' : 'disabled'}.`);
+  message.reply(`Auto-show for your recent matches has been ${user.autoShow ? 'enabled' : 'disabled'}.`);
 }
 
 async function checkNewMatches() {
@@ -138,16 +139,14 @@ async function checkNewMatches() {
 
   const recentMatches = new Map();
 
-  for (const [discordId, user] of Object.entries(userData)) {
+  for (const [discordId, user] of userDataMap) {
     if (!user.autoShow) continue; // Skip users who have disabled auto-show
 
     try {
       const response = await axios.get(`https://api.opendota.com/api/players/${user.steamId}/recentMatches`);
       const recentMatch = response.data[0];
-
       if (!user.lastCheckedMatch || user.lastCheckedMatch !== recentMatch.match_id) {
-        userData[discordId].lastCheckedMatch = recentMatch.match_id;
-
+          user.lastCheckedMatch = recentMatch.match_id;
         if (!recentMatches.has(recentMatch.match_id)) {
           recentMatches.set(recentMatch.match_id, []);
         }
@@ -172,50 +171,57 @@ async function checkNewMatches() {
   setTimeout(checkNewMatches, 20 * 60 * 1000);
 }
 
-async function getRecentStats(message, args) {
-  let discordId;
-  let steamId;
+async function getRecentStats(message: Message): Promise<void> {
+  let discordId: string;
+  let steamId: string;
 
   if (message.mentions.users.size > 0) {
-    discordId = message.mentions.users.first().id.toString();
+    const mentionedUser = message.mentions.users.first();
+    if (!mentionedUser) {
+      await message.reply("Couldn't find the mentioned user.");
+      return;
+    }
+    discordId = mentionedUser.id;
   } else {
-    discordId = message.author.id.toString();
+    discordId = message.author.id;
   }
 
-  console.log(discordId, userDataMap)
+  console.log(discordId, userDataMap);
 
-  if (!userDataMap.get(discordId)) {
-    return message.reply(discordId === message.author.id
+  const userData = userDataMap.get(discordId);
+  if (!userData) {
+    await message.reply(discordId === message.author.id
       ? "You haven't registered your Steam ID yet. Use +register <steam_id> to register."
       : "The mentioned user hasn't registered their Steam ID yet.");
+    return;
   }
 
-  steamId = userDataMap.get(discordId).steamId;
+  steamId = userData.steamId;
 
   try {
-    const response = await axios.get(`https://api.opendota.com/api/players/${steamId}/recentMatches`);
+    const response = await axios.get<Array<any>>(`https://api.opendota.com/api/players/${steamId}/recentMatches`);
     const recentMatch = response.data[0];
 
     if (recentMatch) {
       await displayMatchStats(discordId, recentMatch, message.channel);
     } else {
-      message.reply(discordId === message.author.id
+      await message.reply(discordId === message.author.id
         ? "No recent matches found for you."
         : "No recent matches found for the mentioned user.");
     }
   } catch (error) {
     console.error(`Error fetching recent match for user ${discordId}:`, error);
-    message.reply("An error occurred while fetching the recent match. Please try again later.");
+    await message.reply("An error occurred while fetching the recent match. Please try again later.");
   }
 }
 
-function formatDuration(seconds) {
+function formatDuration(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
-async function getHeroName(heroId) {
+async function getHeroName(heroId: number) {
   try {
     const response = await axios.get('https://api.opendota.com/api/heroes');
     const hero = response.data.find(h => h.id === heroId);
@@ -226,7 +232,7 @@ async function getHeroName(heroId) {
   }
 }
 
-async function getItemName(itemId) {
+async function getItemName(itemId: number) {
   try {
     const response = await axios.get('https://api.opendota.com/api/constants/items');
     const item = Object.values(response.data).find(i => i.id === itemId);
