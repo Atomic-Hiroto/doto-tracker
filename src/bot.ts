@@ -30,7 +30,6 @@ function loadUserData() {
     userData = JSON.parse(fs.readFileSync(USER_DATA_FILE, 'utf8'));
     userData.forEach(user => {
       userDataMap.set(user.discordId, user);
-      console.log(JSON.stringify(user));
     });
     console.log('User data loaded successfully');
   } catch (error) {
@@ -84,13 +83,13 @@ client.on('messageCreate', async (message: Message) => {
 
 function registerUser(message: Message, args: string[]) {
   if (args.length !== 1) {
-    return message.reply('Please provide your Steam ID. Usage: +register <steam_id>');
+    return message.reply(Replies.PROVIDE_STEAM_ID);
   }
 
   const steamId = args[0];
   const user: UserData | undefined = userData.find(x => x.steamId == steamId);
   if (user) {
-    message.reply(`SteamId: ${steamId} is already registed with DiscordId: ${user.discordId}.`);
+    message.reply(Replies.ALREADY_REGISTERED(steamId, user.discordId));
     return;
   }
   userData.push({
@@ -100,17 +99,17 @@ function registerUser(message: Message, args: string[]) {
     lastCheckedMatch: null
   });
   saveUserData();
-  message.reply(`Successfully registered Steam ID: ${steamId}. Auto-show is enabled by default. Use +toggleauto to disable.`);
+  message.reply(Replies.REGISTER_SUCCESS(steamId));
 }
 
 async function unregisterUser(message: Message) {
   if (!userDataMap.has(message.author.id)) {
-    return message.reply('You are not registered');
+    return message.reply(Replies.NOT_REGISTERED);
   }
   const steamId = userDataMap.get(message.author.id)?.steamId;
   userDataMap.delete(message.author.id);
   saveUserData();
-  message.reply(`Successfully unregistered Steam ID: ${steamId}`);
+  message.reply(Replies.UNREGISTER_SUCCESS(steamId));
 }
 
 function toggleAutoShow(message: Message) {
@@ -187,7 +186,6 @@ async function getRecentStats(message: Message): Promise<void> {
     discordId = message.author.id;
   }
 
-  console.log(discordId, userDataMap);
 
   const userData = userDataMap.get(discordId);
   if (!userData) {
