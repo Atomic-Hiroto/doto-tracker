@@ -3,7 +3,7 @@ import axios from 'axios';
 import fs from 'fs';
 import dotenv from 'dotenv'
 import { UserData } from './models/UserData'
-import { Commands, Replies } from '../constants';
+import { APIConstants, Commands, ProcessConstants, Replies } from './constants';
 import { Match } from './models/Match';
 dotenv.config();
 
@@ -15,19 +15,14 @@ const client = new Client({
   ],
 });
 
-const prefix = '+';
 const conversationHistory = new Map();
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const USER_DATA_FILE = 'users.json';
 
 let userData: UserData[];
 let userDataMap: Map<string, UserData> = new Map<string, UserData>();
 
 function loadUserData() {
   try {
-    userData = JSON.parse(fs.readFileSync(USER_DATA_FILE, 'utf8'));
+    userData = JSON.parse(fs.readFileSync(ProcessConstants.USER_DATA_FILE, 'utf8'));
     userData.forEach(user => {
       userDataMap.set(user.discordId, user);
     });
@@ -39,13 +34,13 @@ function loadUserData() {
 }
 
 function saveUserData() {
-  fs.writeFileSync(USER_DATA_FILE, JSON.stringify(userData, null, 2));
+  fs.writeFileSync(ProcessConstants.USER_DATA_FILE, JSON.stringify(userData, null, 2));
 }
 
 client.on('messageCreate', async (message: Message) => {
-  if (!message.content.startsWith(prefix) || message.author.bot) return;
+  if (!message.content.startsWith(ProcessConstants.PREFIX) || message.author.bot) return;
 
-  const args: string[] = message.content.slice(prefix.length).trim().split(" ");
+  const args: string[] = message.content.slice(ProcessConstants.PREFIX.length).trim().split(ProcessConstants.SPACE);
   const command: string | undefined = args.shift();
 
   switch (command) {
@@ -116,12 +111,12 @@ function toggleAutoShow(message: Message) {
   const userId = message.author.id;
   const user = userDataMap.get(userId);
   if (!user) {
-    return message.reply('You need to register first. Use +register <steam_id> to register.');
+    return message.reply(Replies.NEED_REGISTRATION);
   }
 
   user.autoShow = !user.autoShow;
   saveUserData();
-  message.reply(`Auto-show for your recent matches has been ${user.autoShow ? 'enabled' : 'disabled'}.`);
+  message.reply(Replies.AUTO_SHOW_TOGGLED(user.autoShow));
 }
 
 async function checkNewMatches() {
@@ -143,7 +138,7 @@ async function checkNewMatches() {
     if (!user.autoShow) continue; // Skip users who have disabled auto-show
 
     try {
-      const response = await axios.get(`https://api.opendota.com/api/players/${user.steamId}/recentMatches`);
+      const response = await axios.get(APIConstants.RECENT_MATCHES(user.steamId));
       const recentMatch = response.data[0];
       if (!user.lastCheckedMatch || user.lastCheckedMatch !== recentMatch.match_id) {
           user.lastCheckedMatch = recentMatch.match_id;
@@ -419,7 +414,7 @@ function clearConversationHistory(message) {
   message.reply('Your AI conversation history has been cleared.');
 }
 
-client.login(BOT_TOKEN);
+client.login(ProcessConstants.BOT_TOKEN);
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}!`);
