@@ -34,6 +34,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.CAOW:
       await commandHandlers.caow(message);
       break;
+    case Commands.STORY:
+      await commandHandlers.story(message, args);
+      break;
     default:
       await message.reply('Unknown command. Use +help to see available commands.');
       break;

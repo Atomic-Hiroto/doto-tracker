@@ -42,6 +42,12 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
   }
 
   for (const [matchId, players] of recentMatches) {
+    const isParsed = await isMatchParsed(matchId);
+    if (!isParsed) {
+      await requestMatchParse(matchId);
+      await channel.send(`A parse request has been sent for match ${matchId}. More detailed stats will be available soon.`);
+    }
+
     if (players.length > 1) {
       await displayCombinedScoreboard(matchId, players, channel);
     } else {
@@ -49,7 +55,7 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
     }
   }
 
-  // Check again after 20 minutes
+  // Check again after the specified interval
   setTimeout(() => checkNewMatches(client, userDataService), ProcessConstants.CHECK_INTERVAL);
 }
 
@@ -178,5 +184,75 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
   } catch (error) {
     console.error('Error displaying combined scoreboard:', error);
     await channel.send('An error occurred while fetching the combined scoreboard. Please try again later.');
+  }
+}
+
+async function isMatchParsed(matchId: number): Promise<boolean> {
+  try {
+    const response = await axios.get(APIConstants.MATCH_DETAILS(matchId));
+    return response.data.version !== null;
+  } catch (error) {
+    console.error(`Error checking if match ${matchId} is parsed:`, error);
+    return false;
+  }
+}
+
+async function requestMatchParse(matchId: number): Promise<void> {
+  try {
+    await axios.post(APIConstants.PARSE_REQUEST(matchId));
+    console.log(`Requested parsing for match ${matchId}`);
+  } catch (error) {
+    console.error(`Error requesting parse for match ${matchId}:`, error);
+  }
+}
+
+export async function getDetailedMatchData(matchId: number) {
+  try {
+    const response = await axios.get(APIConstants.MATCH_DETAILS(matchId));
+    const match = response.data;
+
+    if (!match.version) {
+      console.log(`Match ${matchId} is not parsed yet.`);
+      return null;
+    }
+
+    // Process and extract relevant data
+    const processedData = {
+      matchId: match.match_id,
+      duration: match.duration,
+      radiantWin: match.radiant_win,
+      players: await Promise.all(match.players.map(async (player: any) => ({
+        heroName: await getHeroName(player.hero_id),
+        name: player.personaname || 'Anonymous',
+        kills: player.kills,
+        deaths: player.deaths,
+        assists: player.assists,
+        netWorth: player.net_worth,
+        team: player.player_slot < 128 ? 'Radiant' : 'Dire'
+      }))),
+      chatLog: match.chat
+        .filter((msg: any) => msg.type === 'chat')
+        .map((msg: any) => ({
+          time: msg.time,
+          player: match.players.find((p: any) => p.player_slot === msg.player_slot)?.personaname || 'Unknown',
+          message: msg.key
+        })),
+      objectives: match.objectives.map((obj: any) => ({
+        time: obj.time,
+        type: obj.type,
+        team: obj.team === 2 ? 'Radiant' : 'Dire',
+        key: obj.key || ''
+      })),
+      teamfights: match.teamfights.map((fight: any) => ({
+        start: fight.start,
+        end: fight.end,
+        deaths: fight.deaths
+      }))
+    };
+
+    return processedData;
+  } catch (error) {
+    console.error(`Error fetching detailed match data for match ${matchId}:`, error);
+    return null;
   }
 }

@@ -5,3 +5,4 @@ export { recentStats } from './recentStats';
 export { toggleAuto } from './toggleAuto';
 export { gpat, gpatClear } from './gpat';
 export { caow } from './caow';
+export { story } from './story';

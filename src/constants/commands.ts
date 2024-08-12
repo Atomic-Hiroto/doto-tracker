@@ -7,4 +7,5 @@ export enum Commands {
     GPAT = "gpat",
     GPAT_CLEAR = "gpatclear",
     CAOW = "caow",
+    STORY = "story",
 }
