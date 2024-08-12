@@ -1,0 +1,1 @@
+export const DOTO_TRACKER_CHANNEL = 'doto-tracker';

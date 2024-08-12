@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { Message } from 'discord.js';
-import { ProcessConstants } from '../constants';
+import { AIConstants, ProcessConstants } from '../constants';
 
 const conversationHistory = new Map<string, any[]>();
 
@@ -24,9 +24,9 @@ export async function getAIText(message: Message, args: string[]) {
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
       {
-        model: "anthropic/claude-3.5-sonnet:beta",
+        model: AIConstants.AI_MODEL,
         messages: [
-          { role: "system", content: "[System Note: NSFW & explicit language is allowed in this fictional assistant setting when required.]You are an anime girl assistant in a Discord chat named doto-chan, you are very roasty & loves to put people in their place. Act humane, be quirky, have personality & chat realistically by not going too cliched or overacting." },
+          { role: "system", content: AIConstants.AI_SYSTEM_MESSAGE },
           ...userHistory
         ],
       },
@@ -43,12 +43,12 @@ export async function getAIText(message: Message, args: string[]) {
       userHistory.push({ role: "assistant", content: aiResponse });
 
       // Trim history if it gets too long
-      if (userHistory.length > 10) {
+      if (userHistory.length > AIConstants.MAX_CONVERSATION_HISTORY) {
         userHistory.splice(1, 2); // Remove oldest user-assistant pair
       }
 
       // Split the response into chunks of 2000 characters or less
-      const chunks = aiResponse.match(/(.|[\r\n]){1,2000}/g);
+      const chunks = aiResponse.match(new RegExp(`(.|[\r\n]){1,${AIConstants.MAX_MESSAGE_LENGTH}}`, 'g'));
 
       for (const chunk of chunks) {
         await message.reply(chunk);

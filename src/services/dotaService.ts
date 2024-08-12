@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Match } from '../models/Match';
 import { UserDataService } from './userDataService';
 import { formatDuration } from '../utils/formatters';
-import { APIConstants } from '../constants';
+import { APIConstants, ChannelConstants, ProcessConstants } from '../constants';
 
 export async function checkNewMatches(client: Client, userDataService: UserDataService) {
   const guild = client.guilds.cache.first();
@@ -12,7 +12,7 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
     return;
   }
 
-  const channel = guild.channels.cache.find(ch => ch.name === 'doto-tracker');
+  const channel = guild.channels.cache.find(ch => ch.name === ChannelConstants.DOTO_TRACKER_CHANNEL);
   if (!channel || !channel.isTextBased()) {
     console.error('Could not find a suitable text-based channel to post updates');
     return;
@@ -49,7 +49,7 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
   }
 
   // Check again after 20 minutes
-  setTimeout(() => checkNewMatches(client, userDataService), 20 * 60 * 1000);
+  setTimeout(() => checkNewMatches(client, userDataService), ProcessConstants.CHECK_INTERVAL);
 }
 
 export async function getRecentStats(discordId: string, steamId: string, channel: TextBasedChannel): Promise<void> {
@@ -70,7 +70,7 @@ export async function getRecentStats(discordId: string, steamId: string, channel
 
 async function getHeroName(heroId: number) {
   try {
-    const response = await axios.get<Array<{ id: number, localized_name: string }>>('https://api.opendota.com/api/heroes');
+    const response = await axios.get<Array<{ id: number, localized_name: string }>>(APIConstants.HEROES_API);
     const hero = response.data.find((h: { id: number }) => h.id === heroId);
     return hero ? hero.localized_name : 'Unknown Hero';
   } catch (error) {
@@ -81,7 +81,7 @@ async function getHeroName(heroId: number) {
 
 async function getItemName(itemId: number) {
   try {
-    const response = await axios.get<Record<string, { id: number, dname: string }>>('https://api.opendota.com/api/constants/items');
+    const response = await axios.get<Record<string, { id: number, dname: string }>>(APIConstants.ITEMS_API);
     const item = Object.values(response.data).find(i => i.id === itemId);
     return item ? item.dname : 'Unknown Item';
   } catch (error) {
@@ -96,7 +96,7 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
     const heroName = await getHeroName(match.hero_id);
 
     // Fetch detailed match data
-    const detailedMatch = await axios.get(`https://api.opendota.com/api/matches/${match.match_id}`);
+    const detailedMatch = await axios.get(APIConstants.MATCH_DETAILS(match.match_id));
     const playerData = detailedMatch.data.players.find((p: { hero_id: number; player_slot: number }) => p.hero_id === match.hero_id);
     const isRadiant = playerData.player_slot < 128;
     const didWin = (isRadiant && detailedMatch.data.radiant_win) || (!isRadiant && !detailedMatch.data.radiant_win);
@@ -139,7 +139,7 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
 
 async function displayCombinedScoreboard(matchId: number, players: Array<{ steamId: string }>, channel: TextBasedChannel) {
   try {
-    const response = await axios.get<Match>(`https://api.opendota.com/api/matches/${matchId}`);
+    const response = await axios.get<Match>(APIConstants.MATCH_DETAILS(matchId));
     const match = response.data;
 
     const radiantPlayers = match.players.filter(p => p.isRadiant);
