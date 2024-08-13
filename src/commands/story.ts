@@ -15,7 +15,7 @@ export async function story(message: Message, args: string[]) {
   try {
     const matchData = await getDetailedMatchData(matchId);
     if (!matchData) {
-      return message.reply('Unable to fetch match data. The match might not be parsed yet.');
+      return message.reply('Unable to fetch match data. The match might not be parsed yet. Sending a parse request, please wait for a few minutes before trying again.');
     }
 
     await getMatchStory(message, matchData);

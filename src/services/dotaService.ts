@@ -212,7 +212,8 @@ export async function getDetailedMatchData(matchId: number) {
     const match = response.data;
 
     if (!match.version) {
-      console.log(`Match ${matchId} is not parsed yet.`);
+      console.log(`Match ${matchId} is not parsed yet. Sending a parse request.`);
+      requestMatchParse(matchId);
       return null;
     }
 
