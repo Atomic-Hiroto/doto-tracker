@@ -165,8 +165,14 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
     const radiantKills = radiantPlayers.reduce((sum, player) => sum + (player.kills || 0), 0);
     const direKills = direPlayers.reduce((sum, player) => sum + (player.kills || 0), 0);
 
+    // Check if any registered player won
+    const registeredPlayerWon = match.players.some(player => 
+      players.some(p => p.steamId === (player.account_id ? player.account_id.toString() : null)) &&
+      ((player.isRadiant && match.radiant_win) || (!player.isRadiant && !match.radiant_win))
+    );
+
     const embed = new EmbedBuilder()
-      .setColor(match.radiant_win ? '#66bb6a' : '#ef5350')
+      .setColor(registeredPlayerWon ? '#66bb6a' : '#ef5350')
       .setTitle(`Match ${matchId} Summary`)
       .setDescription(`**${match.radiant_win ? 'Radiant' : 'Dire'} Victory**`)
       .addFields(
