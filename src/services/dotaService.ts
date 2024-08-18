@@ -5,17 +5,18 @@ import { Match } from '../models/Match';
 import { UserDataService } from './userDataService';
 import { formatDuration } from '../utils/formatters';
 import { APIConstants, ChannelConstants, ProcessConstants } from '../constants';
+import { logger } from './loggerService';
 
 export async function checkNewMatches(client: Client, userDataService: UserDataService) {
   const guild = client.guilds.cache.first();
   if (!guild) {
-    console.error('Bot is not in any guild');
+    logger.error('Bot is not in any guild');
     return;
   }
 
   const channel = guild.channels.cache.find(ch => ch.name === ChannelConstants.DOTO_TRACKER_CHANNEL);
   if (!channel || !channel.isTextBased()) {
-    console.error('Could not find a suitable text-based channel to post updates');
+    logger.error('Could not find a suitable text-based channel to post updates');
     return;
   }
 
@@ -37,7 +38,7 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
         recentMatches.get(recentMatch.match_id)!.push({ discordId: user.discordId, steamId: user.steamId, match: recentMatch });
       }
     } catch (error) {
-      console.error(`Error fetching recent matches for user ${user.discordId}:`, error);
+      logger.error(`Error fetching recent matches for user ${user.discordId}:`, error);
     }
   }
 
@@ -70,7 +71,7 @@ export async function getRecentStats(discordId: string, steamId: string, channel
       await channel.send("No recent matches found for the user.");
     }
   } catch (error) {
-    console.error(`Error fetching recent match for user ${discordId}:`, error);
+    logger.error(`Error fetching recent match for user ${discordId}:`, error);
     await channel.send("An error occurred while fetching the recent match. Please try again later.");
   }
 }
@@ -81,7 +82,7 @@ async function getHeroName(heroId: number) {
     const hero = response.data.find((h: { id: number }) => h.id === heroId);
     return hero ? hero.localized_name : 'Unknown Hero';
   } catch (error) {
-    console.error('Error fetching hero data:', error);
+    logger.error('Error fetching hero data:', error);
     return 'Unknown Hero';
   }
 }
@@ -92,7 +93,7 @@ async function getItemName(itemId: number) {
     const item = Object.values(response.data).find(i => i.id === itemId);
     return item ? item.dname : 'Unknown Item';
   } catch (error) {
-    console.error('Error fetching item data:', error);
+    logger.error('Error fetching item data:', error);
     return 'Unknown Item';
   }
 }
@@ -139,7 +140,7 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
 
     await channel.send({ embeds: [embed] });
   } catch (error) {
-    console.error('Error sending match stats:', error);
+    logger.error('Error sending match stats:', error);
     channel.send('An error occurred while fetching the detailed match stats. Please try again later.');
   }
 }
@@ -188,7 +189,7 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
 
     await channel.send({ embeds: [embed] });
   } catch (error) {
-    console.error('Error displaying combined scoreboard:', error);
+    logger.error('Error displaying combined scoreboard:', error);
     await channel.send('An error occurred while fetching the combined scoreboard. Please try again later.');
   }
 }
@@ -198,7 +199,7 @@ async function isMatchParsed(matchId: number): Promise<boolean> {
     const response = await axios.get(APIConstants.MATCH_DETAILS(matchId));
     return response.data.version !== null;
   } catch (error) {
-    console.error(`Error checking if match ${matchId} is parsed:`, error);
+    logger.error(`Error checking if match ${matchId} is parsed:`, error);
     return false;
   }
 }
@@ -206,9 +207,9 @@ async function isMatchParsed(matchId: number): Promise<boolean> {
 async function requestMatchParse(matchId: number): Promise<void> {
   try {
     await axios.post(APIConstants.PARSE_REQUEST(matchId));
-    console.log(`Requested parsing for match ${matchId}`);
+    logger.info(`Requested parsing for match ${matchId}`);
   } catch (error) {
-    console.error(`Error requesting parse for match ${matchId}:`, error);
+    logger.error(`Error requesting parse for match ${matchId}:`, error);
   }
 }
 
@@ -218,7 +219,7 @@ export async function getDetailedMatchData(matchId: number) {
     const match = response.data;
 
     if (!match.version) {
-      console.log(`Match ${matchId} is not parsed yet. Sending a parse request.`);
+      logger.info(`Match ${matchId} is not parsed yet. Sending a parse request.`);
       requestMatchParse(matchId);
       return null;
     }
@@ -259,7 +260,7 @@ export async function getDetailedMatchData(matchId: number) {
 
     return processedData;
   } catch (error) {
-    console.error(`Error fetching detailed match data for match ${matchId}:`, error);
+    logger.error(`Error fetching detailed match data for match ${matchId}:`, error);
     return null;
   }
 }

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Message } from 'discord.js';
 import { AIConstants, ProcessConstants } from '../constants';
 import { formatDuration } from '../utils/formatters';
+import { logger } from './loggerService';
 
 const conversationHistory = new Map<string, any[]>();
 
@@ -55,19 +56,19 @@ export async function getAIText(message: Message, args: string[]) {
         await message.reply(chunk);
       }
     } else {
-      console.error('Unexpected API response structure:', response.data);
+      logger.error('Unexpected API response structure:', response.data);
       message.reply('Received an unexpected response from the AI service. Please try again later.');
     }
   } catch (error) {
-    console.error('Error getting AI text:', error);
+    logger.error('Error getting AI text:', error);
     if (axios.isAxiosError(error) && error.response) {
-      console.error('API response:', error.response.data);
+      logger.error('API response:', error.response.data);
       message.reply(`An error occurred while getting the AI-generated text. Status: ${error.response.status}. Please try again later.`);
     } else if (axios.isAxiosError(error) && error.request) {
-      console.error('No response received:', error.request);
+      logger.error('No response received:', error.request);
       message.reply('No response received from the AI service. Please check your internet connection and try again.');
     } else {
-      console.error('Error details:', error);
+      logger.error('Error details:', error);
       message.reply('An unexpected error occurred. Please try again later.');
     }
   }
@@ -124,11 +125,11 @@ Please create a narrative that captures the excitement and key moments of the ma
         await message.reply(chunk);
       }
     } else {
-      console.error('Unexpected API response structure:', response.data);
+      logger.error('Unexpected API response structure:', response.data);
       message.reply('Received an unexpected response from the AI service. Please try again later.');
     }
   } catch (error) {
-    console.error('Error getting AI story:', error);
+    logger.error('Error getting AI story:', error);
     message.reply('An error occurred while generating the match story. Please try again later.');
   }
 }

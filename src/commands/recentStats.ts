@@ -2,6 +2,7 @@ import { Message } from 'discord.js';
 import { Replies } from '../constants';
 import { UserDataService } from '../services/userDataService';
 import { getRecentStats } from '../services/dotaService';
+import { logger } from '../services/loggerService';
 
 export async function recentStats(message: Message, args: string[], userDataService: UserDataService) {
   let discordId = message.author.id;
@@ -18,7 +19,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
   try {
     await getRecentStats(discordId, user.steamId, message.channel);
   } catch (error) {
-    console.error(`Error in recentStats command for user ${discordId}:`, error);
+    logger.error(`Error in recentStats command for user ${discordId}:`, error);
     message.reply('An error occurred while fetching the recent match stats. Please try again later.');
   }
 }

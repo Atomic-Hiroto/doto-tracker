@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { UserData } from '../models/UserData';
 import { ProcessConstants } from '../constants';
+import { logger } from './loggerService';
 
 export class UserDataService {
   private userData: UserData[] = [];
@@ -16,9 +17,9 @@ export class UserDataService {
       this.userData.forEach(user => {
         this.userDataMap.set(user.discordId, user);
       });
-      console.log('User data loaded successfully');
+      logger.info('User data loaded successfully');
     } catch (error) {
-      console.error('Error loading user data:', error);
+      logger.error('Error loading user data:', error);
       this.userData = [];
     }
   }

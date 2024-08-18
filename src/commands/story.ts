@@ -1,6 +1,7 @@
 import { Message } from 'discord.js';
 import { getMatchStory } from '../services/aiService';
 import { getDetailedMatchData } from '../services/dotaService';
+import { logger } from '../services/loggerService';
 
 export async function story(message: Message, args: string[]) {
   if (args.length !== 1) {
@@ -20,7 +21,7 @@ export async function story(message: Message, args: string[]) {
 
     await getMatchStory(message, matchData);
   } catch (error) {
-    console.error('Error generating match story:', error);
+    logger.error('Error generating match story:', error);
     message.reply('An error occurred while generating the match story. Please try again later.');
   }
 }
