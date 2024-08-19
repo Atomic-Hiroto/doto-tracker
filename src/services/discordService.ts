@@ -2,12 +2,15 @@ import { Message } from 'discord.js';
 import { ProcessConstants, Commands } from '../constants';
 import { UserDataService } from './userDataService';
 import * as commandHandlers from '../commands';
+import { logger } from './loggerService';
 
 export async function handleMessage(message: Message, userDataService: UserDataService) {
   if (!message.content.startsWith(ProcessConstants.PREFIX) || message.author.bot) return;
 
   const args: string[] = message.content.slice(ProcessConstants.PREFIX.length).trim().split(ProcessConstants.SPACE);
   const command: string | undefined = args.shift()?.toLowerCase();
+
+  logger.debug(`Command ${command} called with args ${args} by author ${message.author}`);
 
   switch (command) {
     case Commands.HELP:
