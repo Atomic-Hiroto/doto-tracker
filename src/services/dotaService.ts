@@ -117,6 +117,7 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
       .setColor(didWin ? '#66bb6a' : '#ef5350')
       .setTitle(`Recent Match for ${user.username}`)
       .setDescription(`**${didWin ? 'Victory' : 'Defeat'}** as **${heroName}**`)
+      .setThumbnail(APIConstants.IMAGE_URL(heroName))
       .addFields(
         { name: 'K/D/A', value: `${playerData.kills}/${playerData.deaths}/${playerData.assists}`, inline: true },
         { name: 'KDA Ratio', value: ((playerData.kills + playerData.assists) / (playerData.deaths || 1)).toFixed(2), inline: true },
