@@ -1,4 +1,4 @@
-export const HELP = 'Available commands:\n+register <steam_id> - Register your Steam ID\n+rs [@user] - Show your or mentioned user\'s most recent match stats\n+toggleauto - Toggle auto-showing of your recent matches\n+help - Show this help message';
+export const HELP = 'Available commands:\n+register <steam_id> - Register your Steam ID\n+rs [@user] - Show your or mentioned user\'s most recent match stats\n+toggleauto - Toggle auto-showing of your recent matches\n+turbolb - Show turbo leaderboard\n+turbostats - Show your turbo stats\n+turbopairs - Show best turbo duos\n+myturbopairs - Show your turbo partnerships\n+help - Show this help message';
 export const CAOW = 'Thrower hai!!';
 export const PROVIDE_STEAM_ID = 'Please provide your Steam ID. Usage: +register <steam_id>';
 export const ALREADY_REGISTERED = (steamId: string, discordId: string) => `SteamId: ${steamId} is already registed with DiscordId: ${discordId}.`;

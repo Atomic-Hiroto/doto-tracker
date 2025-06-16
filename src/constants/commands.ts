@@ -8,4 +8,8 @@ export enum Commands {
     GPAT_CLEAR = "gpatclear",
     CAOW = "caow",
     STORY = "story",
+    TURBO_LEADERBOARD = "turbolb",
+    TURBO_STATS = "turbostats",
+    TURBO_PAIRINGS = "turbopairs",
+    MY_TURBO_PAIRINGS = "myturbopairs",
 }

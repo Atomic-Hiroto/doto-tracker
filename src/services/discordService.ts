@@ -1,10 +1,11 @@
 import { Message } from 'discord.js';
 import { ProcessConstants, Commands } from '../constants';
 import { UserDataService } from './userDataService';
+import { TurboStatsService } from './turboStatsService';
 import * as commandHandlers from '../commands';
 import { logger } from './loggerService';
 
-export async function handleMessage(message: Message, userDataService: UserDataService) {
+export async function handleMessage(message: Message, userDataService: UserDataService, turboStatsService: TurboStatsService) {
   if (!message.content.startsWith(ProcessConstants.PREFIX) || message.author.bot) return;
 
   const args: string[] = message.content.slice(ProcessConstants.PREFIX.length).trim().split(ProcessConstants.SPACE);
@@ -39,6 +40,18 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       break;
     case Commands.STORY:
       await commandHandlers.story(message, args);
+      break;
+    case Commands.TURBO_LEADERBOARD:
+      await commandHandlers.turboLeaderboard(message, turboStatsService);
+      break;
+    case Commands.TURBO_STATS:
+      await commandHandlers.turboStats(message, turboStatsService);
+      break;
+    case Commands.TURBO_PAIRINGS:
+      await commandHandlers.turboPairings(message, turboStatsService);
+      break;
+    case Commands.MY_TURBO_PAIRINGS:
+      await commandHandlers.myTurboPairings(message, turboStatsService);
       break;
     default:
       await message.reply('Unknown command. Use +help to see available commands.');
