@@ -12,4 +12,5 @@ export enum Commands {
     TURBO_STATS = "turbostats",
     TURBO_PAIRINGS = "turbopairs",
     MY_TURBO_PAIRINGS = "myturbopairs",
+    TOGGLE_SHARED_CONTEXT = "togglesharedcontext",
 }

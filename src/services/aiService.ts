@@ -3,8 +3,12 @@ import { Message } from 'discord.js';
 import { AIConstants, ProcessConstants } from '../constants';
 import { formatDuration } from '../utils/formatters';
 import { logger } from './loggerService';
+import { ChannelDataService } from './channelDataService';
 
 const conversationHistory = new Map<string, any[]>();
+const channelDataService = new ChannelDataService();
+
+export { channelDataService };
 
 export async function getAIText(message: Message, args: string[]) {
   if (args.length === 0) {
@@ -14,13 +18,16 @@ export async function getAIText(message: Message, args: string[]) {
   const prompt = args.join(' ');
   message.channel.sendTyping();
 
-  const userId = message.author.id;
-  if (!conversationHistory.has(userId)) {
-    conversationHistory.set(userId, []);
+  const isSharedContext = channelDataService.isSharedContext(message.channel.id);
+  const contextKey = isSharedContext ? message.channel.id : message.author.id;
+  
+  if (!conversationHistory.has(contextKey)) {
+    conversationHistory.set(contextKey, []);
   }
 
-  const userHistory = conversationHistory.get(userId)!;
-  userHistory.push({ role: "user", content: prompt });
+  const userHistory = conversationHistory.get(contextKey)!;
+  const userPrompt = isSharedContext ? `${message.author.username}: ${prompt}` : prompt;
+  userHistory.push({ role: "user", content: userPrompt });
 
   try {
     const response = await axios.post(
@@ -42,6 +49,7 @@ export async function getAIText(message: Message, args: string[]) {
 
     if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
       const aiResponse = response.data.choices[0].message.content;
+      console.log('AI Response:', aiResponse);
       userHistory.push({ role: "assistant", content: aiResponse });
 
       // Trim history if it gets too long
@@ -75,9 +83,16 @@ export async function getAIText(message: Message, args: string[]) {
 }
 
 export function clearConversationHistory(message: Message) {
-  const userId = message.author.id;
-  conversationHistory.delete(userId);
-  message.reply('Your AI conversation history has been cleared.');
+  const isSharedContext = channelDataService.isSharedContext(message.channel.id);
+  const contextKey = isSharedContext ? message.channel.id : message.author.id;
+  
+  conversationHistory.delete(contextKey);
+  
+  if (isSharedContext) {
+    message.reply('Channel AI conversation history has been cleared.');
+  } else {
+    message.reply('Your AI conversation history has been cleared.');
+  }
 }
 
 export async function getMatchStory(message: Message, matchData: any) {
