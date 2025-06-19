@@ -1,8 +1,8 @@
-import { Message } from 'discord.js';
+import { Message, PermissionFlagsBits } from 'discord.js';
 import { channelDataService } from '../services/aiService';
 
 export async function toggleSharedContext(message: Message, args: string[]) {
-  if (!message.member?.permissions.has('MANAGE_CHANNELS')) {
+  if (!message.member?.permissions.has(PermissionFlagsBits.ManageChannels)) {
     return message.reply('You need the "Manage Channels" permission to toggle shared context.');
   }
 

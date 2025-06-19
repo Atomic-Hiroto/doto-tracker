@@ -6,7 +6,7 @@ import { logger } from './loggerService';
 export class ChannelDataService {
   private channelData: ChannelData[] = [];
   private channelDataMap: Map<string, ChannelData> = new Map();
-  private readonly channelDataFile = ProcessConstants.DATA_FOLDER + '/channelData.json';
+  private readonly channelDataFile = 'channelData.json';
 
   constructor() {
     this.loadChannelData();
