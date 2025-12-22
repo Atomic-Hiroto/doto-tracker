@@ -150,7 +150,9 @@ export async function getAIText(message: Message, args: string[], triggeredByMen
       {
         model: AIConstants.AI_MODEL,
         messages: [
-          { role: "system", content: AIConstants.AI_SYSTEM_MESSAGE },
+          { role: "system", content: AIConstants.AI_SYSTEM_NOTE },
+          { role: "user", content: AIConstants.AI_PERSONA },
+          { role: "assistant", content: AIConstants.AI_PREFILL },
           ...userHistory
         ],
       },
