@@ -4,9 +4,28 @@ import { UserDataService } from './userDataService';
 import { TurboStatsService } from './turboStatsService';
 import * as commandHandlers from '../commands';
 import { logger } from './loggerService';
+import { getAIText } from './aiService';
 
 export async function handleMessage(message: Message, userDataService: UserDataService, turboStatsService: TurboStatsService) {
-  if (!message.content.startsWith(ProcessConstants.PREFIX) || message.author.bot) return;
+  // Ignore bot messages
+  if (message.author.bot) return;
+
+  // Check if the bot was mentioned
+  const botMentioned = message.mentions.has(message.client.user!);
+
+  if (botMentioned) {
+    // Remove the bot mention from the message content to get the actual prompt
+    const mentionRegex = new RegExp(`<@!?${message.client.user!.id}>`, 'g');
+    const prompt = message.content.replace(mentionRegex, '').trim();
+    const args = prompt ? prompt.split(/\s+/) : [];
+
+    logger.debug(`Bot mentioned by ${message.author.username} with args: ${args}`);
+    await getAIText(message, args, true);
+    return;
+  }
+
+  // Handle regular prefix commands
+  if (!message.content.startsWith(ProcessConstants.PREFIX)) return;
 
   const args: string[] = message.content.slice(ProcessConstants.PREFIX.length).trim().split(ProcessConstants.SPACE);
   const command: string | undefined = args.shift()?.toLowerCase();
