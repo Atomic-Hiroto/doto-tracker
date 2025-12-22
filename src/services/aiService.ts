@@ -47,11 +47,19 @@ async function resolveMentions(message: Message, content: string): Promise<strin
   return resolvedContent;
 }
 
-// Get the content of a replied/quoted message
+// Get the content of a replied/quoted message WITH surrounding context
 async function getReplyContext(message: Message): Promise<string | null> {
   if (!message.reference?.messageId) return null;
 
   try {
+    // Fetch context around the quoted message (not just the single message)
+    const contextAroundQuote = await fetchContextAroundMessage(message, message.reference.messageId);
+
+    if (contextAroundQuote) {
+      return `[Context around the message being replied to]\n${contextAroundQuote}\n[End context]`;
+    }
+
+    // Fallback: just get the single message if context fetch fails
     const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
     const resolvedContent = await resolveMentions(message, repliedMessage.content);
     return `[Replying to ${repliedMessage.author.username}: "${resolvedContent}"]`;
@@ -92,10 +100,86 @@ async function fetchChannelContext(message: Message): Promise<string> {
   }
 }
 
+// Fetch context around a specific quoted message (for replies to older messages)
+async function fetchContextAroundMessage(message: Message, targetMessageId: string): Promise<string> {
+  try {
+    const channel = message.channel;
+    if (!channel.isTextBased()) return '';
+
+    // Fetch the target message first
+    const targetMessage = await channel.messages.fetch(targetMessageId);
+
+    // Fetch messages BEFORE the target
+    const messagesBefore = await channel.messages.fetch({
+      limit: AIConstants.CONTEXT_AROUND_QUOTE,
+      before: targetMessageId
+    });
+
+    // Fetch messages AFTER the target
+    const messagesAfter = await channel.messages.fetch({
+      limit: AIConstants.CONTEXT_AROUND_QUOTE,
+      after: targetMessageId
+    });
+
+    // Combine and sort chronologically
+    const allMessages = [
+      ...messagesBefore.values(),
+      targetMessage,
+      ...messagesAfter.values()
+    ].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+    // Format messages, marking the quoted one
+    const formattedMessages = await Promise.all(
+      allMessages
+        .filter(msg => !msg.author.bot)
+        .map(async msg => {
+          const resolvedContent = await resolveMentions(message, msg.content);
+          const isQuoted = msg.id === targetMessageId;
+          if (isQuoted) {
+            return `>> QUOTED: ${msg.author.username}: ${resolvedContent} <<`;
+          }
+          return `${msg.author.username}: ${resolvedContent}`;
+        })
+    );
+
+    return formattedMessages.join('\n');
+  } catch (error) {
+    logger.error('Error fetching context around message:', error);
+    return '';
+  }
+}
+
+// Smart context builder - decides which context strategy to use
+async function buildSmartContext(message: Message): Promise<{ context: string; type: 'reply' | 'recent' } | null> {
+  const isReply = !!message.reference?.messageId;
+
+  if (isReply && message.reference?.messageId) {
+    // User is replying to a specific message - get context around that message
+    const context = await fetchContextAroundMessage(message, message.reference.messageId);
+    if (context) {
+      return {
+        context: `[Context around quoted message]\n${context}\n[End context]`,
+        type: 'reply'
+      };
+    }
+  }
+
+  // Default: fetch recent channel messages
+  const context = await fetchChannelContext(message);
+  if (context) {
+    return {
+      context: `[Recent channel messages]\n${context}\n[End context]`,
+      type: 'recent'
+    };
+  }
+
+  return null;
+}
+
 export async function getAIText(message: Message, args: string[], triggeredByMention: boolean = false) {
   // If triggered by mention with no args, just say hi
   if (args.length === 0 && triggeredByMention) {
-    return message.reply('Hey! What\'s up? You can ask me anything~');
+    return message.reply('yo~ you pinged me but said nothing... what do u want baka 💢');
   }
 
   if (args.length === 0) {
@@ -118,54 +202,142 @@ export async function getAIText(message: Message, args: string[], triggeredByMen
   const isSharedContext = channelDataService.isSharedContext(message.channel.id);
   const contextKey = isSharedContext ? message.channel.id : message.author.id;
 
-  // Check if this is a fresh conversation that needs channel context
-  const needsChannelContext = isSharedContext && !conversationHistory.has(contextKey);
-
   if (!conversationHistory.has(contextKey)) {
     conversationHistory.set(contextKey, []);
   }
 
   const userHistory = conversationHistory.get(contextKey)!;
 
-  // If shared context and fresh conversation, fetch recent channel messages
-  if (needsChannelContext) {
-    const channelContext = await fetchChannelContext(message);
-    if (channelContext) {
-      userHistory.push({
-        role: "user",
-        content: `[Context: Recent messages in this channel]\n${channelContext}\n\n[End of context - the above are messages from the channel for reference]`
-      });
-      userHistory.push({
-        role: "assistant",
-        content: "Got it! I've noted the recent channel conversation for context. How can I help?"
-      });
+  // For shared context: Fetch smart context ONLY if not already replying
+  // (Reply context already includes surrounding messages)
+  let smartContextPrefix = '';
+  const hasReplyContext = !!message.reference?.messageId;
+
+  if (isSharedContext && !hasReplyContext) {
+    // Only fetch recent messages if NOT replying (reply already has context)
+    const smartContext = await buildSmartContext(message);
+    if (smartContext) {
+      smartContextPrefix = `${smartContext.context}\n\n`;
+      logger.debug(`Using ${smartContext.type} context for shared mode`);
     }
   }
-  const userPrompt = isSharedContext ? `${message.author.username}: ${prompt}` : prompt;
-  userHistory.push({ role: "user", content: userPrompt });
+  // CHECK FOR IMAGES (Current message + Replied message)
+  const imageUrls: string[] = [];
+  const validExtensions = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+
+  // 1. Current message attachments
+  message.attachments.forEach(attachment => {
+    const ext = attachment.name?.split('.').pop()?.toLowerCase();
+    if (ext && validExtensions.includes(ext)) {
+      imageUrls.push(attachment.url);
+    }
+  });
+
+  // 2. Replied message attachments
+  if (message.reference?.messageId) {
+    try {
+      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      repliedMessage.attachments.forEach(attachment => {
+        const ext = attachment.name?.split('.').pop()?.toLowerCase();
+        if (ext && validExtensions.includes(ext)) {
+          imageUrls.push(attachment.url);
+        }
+      });
+    } catch (e) {
+      logger.debug("Failed to fetch attachments from replied message");
+    }
+  }
+
+  // Build the user prompt with smart context prefix (if applicable)
+  const userPromptText = smartContextPrefix
+    ? `${smartContextPrefix}${message.author.username}: ${prompt}`
+    : `${message.author.username}: ${prompt}`;
+  let finalUserContent: any = userPromptText;
+
+  if (imageUrls.length > 0) {
+    // Multimodal payload structure
+    finalUserContent = [
+      { type: "text", text: userPromptText },
+      ...imageUrls.map(url => ({
+        type: "image_url",
+        image_url: { url }
+      }))
+    ];
+  }
+
+  userHistory.push({ role: "user", content: finalUserContent });
 
   try {
+
+    // Construct the payload entirely first to log it
+    const apiPayload = {
+      model: AIConstants.AI_MODEL,
+      messages: [
+        // 1. System Prompt (combined instructions)
+        { role: "system", content: AIConstants.SYSTEM_PROMPT },
+
+        // 2. Chat History (includes context + user message)
+        ...userHistory,
+
+        // 3. Assistant Prefill (guides response style)
+        { role: "assistant", content: AIConstants.AI_PREFILL }
+      ],
+      ...AIConstants.AI_PARAMS
+    };
+
+    // LOG THE FULL PAYLOAD for inspection
+    console.log("--------------- AI REQUEST PAYLOAD ---------------");
+    console.dir(apiPayload, { depth: null, colors: true });
+    console.log("--------------------------------------------------");
+
     const response = await axios.post(
       "https://openrouter.ai/api/v1/chat/completions",
-      {
-        model: AIConstants.AI_MODEL,
-        messages: [
-          { role: "system", content: AIConstants.AI_SYSTEM_NOTE },
-          { role: "user", content: AIConstants.AI_PERSONA },
-          ...userHistory,
-          { role: "assistant", content: AIConstants.AI_PREFILL }
-        ],
-      },
+      apiPayload,
       {
         headers: {
           "Authorization": `Bearer ${ProcessConstants.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://github.com/Atomic-Hiroto/doto-tracker", // Required by OpenRouter for rankings
+          "X-Title": "Doto Tracker" // Required by OpenRouter for rankings
         }
       }
     );
 
     if (response.data && response.data.choices && response.data.choices[0] && response.data.choices[0].message) {
-      const aiResponse = response.data.choices[0].message.content;
+      const message_response = response.data.choices[0].message;
+      const messageContent = message_response.content;
+
+      // Handle OpenRouter reasoning response format
+      // OpenRouter returns reasoning in a separate 'reasoning' field
+      let aiResponse: string;
+
+      // Check for OpenRouter reasoning field
+      if (message_response.reasoning) {
+        console.log('--- AI REASONING (not shown to user) ---');
+        console.log(message_response.reasoning);
+        console.log('--- END REASONING ---');
+      }
+
+
+
+      // Handle content (could be string or array for multimodal responses)
+      if (Array.isArray(messageContent)) {
+        // Extract only text blocks, ignore thinking blocks (fallback for direct Claude)
+        const textBlocks = messageContent.filter((block: any) => block.type === 'text');
+        aiResponse = textBlocks.map((block: any) => block.text).join('').trimStart();
+
+        // Also check for thinking blocks (direct Claude API format)
+        const thinkingBlocks = messageContent.filter((block: any) => block.type === 'thinking');
+        if (thinkingBlocks.length > 0) {
+          console.log('--- AI THINKING (not shown to user) ---');
+          thinkingBlocks.forEach((block: any) => console.log(block.thinking));
+          console.log('--- END THINKING ---');
+        }
+      } else {
+        // Standard string response
+        aiResponse = (messageContent || '').trimStart();
+      }
+
       console.log('AI Response:', aiResponse);
       userHistory.push({ role: "assistant", content: aiResponse });
 
@@ -177,8 +349,12 @@ export async function getAIText(message: Message, args: string[], triggeredByMen
       // Split the response into chunks of 2000 characters or less
       const chunks = aiResponse.match(new RegExp(`(.|[\r\n]){1,${AIConstants.MAX_MESSAGE_LENGTH}}`, 'g'));
 
-      for (const chunk of chunks) {
-        await message.reply(chunk);
+      if (chunks) {
+        for (const chunk of chunks) {
+          await message.reply(chunk);
+        }
+      } else if (aiResponse) {
+        await message.reply(aiResponse);
       }
     } else {
       logger.error('Unexpected API response structure:', response.data);
