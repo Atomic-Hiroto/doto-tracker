@@ -3,11 +3,12 @@ import axios from 'axios';
 
 import { Match } from '../models/Match';
 import { UserDataService } from './userDataService';
+import { TurboStatsService } from './turboStatsService';
 import { formatDuration } from '../utils/formatters';
 import { APIConstants, ChannelConstants, ProcessConstants } from '../constants';
 import { logger } from './loggerService';
 
-export async function checkNewMatches(client: Client, userDataService: UserDataService) {
+export async function checkNewMatches(client: Client, userDataService: UserDataService, turboStatsService?: TurboStatsService) {
   const guild = client.guilds.cache.first();
   if (!guild) {
     logger.error('Bot is not in any guild');
@@ -49,6 +50,17 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
       await channel.send(`A parse request has been sent for match ${matchId}. More detailed stats will be available soon.`);
     }
 
+    // Process turbo stats if turboStatsService is provided
+    if (turboStatsService) {
+      try {
+        const matchDetails = await axios.get(APIConstants.MATCH_DETAILS(matchId));
+        const registeredPlayers = players.map(p => ({ discordId: p.discordId, steamId: p.steamId }));
+        turboStatsService.processTurboMatch(matchDetails.data, registeredPlayers);
+      } catch (error) {
+        logger.error(`Error processing turbo stats for match ${matchId}:`, error);
+      }
+    }
+
     if (players.length > 1) {
       await displayCombinedScoreboard(matchId, players, channel);
     } else {
@@ -57,7 +69,7 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
   }
 
   // Check again after the specified interval
-  setTimeout(() => checkNewMatches(client, userDataService), ProcessConstants.CHECK_INTERVAL);
+  setTimeout(() => checkNewMatches(client, userDataService, turboStatsService), ProcessConstants.CHECK_INTERVAL);
 }
 
 export async function getRecentStats(discordId: string, steamId: string, channel: TextBasedChannel): Promise<void> {
