@@ -3,6 +3,7 @@ export const HELP = `**Available Commands:**
 **🎮 Player & Match Commands:**
 \`+register <steam_id>\` - Register your Steam ID
 \`+unregister\` - Unregister your Steam ID
+\`+profile [@user]\` - Show detailed player profile
 \`+rs [@user]\` - Show recent match stats
 \`+toggleauto\` - Toggle auto-showing of your matches
 \`+story <match_id>\` - Generate AI story for a match
@@ -10,6 +11,7 @@ export const HELP = `**Available Commands:**
 **🏆 Turbo Mode Commands:**
 \`+turbolb\` - Show turbo leaderboard
 \`+turbostats\` - Show your turbo stats
+\`+tophero [@user]\` - Show top turbo heroes (past 4 weeks)
 \`+turbopairs\` - Show best turbo duos
 \`+myturbopairs\` - Show your turbo partnerships
 

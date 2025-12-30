@@ -13,4 +13,6 @@ export enum Commands {
     TURBO_PAIRINGS = "turbopairs",
     MY_TURBO_PAIRINGS = "myturbopairs",
     TOGGLE_SHARED_CONTEXT = "togglesharedcontext",
+    PROFILE = "profile",
+    TOP_HERO = "tophero",
 }

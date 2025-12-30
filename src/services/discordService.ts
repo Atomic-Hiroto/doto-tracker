@@ -75,6 +75,12 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TOGGLE_SHARED_CONTEXT:
       await commandHandlers.toggleSharedContext(message, args);
       break;
+    case Commands.PROFILE:
+      await commandHandlers.profile(message, args, userDataService, turboStatsService);
+      break;
+    case Commands.TOP_HERO:
+      await commandHandlers.tophero(message, args, userDataService);
+      break;
     default:
       await message.reply('Unknown command. Use +help to see available commands.');
       break;
