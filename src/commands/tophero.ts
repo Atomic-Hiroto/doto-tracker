@@ -53,14 +53,24 @@ export async function tophero(
         const response = await axios.get<HeroStats[]>(APIConstants.PLAYER_TURBO_HEROES(user.steamId, daysAgo));
         const heroes = response.data;
 
-        // Filter heroes with at least 1 game and sort by games played
+        // Calculate hero rating: winrate * confidence factor + games bonus
+        // Confidence factor scales from 0 to 1 based on games (full confidence at 10+ games)
+        const calculateHeroRating = (hero: HeroStats): number => {
+            if (hero.games === 0) return 0;
+            const winRate = hero.win / hero.games;
+            const confidenceFactor = Math.min(hero.games / 10, 1);
+            return (winRate * 100 * confidenceFactor) + (hero.games * 0.5);
+        };
+
+        // Filter heroes with at least 2 games and sort by rating (best heroes, not most played)
         const topHeroes = heroes
-            .filter(h => h.games >= 1)
-            .sort((a, b) => b.games - a.games)
+            .filter(h => h.games >= 2)
+            .map(h => ({ ...h, rating: calculateHeroRating(h) }))
+            .sort((a, b) => b.rating - a.rating)
             .slice(0, 5);
 
         if (topHeroes.length === 0) {
-            return message.reply(`No turbo games found for ${targetUser.username} in the past 4 weeks. Play some turbo! ⚡`);
+            return message.reply(`No turbo games found for ${targetUser.username} in the past 4 weeks (min 2 games per hero). Play some turbo! ⚡`);
         }
 
         // Build hero lines
@@ -72,7 +82,7 @@ export async function tophero(
 
                 const medals = ['🥇', '🥈', '🥉', '4.', '5.'];
                 return {
-                    name: `${medals[index]} ${heroName}`,
+                    name: `${medals[index]} ${heroName} (${hero.rating.toFixed(1)} pts)`,
                     value: `**${hero.games}** games | **${hero.win}**W/**${losses}**L (${winRate}% WR)`,
                     inline: false
                 };
@@ -82,8 +92,8 @@ export async function tophero(
         // Build embed
         const embed = new EmbedBuilder()
             .setColor('#f59e0b')
-            .setTitle(`⚡ Top Turbo Heroes: ${targetUser.username}`)
-            .setDescription(`📅 **Past 4 Weeks**`)
+            .setTitle(`⚡ Best Turbo Heroes: ${targetUser.username}`)
+            .setDescription(`📅 **Past 4 Weeks** • Ranked by rating (winrate + games)`)
             .setThumbnail(targetUser.displayAvatarURL())
             .addFields(heroLines)
             .setFooter({ text: `Steam ID: ${user.steamId} • Data from OpenDota` })

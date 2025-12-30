@@ -11,7 +11,7 @@ export const HELP = `**Available Commands:**
 **🏆 Turbo Mode Commands:**
 \`+turbolb\` - Show turbo leaderboard
 \`+turbostats\` - Show your turbo stats
-\`+tophero [@user]\` - Show top turbo heroes (past 4 weeks)
+\`+topheros [@user]\` - Show best turbo heroes (past 4 weeks)
 \`+turbopairs\` - Show best turbo duos
 \`+myturbopairs\` - Show your turbo partnerships
 

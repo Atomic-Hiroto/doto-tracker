@@ -78,7 +78,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.PROFILE:
       await commandHandlers.profile(message, args, userDataService, turboStatsService);
       break;
-    case Commands.TOP_HERO:
+    case Commands.TOP_HEROES:
       await commandHandlers.tophero(message, args, userDataService);
       break;
     default:
