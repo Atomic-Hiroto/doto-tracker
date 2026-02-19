@@ -7,6 +7,7 @@ import { ProcessConstants } from './constants';
 import { logger } from './services/loggerService';
 import { dotaDataService } from './services/dotaDataService';
 import { registerInteractionHandler } from './services/interactionService';
+import { closeDotabuffBrowser } from './services/dotabuffScraper';
 
 export async function initializeBot(client: Client) {
   const userDataService = new UserDataService();
@@ -28,19 +29,16 @@ export async function initializeBot(client: Client) {
   registerInteractionHandler(client);
 
   // Graceful shutdown
-  process.on('SIGINT', () => {
-    logger.info('Received SIGINT — shutting down gracefully...');
+  async function shutdown(signal: string) {
+    logger.info(`Received ${signal} — shutting down gracefully...`);
     userDataService.saveUserData();
+    await closeDotabuffBrowser().catch(() => null);
     client.destroy();
     process.exit(0);
-  });
+  }
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  process.on('SIGTERM', () => {
-    logger.info('Received SIGTERM — shutting down gracefully...');
-    userDataService.saveUserData();
-    client.destroy();
-    process.exit(0);
-  });
 
   return client;
 }

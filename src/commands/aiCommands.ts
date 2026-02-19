@@ -4,7 +4,7 @@ import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
 import { getDetailedMatchData } from '../services/dotaService';
-
+import { fetchDotabuffTurboMeta } from '../services/dotabuffScraper';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping, safeSend } from '../utils/channelHelpers';
 import axios from 'axios';
@@ -218,19 +218,61 @@ Keep it punchy, under 200 words.`;
 }
 
 export async function meta(message: Message) {
+    const loadingMsg = await safeSend(message.channel, '⏳ Scraping Dotabuff turbo meta… (this takes ~30s)');
     try {
         safeTyping(message.channel);
 
-        const response = await opendotaClient.get<any[]>('/heroStats');
-        const heroStats = response.data;
+        // ─── Try Dotabuff lane-specific data first ───────────────────────────────────────
+        let usesDotabuff = false;
+        let laneFields: { name: string; value: string; inline: boolean }[] = [];
+        let turboSummary = '';
 
-        // pub_pick / pub_win — all pub game modes combined
+        try {
+            const lanes = await fetchDotabuffTurboMeta();
+            usesDotabuff = lanes.some(l => l.heroes.length > 0);
+
+            if (usesDotabuff) {
+                for (const lane of lanes) {
+                    if (lane.heroes.length === 0) continue;
+                    // Top 4 by win rate, min pick rate filter to avoid tiny samples
+                    const top = lane.heroes
+                        .filter(h => h.pickRate >= 3)
+                        .sort((a, b) => b.winRate - a.winRate)
+                        .slice(0, 4);
+                    if (top.length === 0) continue;
+                    const lines = top.map(h =>
+                        `**${h.heroName}** [${h.tier}] — ${h.winRate.toFixed(1)}% WR (${h.pickRate.toFixed(1)}% pick)`
+                    );
+                    laneFields.push({
+                        name: `📘 ${lane.positionLabel}`,
+                        value: trunc(lines.join('\n')),
+                        inline: true,
+                    });
+                }
+
+                // Build a flat turbo summary for AI
+                turboSummary = lanes.map(l => {
+                    const top3 = l.heroes
+                        .filter(h => h.pickRate >= 3)
+                        .sort((a, b) => b.winRate - a.winRate)
+                        .slice(0, 3)
+                        .map(h => `${h.heroName} ${h.winRate.toFixed(1)}%`)
+                        .join(', ');
+                    return `${l.positionLabel}: ${top3}`;
+                }).join('\n');
+            }
+        } catch (scrapeErr) {
+            logger.warn('Dotabuff scrape failed, falling back to OpenDota:', scrapeErr);
+        }
+
+        // ─── Fallback: OpenDota pub + turbo totals ─────────────────────────────────────────
+        const odResponse = await opendotaClient.get<any[]>('/heroStats');
+        const heroStats = odResponse.data;
+
         const pubHeroes = heroStats
             .filter((h: any) => (h.pub_pick || 0) >= 1000)
             .sort((a: any, b: any) => (b.pub_win / (b.pub_pick || 1)) - (a.pub_win / (a.pub_pick || 1)))
             .slice(0, 8);
-
-        // turbo_picks / turbo_wins
         const turboHeroes = heroStats
             .filter((h: any) => (h.turbo_picks || 0) >= 1000)
             .sort((a: any, b: any) => (b.turbo_wins / (b.turbo_picks || 1)) - (a.turbo_wins / (a.turbo_picks || 1)))
@@ -249,48 +291,64 @@ export async function meta(message: Message) {
             })),
         ]);
 
-        const aiPrompt = `Current Dota 2 pub meta (highest win rates, OpenDota data):
+        // ─── AI commentary ────────────────────────────────────────────────────────
+        const aiPrompt = usesDotabuff
+            ? `Current Dota 2 Turbo meta by lane (Dotabuff, last 7 days):
+${turboSummary}
+
+Pub win rates (OpenDota, all modes):
 ${pubLines.join('\n')}
 
-Turbo mode top heroes:
+Give a punchy meta snapshot (under 220 words):
+- Which lane/hero is dominating turbo right now and why
+- One hero that's great in turbo specifically (fast game = good)
+- One underrated turbo pick worth spamming
+- One key macro tip for turbo this patch
+Be specific, spicy, and opinionated.`
+            : `Current Dota 2 pub meta (OpenDota):
+${pubLines.join('\n')}
+
+Turbo top heroes:
 ${turboLines.join('\n')}
 
 Give a brief meta snapshot (under 200 words):
-- 2-3 strongest current picks in pubs and why they're broken
-- Why 1-2 of the turbo heroes dominate that mode
-- One underrated pick worth trying
-- One general strategy that's working right now
+- 2-3 strongest picks and why
+- Why 1-2 turbo heroes dominate
+- One underrated pick
+- One general strategy tip
 Keep it spicy and punchy.`;
 
         const aiTake = await callAI(COACH_SYSTEM, aiPrompt);
 
+        // ─── Build embed ────────────────────────────────────────────────────────────────────
         const embed = new EmbedBuilder()
             .setColor('#0ea5e9')
             .setTitle('📊 Current Meta Snapshot')
-            .addFields(
-                {
-                    name: '🏆 Pub Win Rates',
-                    value: trunc(pubLines.join('\n') || 'No data'),
-                    inline: false,
-                },
-                {
-                    name: '⚡ Turbo Win Rates',
-                    value: trunc(turboLines.join('\n') || 'No data'),
-                    inline: false,
-                },
-                {
-                    name: '🎙️ doto-chan\'s take',
-                    value: trunc(aiTake || 'No commentary available.'),
-                    inline: false,
-                }
-            )
-            .setFooter({ text: 'Data from OpenDota • doto-chan meta digest' })
-            .setURL('https://www.opendota.com/heroes')
+            .setURL('https://www.dotabuff.com/heroes?view=meta&mode=turbo&date=7d')
             .setTimestamp();
 
+        if (usesDotabuff && laneFields.length > 0) {
+            embed.addFields(
+                ...laneFields,
+                { name: '🏆 Pub Win Rates (all modes)', value: trunc(pubLines.join('\n') || 'No data'), inline: false },
+                { name: '🎙️ doto-chan\'s take', value: trunc(aiTake || 'No commentary available.'), inline: false }
+            );
+            embed.setFooter({ text: 'Turbo data: Dotabuff (7d) • Pub data: OpenDota • doto-chan meta digest' });
+        } else {
+            embed.addFields(
+                { name: '🏆 Pub Win Rates', value: trunc(pubLines.join('\n') || 'No data'), inline: false },
+                { name: '⚡ Turbo Win Rates', value: trunc(turboLines.join('\n') || 'No data'), inline: false },
+                { name: '🎙️ doto-chan\'s take', value: trunc(aiTake || 'No commentary available.'), inline: false }
+            );
+            embed.setFooter({ text: 'Data: OpenDota • doto-chan meta digest' });
+        }
+
+        // Delete the loading message
+        if (loadingMsg) await loadingMsg.delete().catch(() => null);
         await message.reply({ embeds: [embed] });
     } catch (error) {
         logger.error('Error in meta command:', error);
+        if (loadingMsg) await loadingMsg.delete().catch(() => null);
         await safeSend(message.channel, 'An error occurred fetching meta data. Please try again.');
     }
 }
