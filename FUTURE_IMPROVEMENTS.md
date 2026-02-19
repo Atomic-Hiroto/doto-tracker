@@ -1,247 +1,273 @@
-# Doto-Tracker Bot - Future Improvements & Features
+# 🎮 Doto-Chan — The Ultimate Roadmap
 
-## Current Bot Strengths
-- **Solid Architecture**: Well-structured TypeScript codebase with proper separation of concerns
-- **Rich Dota 2 Integration**: Comprehensive OpenDota API usage with detailed match tracking
-- **Innovative AI Features**: Chat assistant with personality + match story generation
-- **Smart Analytics**: Turbo mode leaderboards with duo tracking and rating system
-- **Good UX**: Rich Discord embeds, auto-match sharing, conversation history
+> From a simple match tracker to the **best damn Dota 2 Discord companion** in existence.
 
-## Key Areas for Improvement
-
-### 🏗️ Infrastructure Upgrades
-
-#### High Priority
-1. **Database Migration**
-   - Replace JSON files with SQLite/PostgreSQL for better data persistence
-   - Add proper schema migrations
-   - Implement data backup strategies
-   - Handle concurrent access properly
-
-2. **Enhanced Error Handling**
-   - Add retry mechanisms with exponential backoff
-   - Implement circuit breakers for external APIs
-   - Add health check endpoints
-   - Graceful degradation when services are down
-
-3. **Performance Optimizations**
-   - Cache hero and item data locally
-   - Implement conversation history cleanup
-   - Add pagination for leaderboards
-   - Memory leak prevention
-
-#### Medium Priority
-4. **Caching System**
-   - Redis integration for distributed caching
-   - Cache OpenDota responses
-   - Cache processed match data
-   - Intelligent cache invalidation
-
-5. **Monitoring & Logging**
-   - Structured logging with correlation IDs
-   - Performance metrics collection
-   - Error tracking and alerting
-   - API usage monitoring
-
-### 🚀 New Feature Ideas
-
-#### Enhanced Match Analysis
-- **Performance Trends**: Track player improvement over time with graphs
-- **Hero Recommendations**: AI suggests heroes based on recent performance
-- **Match Prediction**: Predict match outcomes based on team composition
-- **Detailed Analytics**: GPM/XPM trends, item build analysis, timing benchmarks
-- **Heatmaps**: Visual representation of player performance across different heroes
-- **Comparison Tools**: Compare performance with friends or pro players
-
-#### Social Features
-- **Guild System**: Create player groups with shared leaderboards
-- **Match Challenges**: Users can challenge each other to matches
-- **Achievement System**: Unlock badges for milestones (first rampage, 100 wins, etc.)
-- **Player Profiles**: Rich profile cards with stats, favorite heroes, recent highlights
-- **Friend System**: Add friends and track their performance
-- **Social Feed**: Share highlights and achievements with friends
-
-#### Interactive Features
-- **Draft Simulator**: Practice drafting with AI suggestions
-- **Hero Quiz**: Test knowledge of heroes, items, mechanics
-- **Match Betting**: Friendly betting system with virtual currency
-- **Tournament Brackets**: Organize mini-tournaments within Discord servers
-- **Trivia Games**: Dota 2 trivia with leaderboards
-- **Daily Challenges**: Daily goals for users to complete
-
-#### Quality of Life Improvements
-- **Smart Notifications**: Filter match alerts by game mode, performance, duration
-- **Custom Dashboards**: Users configure which stats they want to see
-- **Match Comparison**: Compare two matches side-by-side
-- **Team Analysis**: Analyze premade team performance vs solo queue
-- **Quick Commands**: Shorthand versions of popular commands
-- **Scheduled Reports**: Weekly/monthly performance summaries
-
-#### Advanced AI Features
-- **Coaching Mode**: AI analyzes replays and gives improvement tips
-- **Meta Analysis**: Track and explain current meta trends
-- **Build Recommendations**: Suggest item builds based on match context
-- **Counter-pick Suggestions**: Help with drafting against enemy picks
-- **Match Commentary**: AI generates play-by-play commentary
-- **Strategy Explanations**: Explain why certain decisions were good/bad
-
-### 🛠️ Technical Improvements
-
-#### User Interface
-- **Interactive Buttons**: Replace text commands with Discord buttons/select menus
-- **Slash Commands**: Implement Discord slash commands for better UX
-- **Context Menus**: Right-click actions on messages
-- **Embed Interactions**: Clickable embeds with multiple pages
-
-#### Integration & Scaling
-- **Webhook Integration**: Real-time match updates via Discord webhooks
-- **Admin Panel**: Web interface for bot configuration and monitoring
-- **Multi-server Support**: Scale across multiple Discord communities
-- **API Rate Limiting**: Better handling of OpenDota rate limits
-- **Load Balancing**: Distribute load across multiple bot instances
-
-#### Data & Analytics
-- **Data Export**: Allow users to export their data
-- **Privacy Controls**: GDPR compliance features
-- **Data Visualization**: Charts and graphs for statistics
-- **Historical Data**: Long-term data retention and analysis
-
-### 📊 Analytics & Monitoring
-
-#### Bot Performance
-- **Command Usage Statistics**: Track which commands are used most
-- **Response Time Monitoring**: Monitor bot response times
-- **Error Rate Tracking**: Track and alert on error rates
-- **Resource Usage**: Monitor memory and CPU usage
-
-#### User Engagement
-- **Active User Metrics**: Track daily/weekly/monthly active users
-- **Retention Analysis**: Understand user retention patterns
-- **Feature Adoption**: Track which features are popular
-- **User Feedback**: Collect and analyze user feedback
-
-## Quick Wins to Implement First
-
-### Phase 1 (Immediate - 1-2 weeks)
-1. **Interactive Match Display**: Add reaction buttons for "Show Details", "Get Story", "Compare Stats"
-2. **Hero Performance Tracking**: Track win rates per hero for registered users
-3. **Match Streaks**: Detect and celebrate win/loss streaks
-4. **Quick Stats Command**: Add `+quick` for condensed recent performance
-5. **Command Aliases**: Add shorter versions of commands (`+rs` → `+r`, etc.)
-
-### Phase 2 (Short term - 1 month)
-1. **Match Filters**: Filter matches by hero, game mode, outcome
-2. **Performance Graphs**: Simple ASCII or image-based performance charts
-3. **Hero Suggestions**: AI recommends heroes based on recent performance
-4. **Better Error Messages**: More helpful error messages with suggestions
-5. **Slash Commands**: Implement Discord slash commands
-
-### Phase 3 (Medium term - 2-3 months)
-1. **Database Migration**: Move from JSON to proper database
-2. **Achievement System**: Basic achievement tracking
-3. **Advanced Analytics**: More detailed performance analysis
-4. **Tournament Features**: Basic tournament bracket system
-5. **Web Dashboard**: Simple web interface for viewing stats
-
-### Phase 4 (Long term - 6+ months)
-1. **Guild System**: Player groups and communities
-2. **Advanced AI Features**: Coaching and meta analysis
-3. **Mobile App**: Companion mobile application
-4. **Professional Features**: Features for teams and coaches
-5. **Monetization**: Premium features for sustainability
-
-## Command Ideas
-
-### New Commands to Add
-- `+profile [@user]` - Show detailed player profile
-- `+compare <user1> <user2>` - Compare two players
-- `+predict` - Predict next match outcome
-- `+coaching` - Get AI coaching tips
-- `+meta` - Show current meta information
-- `+achievements [@user]` - Show user achievements
-- `+streak [@user]` - Show current win/loss streak
-- `+heroes [@user]` - Show hero statistics
-- `+builds <hero>` - Show popular builds for hero
-- `+counters <hero>` - Show hero counters
-- `+quiz` - Start a Dota 2 quiz
-- `+challenge <user>` - Challenge user to match
-- `+guild` - Guild management commands
-- `+tournament` - Tournament management
-- `+export` - Export user data
-- `+privacy` - Privacy settings
-
-### Command Improvements
-- Add more aliases for existing commands
-- Better help text with examples
-- Command categories in help
-- Auto-completion suggestions
-- Command usage statistics
-
-## Technical Debt & Code Quality
-
-### Immediate Fixes Needed
-1. **Fix togglesharedcontext command** - Currently not recognized
-2. **Add input validation** - Better validation for all user inputs
-3. **Improve error handling** - More specific error messages
-4. **Add unit tests** - Start with critical functions
-
-### Code Quality Improvements
-1. **Add comprehensive unit tests**
-2. **Integration tests for API endpoints**
-3. **Code coverage reporting**
-4. **ESLint and Prettier configuration**
-5. **Documentation improvements**
-6. **Type safety improvements**
-
-## Deployment & Operations
-
-### DevOps Improvements
-1. **CI/CD Pipeline**: Automated testing and deployment
-2. **Docker Containerization**: Containerize the application
-3. **Health Checks**: Implement health check endpoints
-4. **Logging Strategy**: Centralized logging with log aggregation
-5. **Monitoring**: Application performance monitoring
-6. **Backup Strategy**: Automated backups of user data
-
-### Security Enhancements
-1. **Input Sanitization**: Proper input validation and sanitization
-2. **Rate Limiting**: Implement rate limiting for commands
-3. **Permission System**: More granular permission controls
-4. **Audit Logging**: Track administrative actions
-5. **Secret Management**: Proper secret management system
-
-## Community & Growth
-
-### Community Features
-1. **Feature Voting**: Let users vote on new features
-2. **Beta Testing**: Beta testing program for new features
-3. **Community Challenges**: Server-wide challenges and events
-4. **Leaderboard Competitions**: Regular competitions with prizes
-5. **User Feedback**: Built-in feedback collection system
-
-### Growth Strategies
-1. **Documentation**: Comprehensive user documentation
-2. **Tutorial System**: Interactive tutorials for new users
-3. **Showcase Features**: Highlight cool features and stats
-4. **Social Media**: Bot statistics and highlights sharing
-5. **Integration**: Integration with other popular Discord bots
+*Last Updated: 2026-02-19 • Current Version: 1.0.0*
 
 ---
 
-## Implementation Priority Matrix
+## ✅ What We Already Have (Current Strengths)
 
-| Feature | Impact | Effort | Priority |
-|---------|--------|--------|----------|
-| Fix togglesharedcontext | High | Low | 🔴 Critical |
-| Interactive Buttons | High | Medium | 🟡 High |
-| Database Migration | High | High | 🟡 High |
-| Hero Performance Tracking | Medium | Low | 🟢 Medium |
-| Match Streaks | Medium | Low | 🟢 Medium |
-| Slash Commands | Medium | Medium | 🟢 Medium |
-| Achievement System | Medium | High | 🔵 Low |
-| Guild System | Low | High | 🔵 Low |
+Before we dream big, here's what's **already cooking**:
+
+| Category | Features |
+|----------|----------|
+| **Player Management** | `+register`, `+unregister`, `+toggleauto`, `+profile` |
+| **Match Tracking** | Auto-match posting, `+rs`, combined scoreboard for group games |
+| **AI Assistant** | `+gpat` chat with doto-chan (Claude Sonnet 4.5), smart context for replies & shared channels, multimodal image support, `+gpatclear` |
+| **Match Stories** | `+story` — AI-generated match narratives with chat logs & objectives |
+| **Turbo Analytics** | `+turbolb`, `+turbostats`, `+topheros`, `+turbopairs`, `+myturbopairs` with confidence-weighted rating system |
+| **Context System** | `+togglesharedcontext` — per-channel shared/individual AI context |
 
 ---
 
-*Last Updated: 2025-06-19*
-*Bot Version: Current*
+## 🔴 Critical Technical Debt (Fix These First)
+
+These are things that will bite us as the bot grows. Non-negotiable before adding new features.
+
+### 1. Database Migration — Kill the JSON Files
+**Current Problem**: `users.json`, `turboStats.json`, `channelData.json` are all read/written synchronously. File corruption risk on crashes. No concurrent access safety.
+
+**Solution**:
+- Migrate to **SQLite** via `better-sqlite3` (zero-config, single file, perfect for a bot this size)
+- Schema: `users`, `turbo_player_stats`, `turbo_pairings`, `channel_config`, `matches`
+- Add proper migrations with `umzug` or manual versioning
+- Bonus: enables SQL queries for leaderboards and analytics
+
+### 2. Hero & Item Data Caching
+**Current Problem**: `getHeroName()` and `getItemName()` call the OpenDota API **on every single invocation**. The `+profile` command alone can make 4+ hero API calls. `+topheros` makes 5+. These rarely change.
+
+**Solution**:
+- Fetch hero/item data **once on startup** and store in a `Map<number, string>`
+- Refresh on a 24-hour interval (heroes get added maybe twice a year)
+- Saves potentially hundreds of redundant API calls per day
+
+### 3. Remove `console.log` / `console.dir` in Production
+**Current Problem**: `aiService.ts` has raw `console.log` and `console.dir` statements dumping full AI payloads (lines 289-291, 316-318, 332-334, 341). These should go through the logger.
+
+**Solution**:
+- Replace all `console.log`/`console.dir` with `logger.debug()`
+- Add a `LOG_LEVEL` env variable so debug logs can be toggled
+- Consider structured JSON logging for production
+
+### 4. Duplicate `getHeroName()` Implementations
+**Current Problem**: `getHeroName()` is copy-pasted in `dotaService.ts`, `profile.ts`, and `tophero.ts` — three separate, identical functions.
+
+**Solution**:
+- Create a single shared `heroService.ts` (or `dataService.ts`) with a cached `getHeroName()` and `getItemName()`
+- Import everywhere, single source of truth
+
+### 5. Error Handling & Resilience
+**Current Problem**: No retry logic. If OpenDota is rate-limited or down, everything fails silently.
+
+**Solution**:
+- Add `axios-retry` with exponential backoff for all OpenDota calls
+- Implement a simple circuit breaker pattern for external APIs
+- Add request timeouts (currently none set)
+- Graceful shutdown handler for the bot process (save data before exit)
+
+---
+
+## 🟡 High-Impact Features (Next Sprint)
+
+### 6. Slash Commands Migration
+**Why**: Discord is deprecating message content intent for unverified bots. Slash commands provide autocomplete, validation, and a modern UX.
+
+**Implementation**:
+- Use `discord.js` built-in `SlashCommandBuilder`
+- Keep prefix commands as aliases during transition
+- Add autocomplete for hero names, match IDs, and user mentions
+- Register commands with `REST` API on startup
+
+### 7. Interactive Embeds with Buttons
+**Why**: Replace text-heavy responses with clickable Discord components.
+
+**Ideas**:
+- Match embeds: `[📖 Story]` `[📊 Details]` `[🔄 Refresh]`
+- Leaderboard: `[◀ Prev]` `[▶ Next]` pagination
+- Profile: `[⚡ Turbo]` `[🦸 Heroes]` `[📈 Trends]` tabs
+- Confirmation buttons for `+register` / `+unregister`
+
+### 8. Win/Loss Streak Detection & Announcements
+**Why**: Nothing hypes up a Discord server like streak callouts.
+
+**Implementation**:
+- Track consecutive wins/losses per player in the database
+- Auto-announce in channel: *"🔥 Caow is on a 7 GAME WIN STREAK! Someone stop this man!"*
+- Special roasts from doto-chan when someone's on a loss streak
+- Streak-specific embed colors and emojis
+
+### 9. Match Filters & History
+**Why**: `+rs` only shows the last match. Users want more.
+
+**Commands**:
+- `+rs 5` — Last 5 matches overview
+- `+rs --hero "Anti-Mage"` — Filter by hero
+- `+rs --turbo` — Only turbo games
+- `+rs --wins` / `+rs --losses` — Filter by outcome
+- Show a mini-summary table for multiple matches
+
+### 10. Performance Trend Graphs
+**Why**: Visualize improvement over time.
+
+**Implementation**:
+- Use `chart.js` + `canvas` to render graphs server-side
+- Track per-match: KDA, GPM, XPM, win rate rolling average
+- Commands: `+trend` (last 20 games KDA graph), `+trend gpm` (GPM over time)
+- Attach rendered chart as image in embed
+
+---
+
+## 🟢 Medium-Priority Features (Month 2-3)
+
+### 11. Hero Mastery & Performance Tracking
+- Track per-hero stats over time (not just from OpenDota, but our own tracked matches)
+- Show hero "mastery level" based on games + win rate
+- `+heroes` command with sortable hero grid
+- "Most improved hero this month" callout
+
+### 12. Player Comparison
+- `+compare @user1 @user2` — Side-by-side profile comparison
+- Compare: overall WR, KDA, turbo rating, top heroes overlap
+- Head-to-head stats if they've been in the same matches
+- Beautiful dual-column embed
+
+### 13. Enhanced AI Features (doto-chan Level Up)
+- **Match Analysis**: `+analyze <match_id>` — AI breaks down what went wrong/right
+- **Hero Recommendations**: `+suggest` — AI suggests heroes based on recent performance & meta
+- **Draft Helper**: `+draft <enemy_heroes>` — Get counter-pick suggestions with reasoning
+- **Meta Report**: `+meta` — Weekly meta snapshot with trending heroes
+- **Personality Memory**: doto-chan remembers user preferences and roast targets across sessions
+
+### 14. Achievement System
+- Unlock badges for milestones:
+  - 🏆 *"Century Club"* — 100 tracked matches
+  - 🔥 *"On Fire"* — 5+ win streak
+  - 💀 *"Feeder Redeemed"* — Win after 10+ deaths
+  - 👫 *"Dynamic Duo"* — 20+ games with same partner
+  - 🎯 *"Hero Specialist"* — 80%+ WR on a hero (10+ games)
+- `+achievements` command to show unlocked badges
+- Auto-announce new achievements in channel
+
+### 15. Smart Notifications & Alerts
+- Configurable match result filters: only announce ranked, only if someone performed well, etc.
+- "Daily digest" mode — summarize all matches at end of day instead of spamming
+- DM mode — users can opt to receive stats via DM instead of channel
+- Quiet hours — suppress auto-posts during configured times
+
+---
+
+## 🔵 Ambitious Features (Quarter 2+)
+
+### 16. Web Dashboard
+- Simple companion web app showing:
+  - Player profiles with charts
+  - Turbo leaderboard with history
+  - Match timeline & replays
+  - Achievement showcase
+- Auth via Discord OAuth2
+- Could use Next.js or a simple Express + static frontend
+
+### 17. Tournament System
+- `+tournament create "Friday Night Turbo"` — Create custom tournaments
+- Bracket generation (single/double elimination)
+- Auto-track results from actual matches
+- Standings, schedule, and bracket embeds
+- Winner announcements with AI-generated commentary
+
+### 18. Guild / Team System
+- Create teams within the server
+- Team stats, team turbo rating, team leaderboard
+- Inter-team challenges and rivalries
+- Team-specific roasts from doto-chan
+
+### 19. Multi-Server Support
+- Per-server configuration (prefix, features, channels)
+- Server-specific leaderboards
+- Cross-server stats for users registered in multiple servers
+- Admin panel for bot configuration
+
+### 20. Dota 2 Live Game Integration
+- Detect when registered users are in a live game (via Steam API / Dota 2 Game Coordinator)
+- Post live game notification: "⚔️ 3 of our players are in a match RIGHT NOW!"
+- Post-game auto-fetch with zero delay
+
+---
+
+## 🛠️ Developer Experience & Quality of Life
+
+### Code Quality
+- [ ] Add ESLint + Prettier with strict TypeScript rules
+- [ ] Set up Jest / Vitest for unit tests (target: services first)
+- [ ] Add integration tests for OpenDota API mocking
+- [ ] CI/CD pipeline (GitHub Actions: lint → test → build)
+- [ ] Docker containerization for consistent deployments
+- [ ] `.env.example` with all required variables documented
+
+### Architecture Improvements
+- [ ] Extract a shared `DataService` for hero/item lookups (kills duplicate code)
+- [ ] Create a `CommandHandler` base class/interface for consistent patterns
+- [ ] Implement a proper event bus for cross-service communication
+- [ ] Add request queuing for OpenDota API (respect rate limits)
+- [ ] Move conversation history to persistent storage (currently lost on restart)
+- [ ] Add graceful shutdown handler (save all JSON data before process exit)
+
+### Monitoring & Observability
+- [ ] Structured logging with request correlation IDs
+- [ ] Command usage analytics (which commands are popular)
+- [ ] API call metrics (latency, error rates, rate limit hits)
+- [ ] Health check endpoint for uptime monitoring
+- [ ] Error alerting (DM admin on critical failures)
+
+---
+
+## 📋 Implementation Priority Matrix
+
+| # | Feature | Impact | Effort | Priority |
+|---|---------|--------|--------|----------|
+| 1 | Database Migration (SQLite) | 🔥🔥🔥 | Medium | 🔴 Do Now |
+| 2 | Hero/Item Data Caching | 🔥🔥🔥 | Low | 🔴 Do Now |
+| 3 | Clean up console.log | 🔥🔥 | Low | 🔴 Do Now |
+| 4 | Deduplicate getHeroName | 🔥🔥 | Low | 🔴 Do Now |
+| 5 | Error Handling / Retry | 🔥🔥🔥 | Medium | 🔴 Do Now |
+| 6 | Slash Commands | 🔥🔥🔥 | Medium | 🟡 Next Sprint |
+| 7 | Interactive Buttons | 🔥🔥 | Medium | 🟡 Next Sprint |
+| 8 | Streak Detection | 🔥🔥🔥 | Low | 🟡 Next Sprint |
+| 9 | Match Filters & History | 🔥🔥 | Medium | 🟡 Next Sprint |
+| 10 | Performance Graphs | 🔥🔥 | High | 🟡 Next Sprint |
+| 11 | Hero Mastery | 🔥🔥 | Medium | 🟢 Month 2-3 |
+| 12 | Player Comparison | 🔥🔥 | Medium | 🟢 Month 2-3 |
+| 13 | Enhanced AI | 🔥🔥🔥 | High | 🟢 Month 2-3 |
+| 14 | Achievements | 🔥🔥🔥 | High | 🟢 Month 2-3 |
+| 15 | Smart Notifications | 🔥🔥 | Medium | 🟢 Month 2-3 |
+| 16 | Web Dashboard | 🔥🔥 | Very High | 🔵 Q2+ |
+| 17 | Tournament System | 🔥🔥 | Very High | 🔵 Q2+ |
+| 18 | Guild System | 🔥 | High | 🔵 Q2+ |
+| 19 | Multi-Server | 🔥🔥 | High | 🔵 Q2+ |
+| 20 | Live Game Integration | 🔥🔥🔥 | Very High | 🔵 Q2+ |
+
+---
+
+## 💡 Quick Command Reference (Proposed New Commands)
+
+```
++rs 5                          # Last 5 matches overview
++rs --hero "Pudge"             # Filter by hero
++trend                         # Performance graph (last 20 games)
++compare @user1 @user2         # Side-by-side comparison
++streak                        # Current win/loss streak
++heroes                        # Full hero stats grid
++achievements                  # Show unlocked badges
++analyze <match_id>            # AI match analysis
++suggest                       # AI hero recommendation
++draft <enemy_heroes>          # Counter-pick helper
++meta                          # Current meta trends
++tournament create "Name"      # Tournament management
++export                        # Export your data
+```
+
+---
+
+> *"doto-chan will become the most unhinged, stat-obsessed, roast-delivering Dota 2 companion that any Discord server has ever seen. And she'll remember to roast Caow every single time."*
+> 
+> — The Roadmap, probably

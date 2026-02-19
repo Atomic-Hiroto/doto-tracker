@@ -1,14 +1,28 @@
-import { Message } from 'discord.js';
-import { Replies } from '../constants';
+import { Message, EmbedBuilder } from 'discord.js';
 import { UserDataService } from '../services/userDataService';
-import { getRecentStats } from '../services/dotaService';
+import { Replies } from '../constants';
 import { logger } from '../services/loggerService';
+import { opendotaClient } from '../services/apiClient';
+import { dotaDataService } from '../services/dotaDataService';
+import { parseArgs, parseIntArg } from '../utils/argParser';
+import { formatDuration } from '../utils/formatters';
+import { safeTyping } from '../utils/channelHelpers';
+
+const GAME_MODES: Record<number, string> = {
+  0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
+  4: 'Single Draft', 5: 'All Random', 8: 'Reverse Captains Mode',
+  16: 'Captains Draft', 22: 'All Draft', 23: 'Turbo', 24: 'Mutation'
+};
 
 export async function recentStats(message: Message, args: string[], userDataService: UserDataService) {
-  let discordId = message.author.id;
+  const parsed = parseArgs(args, message);
 
-  if (args.length > 0 && message.mentions.users.size > 0) {
-    discordId = message.mentions.users.first()!.id;
+  // Determine target user
+  let discordId = message.author.id;
+  let targetUser = message.author;
+  if (parsed.mentions.length > 0) {
+    discordId = parsed.mentions[0];
+    targetUser = message.mentions.users.first()!;
   }
 
   const user = userDataService.getUserByDiscordId(discordId);
@@ -16,10 +30,124 @@ export async function recentStats(message: Message, args: string[], userDataServ
     return message.reply(Replies.NEED_REGISTRATION);
   }
 
+  // Parse count arg — +rs 5 or default 1
+  const count = Math.min(parseIntArg(parsed.positional[0], 1), 10);
+  const heroFilter = typeof parsed.flags['hero'] === 'string' ? parsed.flags['hero'].toLowerCase() : null;
+  const turboOnly = parsed.flags['turbo'] === true;
+  const winsOnly = parsed.flags['wins'] === true;
+  const lossesOnly = parsed.flags['losses'] === true;
+
   try {
-    await getRecentStats(discordId, user.steamId, message.channel);
+    safeTyping(message.channel);
+
+    // Fetch more matches if we need to filter
+    const fetchCount = heroFilter || turboOnly || winsOnly || lossesOnly ? 50 : count;
+    const response = await opendotaClient.get<Array<any>>(
+      `/players/${user.steamId}/recentMatches?limit=${fetchCount}`
+    );
+    let matches = response.data;
+
+    if (!matches || matches.length === 0) {
+      return message.reply('No recent matches found for this user.');
+    }
+
+    // Apply filters
+    if (turboOnly) {
+      matches = matches.filter((m: any) => m.game_mode === 23);
+    }
+    if (winsOnly) {
+      matches = matches.filter((m: any) => {
+        const isRadiant = m.player_slot < 128;
+        return (isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win);
+      });
+    }
+    if (lossesOnly) {
+      matches = matches.filter((m: any) => {
+        const isRadiant = m.player_slot < 128;
+        return !((isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win));
+      });
+    }
+    if (heroFilter) {
+      const hero = dotaDataService.findHeroByName(heroFilter);
+      if (hero) {
+        matches = matches.filter((m: any) => m.hero_id === hero.id);
+      }
+    }
+
+    if (matches.length === 0) {
+      return message.reply('No matches found with those filters.');
+    }
+
+    matches = matches.slice(0, count);
+
+    // Single match — show detailed stats
+    if (count === 1 && !heroFilter && !turboOnly && !winsOnly && !lossesOnly) {
+      const match = matches[0];
+      const heroName = await dotaDataService.getHeroName(match.hero_id);
+      const isRadiant = match.player_slot < 128;
+      const didWin = (isRadiant && match.radiant_win) || (!isRadiant && !match.radiant_win);
+
+      const embed = new EmbedBuilder()
+        .setColor(didWin ? '#66bb6a' : '#ef5350')
+        .setTitle(`Recent Match — ${targetUser.username}`)
+        .setDescription(`**${didWin ? '✅ Victory' : '❌ Defeat'}** as **${heroName}**`)
+        .setThumbnail(targetUser.displayAvatarURL())
+        .addFields(
+          { name: 'K/D/A', value: `${match.kills}/${match.deaths}/${match.assists}`, inline: true },
+          { name: 'KDA', value: ((match.kills + match.assists) / (match.deaths || 1)).toFixed(2), inline: true },
+          { name: 'GPM/XPM', value: `${match.gold_per_min}/${match.xp_per_min}`, inline: true },
+          { name: 'Last Hits', value: `${match.last_hits}`, inline: true },
+          { name: 'Duration', value: formatDuration(match.duration), inline: true },
+          { name: 'Mode', value: GAME_MODES[match.game_mode] || 'Unknown', inline: true },
+          { name: 'Match', value: `[${match.match_id}](https://www.opendota.com/matches/${match.match_id})`, inline: true },
+        )
+        .setTimestamp(new Date(match.start_time * 1000));
+
+      return message.reply({ embeds: [embed] });
+    }
+
+    // Multiple matches — compact summary table
+    const heroCache: Record<number, string> = {};
+    const getHero = async (id: number) => {
+      if (!heroCache[id]) heroCache[id] = await dotaDataService.getHeroName(id);
+      return heroCache[id];
+    };
+
+    const rows = await Promise.all(
+      matches.map(async (match: any) => {
+        const heroName = await getHero(match.hero_id);
+        const isRadiant = match.player_slot < 128;
+        const didWin = (isRadiant && match.radiant_win) || (!isRadiant && !match.radiant_win);
+        const kda = `${match.kills}/${match.deaths}/${match.assists}`;
+        const result = didWin ? '✅' : '❌';
+        return `${result} **${heroName}** • ${kda} • ${match.gold_per_min} GPM • ${formatDuration(match.duration)}`;
+      })
+    );
+
+    const totalGames = matches.length;
+    const wins = matches.filter((m: any) => {
+      const isRadiant = m.player_slot < 128;
+      return (isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win);
+    }).length;
+
+    const filterDesc = [
+      turboOnly ? '⚡ Turbo only' : '',
+      heroFilter ? `🦸 Hero: ${heroFilter}` : '',
+      winsOnly ? '✅ Wins only' : '',
+      lossesOnly ? '❌ Losses only' : '',
+    ].filter(Boolean).join(' | ');
+
+    const embed = new EmbedBuilder()
+      .setColor('#7c3aed')
+      .setTitle(`📊 Last ${totalGames} Matches — ${targetUser.username}`)
+      .setDescription(`${filterDesc || 'All modes'}\n**W/L:** ${wins}/${totalGames - wins} (${((wins / totalGames) * 100).toFixed(1)}% WR)`)
+      .addFields({ name: 'Match History', value: rows.join('\n'), inline: false })
+      .setFooter({ text: `Use +rs <n> --turbo --hero "Name" --wins/--losses for filtering` })
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
   } catch (error) {
-    logger.error(`Error in recentStats command for user ${discordId}:`, error);
-    message.reply('An error occurred while fetching the recent match stats. Please try again later.');
+    logger.error(`Error in recentStats for user ${discordId}:`, error);
+    await message.reply('An error occurred while fetching match history. Please try again later.');
   }
 }

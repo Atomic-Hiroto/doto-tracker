@@ -15,4 +15,17 @@ export enum Commands {
     TOGGLE_SHARED_CONTEXT = "togglesharedcontext",
     PROFILE = "profile",
     TOP_HEROES = "topheros",
+    // Phase 2
+    STREAK = "streak",
+    // Phase 3
+    TREND = "trend",
+    HEROES = "heroes",
+    COMPARE = "compare",
+    // Phase 4
+    ANALYZE = "analyze",
+    SUGGEST = "suggest",
+    DRAFT = "draft",
+    META = "meta",
+    ACHIEVEMENTS = "achievements",
 }
+

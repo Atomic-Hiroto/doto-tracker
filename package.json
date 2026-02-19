@@ -14,7 +14,9 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.93",
     "axios": "^1.7.3",
+    "axios-retry": "^4.5.0",
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
     "tslog": "^4.9.3"

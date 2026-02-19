@@ -11,3 +11,12 @@ export { turboPairings, myTurboPairings } from './turboPairings';
 export { toggleSharedContext } from './toggleSharedContext';
 export { profile } from './profile';
 export { tophero } from './tophero';
+// Phase 2
+export { streak } from './streak';
+// Phase 3
+export { trend } from './trend';
+export { heroes } from './heroes';
+export { compare } from './compare';
+// Phase 4
+export { analyze, suggest, draft, meta } from './aiCommands';
+export { achievements } from './achievements';
