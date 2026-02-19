@@ -1,4 +1,4 @@
-import { TextBasedChannel } from 'discord.js';
+import { Message, TextBasedChannel } from 'discord.js';
 
 /**
  * Safely calls sendTyping on a channel if the channel supports it.
@@ -11,10 +11,15 @@ export function safeTyping(channel: TextBasedChannel) {
 }
 
 /**
- * Safely sends a message on a channel if it supports .send()
+ * Safely sends a message on a channel if it supports .send().
+ * Returns the sent Message so callers can delete it later (e.g. loading indicators).
  */
-export async function safeSend(channel: TextBasedChannel, content: Parameters<any>[0]): Promise<void> {
+export async function safeSend(
+    channel: TextBasedChannel,
+    content: Parameters<any>[0]
+): Promise<Message | null> {
     if ('send' in channel && typeof (channel as any).send === 'function') {
-        await (channel as any).send(content);
+        return (channel as any).send(content) as Promise<Message>;
     }
+    return null;
 }
