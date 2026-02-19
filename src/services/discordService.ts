@@ -14,7 +14,6 @@ export async function handleMessage(message: Message, userDataService: UserDataS
   const botMentioned = message.mentions.has(message.client.user!);
 
   if (botMentioned) {
-    // Remove the bot mention from the message content to get the actual prompt
     const mentionRegex = new RegExp(`<@!?${message.client.user!.id}>`, 'g');
     const prompt = message.content.replace(mentionRegex, '').trim();
     const args = prompt ? prompt.split(/\s+/) : [];
@@ -24,7 +23,6 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     return;
   }
 
-  // Handle regular prefix commands
   if (!message.content.startsWith(ProcessConstants.PREFIX)) return;
 
   const args: string[] = message.content.slice(ProcessConstants.PREFIX.length).trim().split(ProcessConstants.SPACE);
@@ -33,6 +31,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
   logger.debug(`Command ${command} called with args ${args} by author ${message.author}`);
 
   switch (command) {
+    // --- Existing commands ---
     case Commands.HELP:
       await commandHandlers.help(message);
       break;
@@ -81,6 +80,40 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TOP_HEROES:
       await commandHandlers.tophero(message, args, userDataService);
       break;
+
+    // --- Phase 2 ---
+    case Commands.STREAK:
+      await commandHandlers.streak(message, args, userDataService);
+      break;
+
+    // --- Phase 3 ---
+    case Commands.TREND:
+      await commandHandlers.trend(message, args, userDataService);
+      break;
+    case Commands.HEROES:
+      await commandHandlers.heroes(message, args, userDataService);
+      break;
+    case Commands.COMPARE:
+      await commandHandlers.compare(message, args, userDataService, turboStatsService);
+      break;
+
+    // --- Phase 4 ---
+    case Commands.ANALYZE:
+      await commandHandlers.analyze(message, args);
+      break;
+    case Commands.SUGGEST:
+      await commandHandlers.suggest(message, args, userDataService);
+      break;
+    case Commands.DRAFT:
+      await commandHandlers.draft(message, args);
+      break;
+    case Commands.META:
+      await commandHandlers.meta(message);
+      break;
+    case Commands.ACHIEVEMENTS:
+      await commandHandlers.achievements(message, args, userDataService);
+      break;
+
     default:
       await message.reply('Unknown command. Use +help to see available commands.');
       break;

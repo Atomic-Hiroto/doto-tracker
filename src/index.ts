@@ -7,9 +7,11 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
   ],
 });
 
-initializeBot(client);
-
-client.login(ProcessConstants.BOT_TOKEN);
+(async () => {
+  await initializeBot(client);
+  await client.login(ProcessConstants.BOT_TOKEN);
+})();
