@@ -327,6 +327,42 @@ export async function getDetailedMatchData(matchId: number) {
           laneEfficiency: p.lane_efficiency_pct ?? null,
           timeSpentDead: p.life_state_dead ?? 0,
           apm: p.actions_per_min ?? 0,
+
+          // Teamfight participation % and stun duration
+          teamfightParticipation: p.teamfight_participation != null
+            ? Math.round(p.teamfight_participation * 100)
+            : null,
+          stunDuration: p.stuns ? Math.round(p.stuns * 10) / 10 : 0,
+
+          // Top damage abilities — sorted desc, top 5
+          topDamageAbilities: (() => {
+            const inflictor: Record<string, number> = p.damage_inflictor || {};
+            return Object.entries(inflictor)
+              .sort(([, a], [, b]) => b - a)
+              .slice(0, 5)
+              .map(([ability, dmg]) => ({
+                ability: ability === 'null' ? 'Right Click'
+                  : ability.replace(/^(npc_dota_hero_)?/, '').replace(/_/g, ' '),
+                damage: dmg,
+              }));
+          })(),
+
+          // Damage dealt to each enemy hero
+          damageToHeroes: (() => {
+            const targets: Record<string, Record<string, number>> = p.damage_targets || {};
+            const heroDmg: Record<string, number> = {};
+            for (const abilityTargets of Object.values(targets)) {
+              for (const [target, dmg] of Object.entries(abilityTargets)) {
+                if (target.startsWith('npc_dota_hero_')) {
+                  const heroName = target.replace('npc_dota_hero_', '').replace(/_/g, ' ');
+                  heroDmg[heroName] = (heroDmg[heroName] || 0) + dmg;
+                }
+              }
+            }
+            return Object.entries(heroDmg)
+              .sort(([, a], [, b]) => b - a)
+              .map(([hero, dmg]) => ({ hero, damage: dmg }));
+          })(),
         };
       })),
 

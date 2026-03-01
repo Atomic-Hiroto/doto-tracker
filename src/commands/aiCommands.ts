@@ -56,7 +56,7 @@ async function callAI(
 
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
 
-const ANALYZE_SYSTEM = `You are a Dota 2 match analyst. Provide precise, data-driven analysis referencing specific heroes, players, item timings, and statistics. Draw actionable conclusions from the data — identify patterns, power spikes, and pivotal decisions. Structure your response clearly with numbered points. Be direct and concise.`;
+const ANALYZE_SYSTEM = `You are a Dota 2 match analyst. Provide precise, data-driven analysis referencing specific heroes, players, item timings, damage breakdowns, and statistics. Draw actionable conclusions — identify power spikes, damage type mismatches, itemization counters, and pivotal decisions. When analyzing mistakes, consider whether the problem was execution (missed abilities) or strategic (wrong damage type into resistances, bad item choices). Structure your response clearly with numbered points. Be direct and concise.`;
 
 export async function analyze(message: Message, args: string[]) {
     const matchId = parseInt(args[0], 10);
@@ -111,7 +111,25 @@ export async function analyze(message: Message, args: string[]) {
             if (p.laneEfficiency != null) extras.push(`Lane Eff: ${p.laneEfficiency}%`);
             if (p.apm > 0) extras.push(`APM: ${p.apm}`);
             if (p.timeSpentDead > 0) extras.push(`Dead: ${p.timeSpentDead}s`);
+            if (p.teamfightParticipation != null) extras.push(`TF: ${p.teamfightParticipation}%`);
+            if (p.stunDuration > 0) extras.push(`Stuns: ${p.stunDuration}s`);
             if (extras.length) lines.push(`  ${extras.join(' | ')}`);
+
+            // Top damage abilities
+            if (p.topDamageAbilities?.length) {
+                const abilities = p.topDamageAbilities.map((a: any) =>
+                    `${a.ability} (${a.damage.toLocaleString()})`
+                ).join(', ');
+                lines.push(`  Dmg Sources: ${abilities}`);
+            }
+
+            // Damage dealt to each enemy hero
+            if (p.damageToHeroes?.length) {
+                const targets = p.damageToHeroes.map((t: any) =>
+                    `${t.hero} (${t.damage.toLocaleString()})`
+                ).join(', ');
+                lines.push(`  Dmg Targets: ${targets}`);
+            }
 
             // Benchmarks
             const benchKeys = Object.keys(p.benchmarks || {});
@@ -155,7 +173,7 @@ ${objectivesBlock}
 
 Give me:
 1. What decided this game (2-3 key turning points with specific timings and item power spikes)
-2. The biggest mistakes by the losing team (itemization errors, missed timings, poor objective play, buyback misuse)
+2. The biggest mistakes by the losing team (itemization errors, damage type mismatches, missed timings, poor objective play, buyback misuse — check if defensive items like Pipe/BKB/Shroud countered their damage profile)
 3. What the winning team executed well (draft synergy, tempo, rotations, itemization)
 4. Performance standouts — who over/underperformed relative to their role and benchmarks
 5. One concrete change (item, playstyle, or timing) that could have flipped the outcome
