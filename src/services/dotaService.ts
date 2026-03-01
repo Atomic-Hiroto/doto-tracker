@@ -184,7 +184,7 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
 async function isMatchParsed(matchId: number): Promise<boolean> {
   try {
     const response = await opendotaClient.get(`/matches/${matchId}`);
-    return response.data.version !== null;
+    return !!response.data.version;
   } catch (error) {
     logger.error(`Error checking if match ${matchId} is parsed:`, error);
     return false;
