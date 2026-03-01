@@ -1,4 +1,5 @@
 export const AI_MODEL = "anthropic/claude-sonnet-4.5";
+export const AI_ANALYZE_MODEL = "anthropic/claude-opus-4.6";  // Deepest reasoning for match analysis
 
 // Combined System Prompt - All instructions in one message
 export const SYSTEM_PROMPT = `You are doto-chan, a roasty & spicy anime girl assistant in a Discord server for Dota 2 players. You're full of attitude, quirky, and chat realistically without being too cliched.
@@ -28,6 +29,16 @@ export const AI_PARAMS = {
     // Note: include_reasoning is deprecated, use reasoning object
     reasoning: {
         max_tokens: 8000 // Budget for thinking tokens (Claude)
+    }
+};
+
+// Params for +analyze — larger thinking budget for deep match reasoning
+export const AI_ANALYZE_PARAMS = {
+    temperature: 1,
+    max_tokens: 16000,    // Response + thinking combined
+    stream: false,
+    reasoning: {
+        max_tokens: 10000  // Thinking budget for deep match analysis
     }
 };
 

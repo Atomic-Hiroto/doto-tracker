@@ -4,7 +4,8 @@
   "main": "bot.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "tsc && node dist/index.js"
+    "start": "tsc && node dist/index.js",
+    "test:analyze": "npx -y tsx scripts/test-analyze.ts"
   },
   "devDependencies": {
     "typescript": "latest"

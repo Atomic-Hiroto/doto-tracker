@@ -227,13 +227,48 @@ export async function getDetailedMatchData(matchId: number) {
           .map((g: number, i: number) => `${i * step}min: ${g > 0 ? '+' : ''}${g}`);
       })(),
 
+      xpAdvantage: (() => {
+        const adv: number[] = match.radiant_xp_adv || [];
+        const step = Math.max(1, Math.floor(adv.length / 6));
+        return adv
+          .filter((_: number, i: number) => i % step === 0)
+          .map((x: number, i: number) => `${i * step}min: ${x > 0 ? '+' : ''}${x}`);
+      })(),
+
       players: await Promise.all(match.players.map(async (p: any) => {
         const itemSlots = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5'];
         const items = (await Promise.all(
           itemSlots.map((slot) => dotaDataService.getItemName(p[slot]))
         )).filter((name) => name && name !== 'Unknown Item' && name !== 'Empty');
 
+        const backpackSlots = ['backpack_0', 'backpack_1', 'backpack_2'];
+        const backpack = (await Promise.all(
+          backpackSlots.map((slot) => dotaDataService.getItemName(p[slot]))
+        )).filter((name) => name && name !== 'Unknown Item' && name !== 'Empty');
+
         const laneNames: Record<number, string> = { 1: 'Safe', 2: 'Mid', 3: 'Off', 4: 'Jungle', 5: 'Unknown' };
+
+        // Extract benchmark percentiles if available — humanize keys + correct ordinals
+        const benchmarkLabels: Record<string, string> = {
+          gold_per_min: 'GPM', xp_per_min: 'XPM', kills_per_min: 'Kills/min',
+          last_hits_per_min: 'LH/min', hero_damage_per_min: 'Dmg/min',
+          hero_healing_per_min: 'Heal/min', tower_damage: 'Tower Dmg',
+        };
+        const ordinal = (n: number) => {
+          const s = ['th', 'st', 'nd', 'rd'];
+          const v = n % 100;
+          return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+        const benchmarks: Record<string, string> = {};
+        if (p.benchmarks) {
+          for (const [key, val] of Object.entries(p.benchmarks)) {
+            const pct = (val as any)?.pct;
+            if (pct != null) {
+              const label = benchmarkLabels[key] || key;
+              benchmarks[label] = ordinal(Math.round(pct * 100));
+            }
+          }
+        }
 
         return {
           heroName: await dotaDataService.getHeroName(p.hero_id),
@@ -253,6 +288,45 @@ export async function getDetailedMatchData(matchId: number) {
           lane: laneNames[p.lane_role] || 'Unknown',
           isRoaming: p.is_roaming || false,
           items,
+          backpack,
+          level: p.level ?? 0,
+          buybacks: p.buyback_count ?? 0,
+          obsPlaced: p.obs_placed ?? 0,
+          senPlaced: p.sen_placed ?? 0,
+          runePickups: p.rune_pickups ?? 0,
+          benchmarks,
+          permanentBuffs: (p.permanent_buffs || []).map((b: any) => b.name || `buff_${b.permanent_buff}`),
+
+          // Key item timings — major items only (completed items from purchase_log)
+          keyItemTimings: (p.purchase_log || [])
+            .filter((purchase: any) => {
+              // Only include completed major items, not components
+              const majorItems = [
+                'bfury', 'desolator', 'black_king_bar', 'abyssal_blade', 'monkey_king_bar',
+                'satanic', 'rapier', 'butterfly', 'daedalus', 'assault', 'heart', 'skadi',
+                'manta', 'radiance', 'mjollnir', 'silver_edge', 'bloodthorn', 'nullifier',
+                'hurricane_pike', 'refresher', 'aghanims_shard', 'ultimate_scepter',
+                'ultimate_scepter_2', 'aeon_disk', 'lotus_orb', 'shivas_guard',
+                'blink', 'power_treads', 'phase_boots', 'arcane_boots', 'travels',
+                'orchid', 'gleipnir', 'aether_lens', 'octarine_core', 'pipe',
+                'crimson_guard', 'halberd', 'basher', 'mask_of_madness', 'maelstrom',
+                'kaya_and_sange', 'sange_and_yasha', 'yasha_and_kaya',
+                'veil_of_discord', 'rod_of_atos',
+              ];
+              return majorItems.includes(purchase.key);
+            })
+            .map((purchase: any) => ({ item: purchase.key, time: purchase.time })),
+
+          // Kill timeline — who this player killed and when
+          killTimeline: (p.kills_log || []).map((k: any) => ({
+            time: k.time,
+            victim: (k.key || '').replace('npc_dota_hero_', ''),
+          })),
+
+          // Extra stats
+          laneEfficiency: p.lane_efficiency_pct ?? null,
+          timeSpentDead: p.life_state_dead ?? 0,
+          apm: p.actions_per_min ?? 0,
         };
       })),
 
@@ -265,22 +339,44 @@ export async function getDetailedMatchData(matchId: number) {
           message: msg.key
         })),
 
-      objectives: (match.objectives || []).map((obj: any) => ({
-        time: obj.time,
-        type: obj.type,
-        team: obj.team === 2 ? 'Radiant' : 'Dire',
-        key: obj.key || ''
-      })),
+      objectives: (match.objectives || [])
+        .filter((obj: any) => obj.type !== 'CHAT_MESSAGE_FIRSTBLOOD')  // skip pre-game events
+        .map((obj: any) => {
+          // Determine which team performed this action
+          let team = 'Unknown';
+          if (obj.team === 2) {
+            team = 'Radiant';
+          } else if (obj.team === 3) {
+            team = 'Dire';
+          } else if (obj.player_slot != null) {
+            team = obj.player_slot < 128 ? 'Radiant' : 'Dire';
+          } else if (obj.type === 'building_kill' && obj.key) {
+            // goodguys building killed = Dire killed it; badguys building killed = Radiant killed it
+            team = obj.key.includes('goodguys') ? 'Dire' : 'Radiant';
+          }
 
-      // Teamfights with who participated and kill counts
-      teamfights: (match.teamfights || []).slice(0, 8).map((fight: any) => ({
-        start: fight.start,
-        end: fight.end,
-        totalDeaths: fight.deaths,
-        // per-team kill totals in this fight
-        radiantKills: (fight.players || []).filter((_: any, i: number) => i < 5).reduce((s: number, p: any) => s + (p.kills || 0), 0),
-        direKills: (fight.players || []).filter((_: any, i: number) => i >= 5).reduce((s: number, p: any) => s + (p.kills || 0), 0),
-      })),
+          // Simplify building keys for readability
+          let key = obj.key || '';
+          if (obj.type === 'building_kill') {
+            key = key.replace('npc_dota_', '').replace('badguys_', '').replace('goodguys_', '');
+          }
+
+          return { time: Math.max(0, obj.time), type: obj.type, team, key };
+        }),
+
+      // Teamfights — killed is an object {hero_key: count}, not a simple kills int
+      teamfights: (match.teamfights || []).slice(0, 8).map((fight: any) => {
+        const countKills = (p: any) =>
+          Object.values(p?.killed || {}).reduce((s: number, v: any) => s + (typeof v === 'number' ? v : 0), 0);
+        const players = fight.players || [];
+        return {
+          start: fight.start,
+          end: fight.end,
+          totalDeaths: fight.deaths,
+          radiantKills: players.slice(0, 5).reduce((s: number, p: any) => s + countKills(p), 0),
+          direKills: players.slice(5).reduce((s: number, p: any) => s + countKills(p), 0),
+        };
+      }),
     };
 
     return processedData;
