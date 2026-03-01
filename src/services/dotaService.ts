@@ -1,4 +1,5 @@
 import { Client, TextBasedChannel, EmbedBuilder } from 'discord.js';
+import axios from 'axios';
 import { Match } from '../models/Match';
 import { UserDataService } from './userDataService';
 import { TurboStatsService } from './turboStatsService';
@@ -191,21 +192,26 @@ async function isMatchParsed(matchId: number): Promise<boolean> {
   }
 }
 
-export async function requestMatchParse(matchId: number): Promise<void> {
+export async function requestMatchParse(matchId: number): Promise<boolean> {
   try {
-    await opendotaClient.post(`/request/${matchId}`);
-    logger.info(`Requested parsing for match ${matchId}`);
-  } catch (error) {
-    logger.error(`Error requesting parse for match ${matchId}:`, error);
+    // Use axios directly — opendotaClient's axiosRetry skips non-idempotent POST requests
+    const response = await axios.post(`https://api.opendota.com/api/request/${matchId}`, null, {
+      timeout: 15000,
+    });
+    const job = response.data?.job;
+    logger.info(`Parse request for match ${matchId}: job=${JSON.stringify(job)}`);
+    return true;
+  } catch (error: any) {
+    const status = error?.response?.status;
+    const body = error?.response?.data;
+    logger.error(`Error requesting parse for match ${matchId} (HTTP ${status}):`, body || error.message);
+    return false;
   }
 }
 
 /**
  * Poll OpenDota until a match is parsed (has replay data).
- * @param matchId  Match to wait for
- * @param opts.maxAttempts  Number of polls before giving up (default 15 = ~5 min)
- * @param opts.intervalMs   Milliseconds between polls (default 20 000)
- * @param opts.onTick       Optional callback fired each poll with attempt number
+ * Sends a second parse request midway through as a nudge.
  * @returns true if parsed within the window, false if timed out
  */
 export async function waitForMatchParse(
@@ -214,10 +220,18 @@ export async function waitForMatchParse(
 ): Promise<boolean> {
   const max = opts?.maxAttempts ?? 15;
   const interval = opts?.intervalMs ?? 20_000;
+  const nudgeAt = Math.floor(max / 2); // re-request parse halfway through
 
   for (let i = 1; i <= max; i++) {
     await new Promise((r) => setTimeout(r, interval));
     opts?.onTick?.(i, max);
+
+    // Nudge: re-request parse midway in case the first request was lost
+    if (i === nudgeAt) {
+      logger.info(`Nudge: re-requesting parse for match ${matchId} at attempt ${i}`);
+      await requestMatchParse(matchId);
+    }
+
     if (await isMatchParsed(matchId)) return true;
   }
   return false;
