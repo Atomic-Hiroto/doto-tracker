@@ -56,12 +56,36 @@ async function callAI(
 
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
 
-const ANALYZE_SYSTEM = `You are a Dota 2 match analyst. Provide precise, data-driven analysis referencing specific heroes, players, item timings, damage breakdowns, and statistics. Draw actionable conclusions — identify power spikes, damage type mismatches, itemization counters, and pivotal decisions. When analyzing mistakes, consider whether the problem was execution (missed abilities) or strategic (wrong damage type into resistances, bad item choices). Structure your response clearly with numbered points. Be direct and concise.`;
+const ANALYZE_SYSTEM = `You are a Dota 2 match analyst. Provide precise, data-driven analysis referencing specific heroes, players, item timings, damage breakdowns, and statistics. Draw actionable conclusions — identify power spikes, damage type mismatches, itemization counters, and pivotal decisions. When analyzing mistakes, consider whether the problem was execution (missed abilities) or strategic (wrong damage type into resistances, bad item choices). Structure your response clearly with numbered points. Be direct and concise.
+
+CRITICAL — Damage type accuracy:
+- Pipe of Insight and BKB ONLY block MAGICAL damage. Do NOT claim they counter physical or pure damage abilities.
+- Physical damage abilities (commonly misidentified as magical): Exorcism (Death Prophet), Omnislash (Juggernaut), Flak Cannon (Gyrocopter), Tidebringer (Kunkka), Sleight of Fist (Ember Spirit), March of the Machines (Tinker), Quill Spray (Bristleback), Blade Fury (deals magical but renders Jugg unable to attack).
+- Pure damage abilities: Tinker Laser, Timber Chain, Whirling Death, Brain Sap, Purification.
+- Always verify damage types before claiming an item counters a specific ability.`;
+
+const BOT_OWNER_ID = '78168838910246912';
 
 export async function analyze(message: Message, args: string[]) {
-    const matchId = parseInt(args[0], 10);
-    if (!args[0] || isNaN(matchId)) {
-        return message.reply('Usage: `+analyze <match_id>` — give me a match ID to dissect! 🔍');
+    // Parse flags: -model <model_name> (owner-only)
+    let modelOverride: string | null = null;
+    const cleanArgs: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '-model' && args[i + 1]) {
+            if (message.author.id === BOT_OWNER_ID) {
+                modelOverride = args[i + 1];
+                i++; // skip the model name arg
+            } else {
+                return message.reply('❌ Model override is restricted to the bot owner.');
+            }
+        } else {
+            cleanArgs.push(args[i]);
+        }
+    }
+
+    const matchId = parseInt(cleanArgs[0], 10);
+    if (!cleanArgs[0] || isNaN(matchId)) {
+        return message.reply('Usage: `+analyze <match_id>` — give me a match ID to dissect! 🔍\nOwner-only: `+analyze <match_id> -model <openrouter_model>`');
     }
 
     try {
@@ -253,9 +277,14 @@ Keep it specific, reference real data, and stay under 600 words.`;
         logger.debug(`[+analyze] System prompt:\n${ANALYZE_SYSTEM}`);
         logger.debug(`[+analyze] User prompt (${prompt.length} chars):\n${prompt}`);
 
+        const useModel = modelOverride || AIConstants.AI_ANALYZE_MODEL;
+        if (modelOverride) {
+            logger.info(`[+analyze] Owner model override: ${modelOverride}`);
+        }
+
         const response = await callAI(ANALYZE_SYSTEM, prompt, {
-            model: AIConstants.AI_ANALYZE_MODEL,
-            params: AIConstants.AI_ANALYZE_PARAMS,
+            model: useModel,
+            params: modelOverride ? { max_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
         });
 
         const embed = new EmbedBuilder()
@@ -263,7 +292,7 @@ Keep it specific, reference real data, and stay under 600 words.`;
             .setTitle(`🔍 Match Analysis — #${matchId}`)
             .setDescription(trunc(response, 4096))
             .setURL(`https://www.opendota.com/matches/${matchId}`)
-            .setFooter({ text: `doto-chan coaching • ${AIConstants.AI_ANALYZE_MODEL}` })
+            .setFooter({ text: `doto-chan coaching • ${useModel}` })
             .setTimestamp();
 
         await message.reply({ embeds: [embed] });
