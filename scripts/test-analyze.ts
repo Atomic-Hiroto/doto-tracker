@@ -11,7 +11,7 @@ import { dotaDataService } from '../src/services/dotaDataService';
 import { formatDuration } from '../src/utils/formatters';
 import { AI_ANALYZE_MODEL, AI_ANALYZE_PARAMS } from '../src/constants/aiService';
 
-const ANALYZE_SYSTEM = `You are a Dota 2 match analyst. Provide precise, data-driven analysis referencing specific heroes, players, item timings, and statistics. Draw actionable conclusions from the data — identify patterns, power spikes, and pivotal decisions. Structure your response clearly with numbered points. Be direct and concise.`;
+const ANALYZE_SYSTEM = `You are a Dota 2 match analyst. Provide precise, data-driven analysis referencing specific heroes, players, item timings, damage breakdowns, and statistics. Draw actionable conclusions — identify power spikes, damage type mismatches, itemization counters, and pivotal decisions. When analyzing mistakes, consider whether the problem was execution (missed abilities) or strategic (wrong damage type into resistances, bad item choices). Structure your response clearly with numbered points. Be direct and concise.`;
 
 async function main() {
     const args = process.argv.slice(2);
@@ -23,7 +23,7 @@ async function main() {
         process.exit(1);
     }
 
-    console.log(`\n Fetching match ${matchId} from OpenDota...\n`);
+    console.log(`\nFetching match ${matchId} from OpenDota...\n`);
 
     await dotaDataService.initialize();
 
@@ -57,10 +57,12 @@ async function main() {
 
         // Kill timeline
         if (p.killTimeline?.length) {
-            const kills = p.killTimeline.map((k: any) =>
-                `${formatDuration(k.time)} ${k.victim.replace(/_/g, ' ')}`
-            ).join(', ');
-            lines.push(`  Kills: ${kills}`);
+            const kills = p.killTimeline
+                .filter((k: any) => k.time >= 0)
+                .map((k: any) =>
+                    `${formatDuration(k.time)} ${k.victim.replace(/_/g, ' ')}`
+                ).join(', ');
+            if (kills) lines.push(`  Kills: ${kills}`);
         }
 
         // Extra stats
@@ -68,7 +70,25 @@ async function main() {
         if (p.laneEfficiency != null) extras.push(`Lane Eff: ${p.laneEfficiency}%`);
         if (p.apm > 0) extras.push(`APM: ${p.apm}`);
         if (p.timeSpentDead > 0) extras.push(`Dead: ${p.timeSpentDead}s`);
+        if (p.teamfightParticipation != null) extras.push(`TF: ${p.teamfightParticipation}%`);
+        if (p.stunDuration > 0) extras.push(`Stuns: ${p.stunDuration}s`);
         if (extras.length) lines.push(`  ${extras.join(' | ')}`);
+
+        // Top damage abilities
+        if (p.topDamageAbilities?.length) {
+            const abilities = p.topDamageAbilities.map((a: any) =>
+                `${a.ability} (${a.damage.toLocaleString()})`
+            ).join(', ');
+            lines.push(`  Dmg Sources: ${abilities}`);
+        }
+
+        // Damage dealt to each enemy hero
+        if (p.damageToHeroes?.length) {
+            const targets = p.damageToHeroes.map((t: any) =>
+                `${t.hero} (${t.damage.toLocaleString()})`
+            ).join(', ');
+            lines.push(`  Dmg Targets: ${targets}`);
+        }
 
         // Benchmarks
         const benchKeys = Object.keys(p.benchmarks || {});
@@ -110,7 +130,7 @@ ${objectivesBlock}
 
 Give me:
 1. What decided this game (2-3 key turning points with specific timings and item power spikes)
-2. The biggest mistakes by the losing team (itemization errors, missed timings, poor objective play, buyback misuse)
+2. The biggest mistakes by the losing team (itemization errors, damage type mismatches, missed timings, poor objective play, buyback misuse — check if defensive items like Pipe/BKB/Shroud countered their damage profile)
 3. What the winning team executed well (draft synergy, tempo, rotations, itemization)
 4. Performance standouts — who over/underperformed relative to their role and benchmarks
 5. One concrete change (item, playstyle, or timing) that could have flipped the outcome
