@@ -191,7 +191,7 @@ async function isMatchParsed(matchId: number): Promise<boolean> {
   }
 }
 
-async function requestMatchParse(matchId: number): Promise<void> {
+export async function requestMatchParse(matchId: number): Promise<void> {
   try {
     await opendotaClient.post(`/request/${matchId}`);
     logger.info(`Requested parsing for match ${matchId}`);
@@ -200,14 +200,35 @@ async function requestMatchParse(matchId: number): Promise<void> {
   }
 }
 
+/**
+ * Poll OpenDota until a match is parsed (has replay data).
+ * @param matchId  Match to wait for
+ * @param opts.maxAttempts  Number of polls before giving up (default 15 = ~5 min)
+ * @param opts.intervalMs   Milliseconds between polls (default 20 000)
+ * @param opts.onTick       Optional callback fired each poll with attempt number
+ * @returns true if parsed within the window, false if timed out
+ */
+export async function waitForMatchParse(
+  matchId: number,
+  opts?: { maxAttempts?: number; intervalMs?: number; onTick?: (attempt: number, max: number) => void },
+): Promise<boolean> {
+  const max = opts?.maxAttempts ?? 15;
+  const interval = opts?.intervalMs ?? 20_000;
+
+  for (let i = 1; i <= max; i++) {
+    await new Promise((r) => setTimeout(r, interval));
+    opts?.onTick?.(i, max);
+    if (await isMatchParsed(matchId)) return true;
+  }
+  return false;
+}
+
 export async function getDetailedMatchData(matchId: number) {
   try {
     const response = await opendotaClient.get(`/matches/${matchId}`);
     const match = response.data;
 
     if (!match.version) {
-      logger.info(`Match ${matchId} is not parsed yet. Sending a parse request.`);
-      requestMatchParse(matchId);
       return null;
     }
 
