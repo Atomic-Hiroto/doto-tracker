@@ -3,7 +3,7 @@ import { AIConstants, ProcessConstants } from '../constants';
 import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
-import { getDetailedMatchData } from '../services/dotaService';
+import { getDetailedMatchData, requestMatchParse, waitForMatchParse } from '../services/dotaService';
 import { fetchDotabuffTurboMeta } from '../services/dotabuffScraper';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping, safeSend } from '../utils/channelHelpers';
@@ -66,10 +66,80 @@ export async function analyze(message: Message, args: string[]) {
 
     try {
         safeTyping(message.channel);
-        const matchData = await getDetailedMatchData(matchId);
+        let matchData = await getDetailedMatchData(matchId);
 
+        // ── Auto-parse wait: if not parsed, request parse and poll ────────
         if (!matchData) {
-            return message.reply('Match not found or not parsed yet. Try again in a few minutes after it parses on OpenDota.');
+            await requestMatchParse(matchId);
+
+            const waitEmbed = new EmbedBuilder()
+                .setColor('#f59e0b')
+                .setTitle('⏳ Parsing Match...')
+                .setDescription(
+                    `Match **#${matchId}** isn't parsed yet.\n` +
+                    `I've requested OpenDota to parse it — hang tight, I'll update this message automatically when it's ready.\n\n` +
+                    `⏳ Waiting for parse... (this usually takes 30s–2min)`
+                )
+                .setFooter({ text: 'Polling every 20s • Timeout: 5 min' });
+
+            const waitMsg = await message.reply({ embeds: [waitEmbed] });
+
+            // Add a hourglass reaction to the user's original message
+            try { await message.react('⏳'); } catch { /* ignore missing perms */ }
+
+            const parsed = await waitForMatchParse(matchId, {
+                onTick: (attempt, max) => {
+                    const elapsed = attempt * 20;
+                    const mins = Math.floor(elapsed / 60);
+                    const secs = elapsed % 60;
+                    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                    waitEmbed.setDescription(
+                        `Match **#${matchId}** isn't parsed yet.\n` +
+                        `I've requested OpenDota to parse it — hang tight, I'll update this message automatically when it's ready.\n\n` +
+                        `⏳ Still waiting... (${timeStr} elapsed, attempt ${attempt}/${max})`
+                    );
+                    waitMsg.edit({ embeds: [waitEmbed] }).catch(() => { });
+                },
+            });
+
+            // Swap reaction
+            try {
+                await message.reactions.cache.get('⏳')?.users.remove(message.client.user!);
+            } catch { /* ignore */ }
+
+            if (!parsed) {
+                try { await message.react('❌'); } catch { /* ignore */ }
+                waitEmbed
+                    .setColor('#ef4444')
+                    .setTitle('❌ Parse Timeout')
+                    .setDescription(
+                        `Match **#${matchId}** still isn't parsed after 5 minutes.\n` +
+                        `OpenDota might be slow or the replay isn't available.\n` +
+                        `Try \`+analyze ${matchId}\` again later.`
+                    )
+                    .setFooter(null);
+                return waitMsg.edit({ embeds: [waitEmbed] });
+            }
+
+            // Parsed! Update the wait message and fetch full data
+            try { await message.react('✅'); } catch { /* ignore */ }
+            waitEmbed
+                .setColor('#22c55e')
+                .setTitle('✅ Match Parsed!')
+                .setDescription(`Match **#${matchId}** is ready — generating analysis now...`)
+                .setFooter(null);
+            await waitMsg.edit({ embeds: [waitEmbed] });
+
+            safeTyping(message.channel);
+            matchData = await getDetailedMatchData(matchId);
+
+            if (!matchData) {
+                waitEmbed
+                    .setColor('#ef4444')
+                    .setTitle('❌ Data Error')
+                    .setDescription(`Match parsed but couldn't load detailed data. Try \`+analyze ${matchId}\` again.`);
+                return waitMsg.edit({ embeds: [waitEmbed] });
+            }
         }
 
         // ── Player block with enriched data (null-safe) ──────────────────────
