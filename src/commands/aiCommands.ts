@@ -12,35 +12,51 @@ import axios from 'axios';
 // Discord embed field values are capped at 1024 chars
 const trunc = (s: string, max = 1024) => s.length > max ? s.slice(0, max - 1) + '…' : s;
 
-async function callAI(systemPrompt: string, userPrompt: string): Promise<string> {
-    const response = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-            model: AIConstants.AI_MODEL,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt },
-            ],
-            ...AIConstants.AI_PARAMS
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${ProcessConstants.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': 'https://github.com/Atomic-Hiroto/doto-tracker',
-                'X-Title': 'Doto Tracker',
-            },
-        }
-    );
+async function callAI(
+    systemPrompt: string,
+    userPrompt: string,
+    opts?: { model?: string; params?: Record<string, any> }
+): Promise<string> {
+    const model = opts?.model ?? AIConstants.AI_MODEL;
+    const params = opts?.params ?? AIConstants.AI_PARAMS;
 
-    const content = response.data?.choices?.[0]?.message?.content;
-    if (Array.isArray(content)) {
-        return content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').trimStart();
+    try {
+        const response = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+                model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+                ...params
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${ProcessConstants.OPENROUTER_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://github.com/Atomic-Hiroto/doto-tracker',
+                    'X-Title': 'Doto Tracker',
+                },
+            }
+        );
+
+        const content = response.data?.choices?.[0]?.message?.content;
+        if (Array.isArray(content)) {
+            return content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').trimStart();
+        }
+        return (content || '').trimStart();
+    } catch (err: any) {
+        const status = err?.response?.status;
+        const errBody = err?.response?.data?.error?.message || err?.response?.data?.error || err?.message;
+        logger.error(`callAI failed [${model}] HTTP ${status}:`, errBody);
+        throw new Error(`AI API error (HTTP ${status}): ${errBody}`);
     }
-    return (content || '').trimStart();
 }
 
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
+
+const ANALYZE_SYSTEM = `You are a Dota 2 match analyst. Provide precise, data-driven analysis referencing specific heroes, players, item timings, and statistics. Draw actionable conclusions from the data — identify patterns, power spikes, and pivotal decisions. Structure your response clearly with numbered points. Be direct and concise.`;
 
 export async function analyze(message: Message, args: string[]) {
     const matchId = parseInt(args[0], 10);
@@ -56,25 +72,73 @@ export async function analyze(message: Message, args: string[]) {
             return message.reply('Match not found or not parsed yet. Try again in a few minutes after it parses on OpenDota.');
         }
 
-        const playerBlock = matchData.players.map((p: any) =>
-            `[${p.team}] ${p.name} — ${p.heroName} (${p.lane}${p.isRoaming ? ' Roam' : ''})\n` +
-            `  KDA: ${p.kills}/${p.deaths}/${p.assists} (${p.kda}) | NW: ${p.netWorth?.toLocaleString()} | GPM: ${p.gpm} | XPM: ${p.xpm}\n` +
-            `  Dmg: ${p.heroDamage?.toLocaleString()} | Tower: ${p.towerDamage?.toLocaleString()} | Heal: ${p.heroHealing?.toLocaleString()} | LH: ${p.lastHits}\n` +
-            `  Items: ${p.items?.length ? p.items.join(', ') : 'No items resolved'}`
-        ).join('\n\n');
+        // ── Player block with enriched data (null-safe) ──────────────────────
+        const playerBlock = matchData.players.map((p: any) => {
+            const lines = [
+                `[${p.team}] ${p.name} — ${p.heroName} (${p.lane}${p.isRoaming ? ' Roam' : ''})`,
+                `  KDA: ${p.kills}/${p.deaths}/${p.assists} (${p.kda}) | Lvl: ${p.level || '?'} | NW: ${(p.netWorth ?? 0).toLocaleString()} | GPM: ${p.gpm ?? '?'} | XPM: ${p.xpm ?? '?'}`,
+                `  Dmg: ${(p.heroDamage ?? 0).toLocaleString()} | Tower: ${(p.towerDamage ?? 0).toLocaleString()} | Heal: ${(p.heroHealing ?? 0).toLocaleString()} | LH: ${p.lastHits ?? '?'}`,
+                `  Items: ${p.items?.length ? p.items.join(', ') : 'None'}`,
+            ];
+
+            // Only include if data exists
+            if (p.backpack?.length) lines.push(`  Backpack: ${p.backpack.join(', ')}`);
+            if (p.buybacks > 0) lines.push(`  Buybacks: ${p.buybacks}`);
+            if (p.obsPlaced > 0 || p.senPlaced > 0) lines.push(`  Wards: ${p.obsPlaced} obs / ${p.senPlaced} sentries`);
+            if (p.runePickups > 0) lines.push(`  Runes: ${p.runePickups}`);
+            if (p.permanentBuffs?.length) lines.push(`  Buffs: ${p.permanentBuffs.join(', ')}`);
+
+            // Key item timings
+            if (p.keyItemTimings?.length) {
+                const timings = p.keyItemTimings.map((t: any) =>
+                    `${t.item.replace(/_/g, ' ')} @ ${formatDuration(t.time)}`
+                ).join(', ');
+                lines.push(`  Item Timings: ${timings}`);
+            }
+
+            // Kill timeline
+            if (p.killTimeline?.length) {
+                const kills = p.killTimeline
+                    .filter((k: any) => k.time >= 0)
+                    .map((k: any) =>
+                        `${formatDuration(k.time)} ${k.victim.replace(/_/g, ' ')}`
+                    ).join(', ');
+                if (kills) lines.push(`  Kills: ${kills}`);
+            }
+
+            // Extra stats line
+            const extras: string[] = [];
+            if (p.laneEfficiency != null) extras.push(`Lane Eff: ${p.laneEfficiency}%`);
+            if (p.apm > 0) extras.push(`APM: ${p.apm}`);
+            if (p.timeSpentDead > 0) extras.push(`Dead: ${p.timeSpentDead}s`);
+            if (extras.length) lines.push(`  ${extras.join(' | ')}`);
+
+            // Benchmarks
+            const benchKeys = Object.keys(p.benchmarks || {});
+            if (benchKeys.length > 0) {
+                const bStr = benchKeys.map(k => `${k}: ${p.benchmarks[k]}`).join(', ');
+                lines.push(`  Benchmarks: ${bStr}`);
+            }
+
+            return lines.join('\n');
+        }).join('\n\n');
 
         const goldGraph = matchData.goldAdvantage?.length
-            ? `Gold advantage (Radiant perspective): ${matchData.goldAdvantage.join(' → ')}`
+            ? `\n=== GOLD ADVANTAGE (Radiant perspective) ===\n${matchData.goldAdvantage.join(' → ')}`
+            : '';
+
+        const xpGraph = matchData.xpAdvantage?.length
+            ? `\n=== XP ADVANTAGE (Radiant perspective) ===\n${matchData.xpAdvantage.join(' → ')}`
             : '';
 
         const teamfightBlock = matchData.teamfights?.length
-            ? `Key teamfights:\n${matchData.teamfights.map((f: any) =>
+            ? `\n=== TEAMFIGHTS ===\n${matchData.teamfights.map((f: any) =>
                 `  ${formatDuration(f.start)}-${formatDuration(f.end)}: Radiant ${f.radiantKills}k / Dire ${f.direKills}k (${f.totalDeaths} deaths)`
             ).join('\n')}`
             : '';
 
         const objectivesBlock = matchData.objectives?.length
-            ? `Objectives: ${matchData.objectives.slice(0, 12).map((o: any) =>
+            ? `\n=== OBJECTIVES ===\n${matchData.objectives.slice(0, 20).map((o: any) =>
                 `${formatDuration(o.time)} ${o.team} ${o.type}${o.key ? ' (' + o.key + ')' : ''}`
             ).join(', ')}`
             : '';
@@ -84,34 +148,43 @@ Duration: ${formatDuration(matchData.duration)} | Winner: ${matchData.radiantWin
 
 === PLAYERS ===
 ${playerBlock}
-
 ${goldGraph}
-
+${xpGraph}
 ${teamfightBlock}
-
 ${objectivesBlock}
 
 Give me:
-1. What decided this game (2-3 key turning points, reference specific players/heroes/timings)
-2. The biggest mistakes by the losing team (be specific — items, positioning, objectives)
-3. What the winning team did right
-4. One hero/item tip that would've changed the outcome
-Keep it punchy, specific, and under 350 words.`;
+1. What decided this game (2-3 key turning points with specific timings and item power spikes)
+2. The biggest mistakes by the losing team (itemization errors, missed timings, poor objective play, buyback misuse)
+3. What the winning team executed well (draft synergy, tempo, rotations, itemization)
+4. Performance standouts — who over/underperformed relative to their role and benchmarks
+5. One concrete change (item, playstyle, or timing) that could have flipped the outcome
+Keep it specific, reference real data, and stay under 600 words.`;
 
-        const response = await callAI(COACH_SYSTEM, prompt);
+        // Debug: log the full prompt so we can inspect what the model receives
+        logger.debug(`[+analyze] System prompt:\n${ANALYZE_SYSTEM}`);
+        logger.debug(`[+analyze] User prompt (${prompt.length} chars):\n${prompt}`);
+
+        const response = await callAI(ANALYZE_SYSTEM, prompt, {
+            model: AIConstants.AI_ANALYZE_MODEL,
+            params: AIConstants.AI_ANALYZE_PARAMS,
+        });
 
         const embed = new EmbedBuilder()
             .setColor('#ef4444')
             .setTitle(`🔍 Match Analysis — #${matchId}`)
             .setDescription(trunc(response, 4096))
             .setURL(`https://www.opendota.com/matches/${matchId}`)
-            .setFooter({ text: 'Powered by doto-chan AI coaching' })
+            .setFooter({ text: `doto-chan coaching • ${AIConstants.AI_ANALYZE_MODEL}` })
             .setTimestamp();
 
         await message.reply({ embeds: [embed] });
-    } catch (error) {
+    } catch (error: any) {
         logger.error('Error in analyze command:', error);
-        await message.reply('An error occurred during match analysis. Please try again.');
+        const reason = error?.message?.includes('HTTP 402')
+            ? 'Insufficient OpenRouter credits for Opus 4.6. Top up at <https://openrouter.ai/credits>'
+            : error?.message || 'Unknown error';
+        await message.reply(`❌ Analysis failed: ${reason}`);
     }
 }
 
@@ -261,8 +334,10 @@ export async function meta(message: Message) {
                     return `${l.positionLabel}: ${top3}`;
                 }).join('\n');
             }
-        } catch (scrapeErr) {
+        } catch (scrapeErr: any) {
             logger.warn('Dotabuff scrape failed, falling back to OpenDota:', scrapeErr);
+            // Temporary: tell the user why we're falling back
+            await safeSend(message.channel, `⚠️ Dotabuff scrape failed (falling back to OpenDota): \`${scrapeErr?.message ?? scrapeErr}\``);
         }
 
         // ─── Fallback: OpenDota pub + turbo totals ─────────────────────────────────────────
