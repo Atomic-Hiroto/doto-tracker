@@ -41,7 +41,7 @@ export class ChannelDataService {
 
   setSharedContext(channelId: string, sharedContext: boolean) {
     let channelData = this.channelDataMap.get(channelId);
-    
+
     if (channelData) {
       channelData.sharedContext = sharedContext;
     } else {
@@ -49,12 +49,39 @@ export class ChannelDataService {
       this.channelData.push(channelData);
       this.channelDataMap.set(channelId, channelData);
     }
-    
+
     this.saveChannelData();
   }
 
   isSharedContext(channelId: string): boolean {
     const channelData = this.channelDataMap.get(channelId);
     return channelData ? channelData.sharedContext : false;
+  }
+
+  setAllowed(channelId: string, allowed: boolean) {
+    let channelData = this.channelDataMap.get(channelId);
+
+    if (channelData) {
+      channelData.allowed = allowed;
+    } else {
+      channelData = { channelId, sharedContext: false, allowed };
+      this.channelData.push(channelData);
+      this.channelDataMap.set(channelId, channelData);
+    }
+
+    this.saveChannelData();
+  }
+
+  isAllowed(channelId: string): boolean {
+    // If no channels have been explicitly allowed yet, be permissive (don't break on first deploy)
+    const hasAny = this.channelData.some(ch => ch.allowed === true);
+    if (!hasAny) return true;
+
+    const channelData = this.channelDataMap.get(channelId);
+    return channelData?.allowed === true;
+  }
+
+  getAllowedChannelIds(): string[] {
+    return this.channelData.filter(ch => ch.allowed === true).map(ch => ch.channelId);
   }
 }

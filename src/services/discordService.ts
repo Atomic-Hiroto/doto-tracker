@@ -4,11 +4,20 @@ import { UserDataService } from './userDataService';
 import { TurboStatsService } from './turboStatsService';
 import * as commandHandlers from '../commands';
 import { logger } from './loggerService';
-import { getAIText } from './aiService';
+import { getAIText, channelDataService } from './aiService';
 
 export async function handleMessage(message: Message, userDataService: UserDataService, turboStatsService: TurboStatsService) {
   // Ignore bot messages
   if (message.author.bot) return;
+
+  // Allow setchannel/unsetchannel to work in any channel so the owner can manage the allowlist
+  const rawCmd = message.content.startsWith(ProcessConstants.PREFIX)
+    ? message.content.slice(ProcessConstants.PREFIX.length).trim().split(/\s+/)[0]?.toLowerCase()
+    : null;
+  const isChannelAdmin = rawCmd === Commands.SET_CHANNEL || rawCmd === Commands.UNSET_CHANNEL;
+
+  // Block all activity in non-allowed channels (except channel admin commands)
+  if (!isChannelAdmin && !channelDataService.isAllowed(message.channel.id)) return;
 
   // Check if the bot was mentioned
   const botMentioned = message.mentions.has(message.client.user!);
@@ -112,6 +121,14 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       break;
     case Commands.ACHIEVEMENTS:
       await commandHandlers.achievements(message, args, userDataService);
+      break;
+
+    // --- Admin ---
+    case Commands.SET_CHANNEL:
+      await commandHandlers.setChannel(message, channelDataService);
+      break;
+    case Commands.UNSET_CHANNEL:
+      await commandHandlers.unsetChannel(message, channelDataService);
       break;
 
     default:

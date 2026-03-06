@@ -27,5 +27,8 @@ export enum Commands {
     DRAFT = "draft",
     META = "meta",
     ACHIEVEMENTS = "achievements",
+    // Admin
+    SET_CHANNEL = "setchannel",
+    UNSET_CHANNEL = "unsetchannel",
 }
 

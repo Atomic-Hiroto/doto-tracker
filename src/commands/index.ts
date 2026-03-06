@@ -20,3 +20,5 @@ export { compare } from './compare';
 // Phase 4
 export { analyze, suggest, draft, meta } from './aiCommands';
 export { achievements } from './achievements';
+// Admin
+export { setChannel, unsetChannel } from './setChannel';
