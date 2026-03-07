@@ -415,7 +415,10 @@ Analyze this match and fill in each field of the response schema. Be specific, r
         }
 
         const embeds = formatAnalysis(analysisData, matchId, useModel);
-        await message.reply({ embeds });
+        await message.reply({ embeds: [embeds[0]] });
+        if (embeds[1]) {
+            await safeSend(message.channel, { embeds: [embeds[1]] });
+        }
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
