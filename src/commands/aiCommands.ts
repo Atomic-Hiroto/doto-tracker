@@ -97,85 +97,53 @@ const ANALYZE_RESPONSE_FORMAT = {
             properties: {
                 gameNarrative: {
                     type: 'string',
-                    description: 'Story of the match: early/mid/late game flow, key turning points with timings, gold/XP shifts, item power spikes, objective takes.',
+                    description: 'Story of the match: early/mid/late game turning points with timings, gold/XP shifts, item power spikes. 3-5 sentences.',
                 },
                 laningPhase: {
                     type: 'string',
-                    description: 'Who won/lost lanes based on lane efficiency and early item timings. Did laning result dictate the game or was it overcome?',
+                    description: 'Who won/lost lanes based on efficiency and item timings. Did laning dictate the game? 2-3 sentences.',
                 },
                 draftItemsDamage: {
                     type: 'string',
-                    description: 'Draft and itemization analysis. Damage profile (physical vs magical) vs enemy defenses. Damage type mismatches or counter-itemization failures.',
+                    description: 'Draft/itemization analysis. Damage types vs defenses, counter-itemization failures. 3-5 sentences.',
                 },
                 biggestMistakes: {
                     type: 'string',
-                    description: '2-3 specific errors by the losing team: wrong items, missed power spikes, poor objective priorities, avoidable deaths.',
+                    description: '2-3 specific errors by the losing team with stats. Each mistake as its own paragraph.',
                 },
-                mvpName: {
+                mvpLvp: {
                     type: 'string',
-                    description: 'MVP player name and hero, e.g. "PlayerName (Drow Ranger)"',
-                },
-                mvpAnalysis: {
-                    type: 'string',
-                    description: 'Why the MVP overperformed — specific stats, timings, and impact.',
-                },
-                lvpName: {
-                    type: 'string',
-                    description: 'LVP player name and hero, e.g. "PlayerName (Nature\'s Prophet)"',
-                },
-                lvpAnalysis: {
-                    type: 'string',
-                    description: 'Why the LVP underperformed — specific stats and what went wrong.',
-                },
-                otherNotablePlayers: {
-                    type: 'string',
-                    description: 'Brief performance notes on other players worth mentioning (both good and bad). Cover ALL underperformers.',
+                    description: 'MVP and LVP with format "MVP: Player — Hero" and "LVP: Player — Hero" followed by their key stats. Mention other notable performers briefly.',
                 },
                 losingTeamActions: {
                     type: 'string',
-                    description: 'What the losing team needed to do differently: specific itemization changes, alternative timings, strategic pivots.',
+                    description: 'What the losing team needed: specific item/timing/strategic changes. 3-5 bullet points.',
                 },
             },
-            required: ['gameNarrative', 'laningPhase', 'draftItemsDamage', 'biggestMistakes', 'mvpName', 'mvpAnalysis', 'lvpName', 'lvpAnalysis', 'otherNotablePlayers', 'losingTeamActions'],
+            required: ['gameNarrative', 'laningPhase', 'draftItemsDamage', 'biggestMistakes', 'mvpLvp', 'losingTeamActions'],
             additionalProperties: false,
         },
     },
 };
 
-// ── Format structured analysis into Discord embeds ────────────────────────────
-function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder[] {
-    const embeds: EmbedBuilder[] = [];
-
-    // Main embed with narrative, laning, and draft sections
-    const mainEmbed = new EmbedBuilder()
-        .setColor('#ef4444')
-        .setTitle(`🔍 Match Analysis — #${matchId}`)
-        .setURL(`https://www.opendota.com/matches/${matchId}`)
-        .setTimestamp();
-
-    // Build description from the three big sections
+// ── Format structured analysis into a single Discord embed ────────────────────
+function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder {
     const sections = [
         `**GAME NARRATIVE**\n${data.gameNarrative}`,
         `**LANING PHASE**\n${data.laningPhase}`,
         `**DRAFT, ITEMS & DAMAGE ANALYSIS**\n${data.draftItemsDamage}`,
+        `**BIGGEST MISTAKES**\n${data.biggestMistakes}`,
+        `**MVP & LVP**\n${data.mvpLvp}`,
+        `**WHAT THE LOSING TEAM NEEDED TO DO**\n${data.losingTeamActions}`,
     ];
-    mainEmbed.setDescription(trunc(sections.join('\n\n\n'), 4096));
-    embeds.push(mainEmbed);
 
-    // Second embed with mistakes, MVP/LVP, and recommendations
-    const detailEmbed = new EmbedBuilder()
+    return new EmbedBuilder()
         .setColor('#ef4444')
-        .addFields(
-            { name: '💥 BIGGEST MISTAKES', value: trunc(data.biggestMistakes), inline: false },
-            { name: `🏆 MVP — ${data.mvpName}`, value: trunc(data.mvpAnalysis), inline: false },
-            { name: `💀 LVP — ${data.lvpName}`, value: trunc(data.lvpAnalysis), inline: false },
-            { name: '📋 OTHER NOTABLE PLAYERS', value: trunc(data.otherNotablePlayers), inline: false },
-            { name: '🎯 WHAT THE LOSING TEAM NEEDED', value: trunc(data.losingTeamActions), inline: false },
-        )
-        .setFooter({ text: `doto-chan coaching • ${model}` });
-    embeds.push(detailEmbed);
-
-    return embeds;
+        .setTitle(`🔍 Match Analysis — #${matchId}`)
+        .setDescription(trunc(sections.join('\n\n'), 4096))
+        .setURL(`https://www.opendota.com/matches/${matchId}`)
+        .setFooter({ text: `doto-chan coaching • ${model}` })
+        .setTimestamp();
 }
 
 const BOT_OWNER_ID = '78168838910246912';
@@ -414,11 +382,8 @@ Analyze this match and fill in each field of the response schema. Be specific, r
             return message.reply({ embeds: [fallbackEmbed] });
         }
 
-        const embeds = formatAnalysis(analysisData, matchId, useModel);
-        await message.reply({ embeds: [embeds[0]] });
-        if (embeds[1]) {
-            await safeSend(message.channel, { embeds: [embeds[1]] });
-        }
+        const embed = formatAnalysis(analysisData, matchId, useModel);
+        await message.reply({ embeds: [embed] });
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
