@@ -379,7 +379,7 @@ ${xpGraph}
 ${teamfightBlock}
 ${objectivesBlock}
 
-Analyze this match and fill in each field of the response schema. Be specific, reference real data from the stats above. Be direct and spicy. Aim for 600-800 words total across all fields.`;
+Analyze this match and fill in each field of the response schema. Be specific, reference real data from the stats above. Be direct and spicy. Keep it CONCISE — aim for 300-400 words total across all fields. Each field should be 2-4 sentences max.`;
 
         // Debug: log the full prompt so we can inspect what the model receives
         logger.debug(`[+analyze] System prompt:\n${ANALYZE_SYSTEM}`);
