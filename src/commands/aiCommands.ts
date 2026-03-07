@@ -15,22 +15,27 @@ const trunc = (s: string, max = 1024) => s.length > max ? s.slice(0, max - 1) + 
 async function callAI(
     systemPrompt: string,
     userPrompt: string,
-    opts?: { model?: string; params?: Record<string, any> }
+    opts?: { model?: string; params?: Record<string, any>; response_format?: any }
 ): Promise<string> {
     const model = opts?.model ?? AIConstants.AI_MODEL;
     const params = opts?.params ?? AIConstants.AI_PARAMS;
 
+    const body: Record<string, any> = {
+        model,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+        ],
+        ...params
+    };
+    if (opts?.response_format) {
+        body.response_format = opts.response_format;
+    }
+
     try {
         const response = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
-            {
-                model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt },
-                ],
-                ...params
-            },
+            body,
             {
                 headers: {
                     Authorization: `Bearer ${ProcessConstants.OPENROUTER_API_KEY}`,
@@ -80,6 +85,98 @@ CRITICAL — Damage type accuracy:
 
 CRITICAL — Player coverage:
 - Every player on the losing team should get at least a brief mention in the analysis — don't skip anyone.`;
+
+// ── Structured output schema for +analyze ────────────────────────────────────
+const ANALYZE_RESPONSE_FORMAT = {
+    type: 'json_schema' as const,
+    json_schema: {
+        name: 'match_analysis',
+        strict: true,
+        schema: {
+            type: 'object',
+            properties: {
+                gameNarrative: {
+                    type: 'string',
+                    description: 'Story of the match: early/mid/late game flow, key turning points with timings, gold/XP shifts, item power spikes, objective takes.',
+                },
+                laningPhase: {
+                    type: 'string',
+                    description: 'Who won/lost lanes based on lane efficiency and early item timings. Did laning result dictate the game or was it overcome?',
+                },
+                draftItemsDamage: {
+                    type: 'string',
+                    description: 'Draft and itemization analysis. Damage profile (physical vs magical) vs enemy defenses. Damage type mismatches or counter-itemization failures.',
+                },
+                biggestMistakes: {
+                    type: 'string',
+                    description: '2-3 specific errors by the losing team: wrong items, missed power spikes, poor objective priorities, avoidable deaths.',
+                },
+                mvpName: {
+                    type: 'string',
+                    description: 'MVP player name and hero, e.g. "PlayerName (Drow Ranger)"',
+                },
+                mvpAnalysis: {
+                    type: 'string',
+                    description: 'Why the MVP overperformed — specific stats, timings, and impact.',
+                },
+                lvpName: {
+                    type: 'string',
+                    description: 'LVP player name and hero, e.g. "PlayerName (Nature\'s Prophet)"',
+                },
+                lvpAnalysis: {
+                    type: 'string',
+                    description: 'Why the LVP underperformed — specific stats and what went wrong.',
+                },
+                otherNotablePlayers: {
+                    type: 'string',
+                    description: 'Brief performance notes on other players worth mentioning (both good and bad). Cover ALL underperformers.',
+                },
+                losingTeamActions: {
+                    type: 'string',
+                    description: 'What the losing team needed to do differently: specific itemization changes, alternative timings, strategic pivots.',
+                },
+            },
+            required: ['gameNarrative', 'laningPhase', 'draftItemsDamage', 'biggestMistakes', 'mvpName', 'mvpAnalysis', 'lvpName', 'lvpAnalysis', 'otherNotablePlayers', 'losingTeamActions'],
+            additionalProperties: false,
+        },
+    },
+};
+
+// ── Format structured analysis into Discord embeds ────────────────────────────
+function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder[] {
+    const embeds: EmbedBuilder[] = [];
+
+    // Main embed with narrative, laning, and draft sections
+    const mainEmbed = new EmbedBuilder()
+        .setColor('#ef4444')
+        .setTitle(`🔍 Match Analysis — #${matchId}`)
+        .setURL(`https://www.opendota.com/matches/${matchId}`)
+        .setTimestamp();
+
+    // Build description from the three big sections
+    const sections = [
+        `**GAME NARRATIVE**\n${data.gameNarrative}`,
+        `**LANING PHASE**\n${data.laningPhase}`,
+        `**DRAFT, ITEMS & DAMAGE ANALYSIS**\n${data.draftItemsDamage}`,
+    ];
+    mainEmbed.setDescription(trunc(sections.join('\n\n\n'), 4096));
+    embeds.push(mainEmbed);
+
+    // Second embed with mistakes, MVP/LVP, and recommendations
+    const detailEmbed = new EmbedBuilder()
+        .setColor('#ef4444')
+        .addFields(
+            { name: '💥 BIGGEST MISTAKES', value: trunc(data.biggestMistakes), inline: false },
+            { name: `🏆 MVP — ${data.mvpName}`, value: trunc(data.mvpAnalysis), inline: false },
+            { name: `💀 LVP — ${data.lvpName}`, value: trunc(data.lvpAnalysis), inline: false },
+            { name: '📋 OTHER NOTABLE PLAYERS', value: trunc(data.otherNotablePlayers), inline: false },
+            { name: '🎯 WHAT THE LOSING TEAM NEEDED', value: trunc(data.losingTeamActions), inline: false },
+        )
+        .setFooter({ text: `doto-chan coaching • ${model}` });
+    embeds.push(detailEmbed);
+
+    return embeds;
+}
 
 const BOT_OWNER_ID = '78168838910246912';
 
@@ -282,14 +379,7 @@ ${xpGraph}
 ${teamfightBlock}
 ${objectivesBlock}
 
-Give me:
-1. GAME NARRATIVE: Tell the story of this match — how did the early, mid, and late game play out? Reference key turning points, gold/XP graph shifts, item power spikes, and objective takes with timings
-2. LANING PHASE: Who won/lost lanes based on lane efficiency and early item timings — did the laning result dictate the game or was it overcome?
-3. DRAFT, ITEMS & DAMAGE ANALYSIS: How well did each team's draft and itemization complement their game plan? Analyze the damage profile (physical vs magical) against the enemy's defensive items — identify any damage type mismatches or counter-itemization failures
-4. BIGGEST MISTAKES: 2-3 specific errors by the losing team (wrong items for the matchup, missed power spike windows, poor objective priorities, avoidable deaths)
-5. MVP & LVP: Who over/underperformed relative to their role and benchmarks — back it up with specific stats
-6. LOSING TEAM ACTIONS: What could the losing team have done differently — specific itemization changes, alternative timings, or strategic pivots that would've improved their chances
-Keep it specific, reference real data, and stay under 500 words.`;
+Analyze this match and fill in each field of the response schema. Be specific, reference real data from the stats above. Be direct and spicy. Aim for 600-800 words total across all fields.`;
 
         // Debug: log the full prompt so we can inspect what the model receives
         logger.debug(`[+analyze] System prompt:\n${ANALYZE_SYSTEM}`);
@@ -303,17 +393,29 @@ Keep it specific, reference real data, and stay under 500 words.`;
         const response = await callAI(ANALYZE_SYSTEM, prompt, {
             model: useModel,
             params: modelOverride ? { max_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
+            response_format: ANALYZE_RESPONSE_FORMAT,
         });
 
-        const embed = new EmbedBuilder()
-            .setColor('#ef4444')
-            .setTitle(`🔍 Match Analysis — #${matchId}`)
-            .setDescription(trunc(response, 4096))
-            .setURL(`https://www.opendota.com/matches/${matchId}`)
-            .setFooter({ text: `doto-chan coaching • ${useModel}` })
-            .setTimestamp();
+        // Parse structured JSON response
+        let analysisData: any;
+        try {
+            analysisData = JSON.parse(response);
+        } catch (parseErr) {
+            logger.error('[+analyze] Failed to parse structured response, falling back to raw text');
+            logger.debug(`[+analyze] Raw response: ${response.slice(0, 500)}`);
+            // Fallback: send raw text in embed if JSON parsing fails
+            const fallbackEmbed = new EmbedBuilder()
+                .setColor('#ef4444')
+                .setTitle(`🔍 Match Analysis — #${matchId}`)
+                .setDescription(trunc(response, 4096))
+                .setURL(`https://www.opendota.com/matches/${matchId}`)
+                .setFooter({ text: `doto-chan coaching • ${useModel}` })
+                .setTimestamp();
+            return message.reply({ embeds: [fallbackEmbed] });
+        }
 
-        await message.reply({ embeds: [embed] });
+        const embeds = formatAnalysis(analysisData, matchId, useModel);
+        await message.reply({ embeds });
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
