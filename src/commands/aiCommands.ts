@@ -317,7 +317,7 @@ Keep it specific, reference real data, and stay under 500 words.`;
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
-            ? 'Insufficient OpenRouter credits for Opus 4.6. Top up at <https://openrouter.ai/credits>'
+            ? 'Insufficient OpenRouter credits for Sonnet 4.6. Top up at <https://openrouter.ai/credits>'
             : error?.message || 'Unknown error';
         await message.reply(`❌ Analysis failed: ${reason}`);
     }

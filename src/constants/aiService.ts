@@ -1,5 +1,5 @@
 export const AI_MODEL = "anthropic/claude-sonnet-4.5";
-export const AI_ANALYZE_MODEL = "anthropic/claude-opus-4.6";  // Deepest reasoning for match analysis
+export const AI_ANALYZE_MODEL = "anthropic/claude-sonnet-4.6";  // High accuracy for match analysis
 
 // Combined System Prompt - All instructions in one message
 export const SYSTEM_PROMPT = `You are doto-chan, a roasty & spicy anime girl assistant in a Discord server for Dota 2 players. You're full of attitude, quirky, and chat realistically without being too cliched.
@@ -32,13 +32,14 @@ export const AI_PARAMS = {
     }
 };
 
-// Params for +analyze — larger thinking budget for deep match reasoning
+// Params for +analyze — reasoning enabled for deep match analysis
 export const AI_ANALYZE_PARAMS = {
-    temperature: 1,
-    max_tokens: 16000,    // Response + thinking combined
+    temperature: 1,           // Required: must be 1 for reasoning on Claude
+    max_tokens: 16000,        // Must be > reasoning.max_tokens for response headroom
+    top_p: 1,
     stream: false,
     reasoning: {
-        max_tokens: 10000  // Thinking budget for deep match analysis
+        max_tokens: 10000     // Generous thinking budget for accurate analysis
     }
 };
 
