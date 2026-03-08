@@ -97,27 +97,27 @@ const ANALYZE_RESPONSE_FORMAT = {
             properties: {
                 gameNarrative: {
                     type: 'string',
-                    description: 'Story of the match: early/mid/late game turning points with timings, gold/XP shifts, item power spikes. 3-5 sentences.',
+                    description: 'Match story: key turning points with timings and gold/XP shifts. Use **bold** for player and hero names. MAX 3 sentences.',
                 },
                 laningPhase: {
                     type: 'string',
-                    description: 'Who won/lost lanes based on efficiency and item timings. Did laning dictate the game? 2-3 sentences.',
+                    description: 'Lane winners/losers with efficiency stats. Did laning decide the game? Use **bold** for hero names. MAX 2 sentences.',
                 },
                 draftItemsDamage: {
                     type: 'string',
-                    description: 'Draft/itemization analysis. Damage types vs defenses, counter-itemization failures. 3-5 sentences.',
+                    description: 'Damage types vs defenses, key itemization failures. Use **bold** for item and hero names. MAX 3 sentences.',
                 },
                 biggestMistakes: {
                     type: 'string',
-                    description: '2-3 specific errors by the losing team with stats. Each mistake as its own paragraph.',
+                    description: '2-3 errors by losing team, one sentence each. Use **bold** for player names.',
                 },
                 mvpLvp: {
                     type: 'string',
-                    description: 'MVP and LVP with format "MVP: Player — Hero" and "LVP: Player — Hero" followed by their key stats. Mention other notable performers briefly.',
+                    description: 'Format: **MVP: Player — Hero** stats. **LVP: Player — Hero** stats. One sentence each. Optionally mention 1-2 other standouts.',
                 },
                 losingTeamActions: {
                     type: 'string',
-                    description: 'What the losing team needed: specific item/timing/strategic changes. 3-5 bullet points.',
+                    description: 'What losing team needed differently. 2-3 short bullet points.',
                 },
             },
             required: ['gameNarrative', 'laningPhase', 'draftItemsDamage', 'biggestMistakes', 'mvpLvp', 'losingTeamActions'],
@@ -347,7 +347,7 @@ ${xpGraph}
 ${teamfightBlock}
 ${objectivesBlock}
 
-Analyze this match and fill in each field of the response schema. Be specific, reference real data from the stats above. Be direct and spicy. Keep it CONCISE — aim for 300-400 words total across all fields. Each field should be 2-4 sentences max.`;
+Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Use Discord markdown (**bold** for player names, hero names, key items). Be direct and spicy. STRICT LIMIT: 200 words total across all fields. Each field 1-3 sentences max.`;
 
         // Debug: log the full prompt so we can inspect what the model receives
         logger.debug(`[+analyze] System prompt:\n${ANALYZE_SYSTEM}`);
