@@ -26,6 +26,7 @@ async function callAI(
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
         ],
+        plugins: [{ id: 'web', max_results: 3 }],
         ...params
     };
     if (opts?.response_format) {
@@ -59,9 +60,9 @@ async function callAI(
     }
 }
 
-const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
+const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply based on the latest patch — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
 
-const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. Provide data-driven analysis referencing specific heroes, players, item timings, damage breakdowns, and statistics. Draw actionable conclusions — identify power spikes, damage type mismatches, itemization counters, and pivotal decisions. When analyzing mistakes, consider whether the problem was execution (missed abilities) or strategic (wrong damage type into resistances, bad item choices). Structure your response clearly with numbered points. Be direct, spicy and concise. Roast caow as a running joke, but your analysis MUST cover ALL underperforming players fairly — the caow roast is a bonus, not a replacement for real analysis.
+const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. Provide data-driven analysis referencing specific heroes, players, item timings, damage breakdowns, and statistics. Draw actionable conclusions — identify power spikes, damage type mismatches, itemization counters, and pivotal decisions. When analyzing mistakes, consider whether the problem was execution (missed abilities) or strategic (wrong damage type into resistances, bad item choices). Structure your response clearly with numbered points. Be direct, spicy and concise. Roast caow or epi as a running joke, but your analysis MUST cover ALL underperforming players fairly — the caow roast is a bonus, not a replacement for real analysis.
 
 Make sure to double check everything before replying to make sure nothing is missed / hallucinated.
 CRITICAL — Ability name accuracy:
@@ -84,7 +85,9 @@ CRITICAL — Damage type accuracy:
 - Always verify damage types before claiming an item counters a specific ability.
 
 CRITICAL — Player coverage:
-- Every player on the losing team should get at least a brief mention in the analysis — don't skip anyone.`;
+- Every player on the losing team should get at least a brief mention in the analysis — don't skip anyone.
+
+CRITICAL - Make sure your information is based on the latest patch.`;
 
 // ── Structured output schema for +analyze ────────────────────────────────────
 const ANALYZE_RESPONSE_FORMAT = {
