@@ -32,8 +32,8 @@ async function callAI(
     };
     if (opts?.response_format) {
         body.response_format = opts.response_format;
-        // For structured output: use json-healing to auto-fix malformed JSON + web for latest info
-        body.plugins = [{ id: 'web', max_results: 3 }, { id: 'json-healing' }];
+        // For structured output: use response-healing to auto-fix malformed JSON + web for latest info
+        body.plugins = [{ id: 'web', max_results: 3 }, { id: 'response-healing' }];
     }
 
     try {
@@ -469,7 +469,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
 
         const response = await callAI(ANALYZE_SYSTEM, prompt, {
             model: useModel,
-            params: modelOverride ? { max_completion_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
+            params: modelOverride ? { max_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
             response_format: ANALYZE_RESPONSE_FORMAT,
         });
 
