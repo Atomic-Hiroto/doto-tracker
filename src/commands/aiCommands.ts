@@ -26,11 +26,14 @@ async function callAI(
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
         ],
+        // Web search gives the LLM access to latest patch notes, item changes, meta info
         plugins: [{ id: 'web', max_results: 3 }],
         ...params
     };
     if (opts?.response_format) {
         body.response_format = opts.response_format;
+        // For structured output: use json-healing to auto-fix malformed JSON + web for latest info
+        body.plugins = [{ id: 'web', max_results: 3 }, { id: 'json-healing' }];
     }
 
     try {
@@ -62,32 +65,54 @@ async function callAI(
 
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply based on the latest patch — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
 
-const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. Provide data-driven analysis referencing specific heroes, players, item timings, damage breakdowns, and statistics. Draw actionable conclusions — identify power spikes, damage type mismatches, itemization counters, and pivotal decisions. When analyzing mistakes, consider whether the problem was execution (missed abilities) or strategic (wrong damage type into resistances, bad item choices). Structure your response clearly with numbered points. Be direct, spicy and concise. Roast caow or epi as a running joke, but your analysis MUST cover ALL underperforming players fairly — the caow roast is a bonus, not a replacement for real analysis.
+const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. You receive rich structured match data and produce data-driven analysis.
 
-Make sure to double check everything before replying to make sure nothing is missed / hallucinated.
-CRITICAL — Ability name accuracy:
-The "Dmg Sources" field uses Dota 2's INTERNAL ability names, which often differ from the display names players know. You MUST use the correct DISPLAY name when discussing abilities. Common internal→display mappings:
+## Your Analytical Framework
+Follow this reasoning order to ensure comprehensive analysis:
+1. **Draft context** — Evaluate pick/ban synergies, lane matchups, team compositions, and hero facet choices
+2. **Laning phase** — Use lane efficiency %, CS curves, first blood timing, and gold curves to determine lane outcomes
+3. **Economy & itemization** — Cross-reference item timings with gold curves, evaluate choices against enemy damage types and compositions
+4. **Teamfights & objectives** — Identify key fights from the teamfight log, correlate with objective kills and gold swings
+5. **Decisive plays** — Pin down the specific moment(s) that decided the game using kill timelines, buyback logs, and comeback/throw values
+
+## Data Field Guide
+- **heroVariant** = hero facet (1-indexed), the Dota 2 facet system. Mention if a facet choice was suboptimal.
+- **rankTier** = player rank medal. Use to contextualize play quality.
+- **partyId** = party grouping. Players sharing a partyId queued together — note coordinated plays.
+- **multiKills / killStreaks** = highlight spectacular multi-kill and streak performances.
+- **campsStacked / neutralKills** = jungle efficiency and support contribution.
+- **maxHeroHit** = biggest single damage instance — highlight if notable.
+- **damageReceived** = incoming damage sources — identify who got focused and by what.
+- **goldCurve / lhCurve** = net worth and CS over time — use to identify farming patterns and power spikes.
+- **buybackLog** = buyback timings — critical for late-game analysis.
+- **comeback / throw** = max gold swing values — quantifies how dramatic the game was.
+
+## CRITICAL RULES
+
+Ability name accuracy:
+Dmg Sources use Dota 2 INTERNAL ability names. Always translate to display names:
 - dawnbreaker fire wreath = Starbreaker (Q), dawnbreaker celestial hammer = Celestial Hammer (W), dawnbreaker luminosity = Luminosity (passive)
 - death prophet exorcism = Exorcism, death prophet spirit siphon = Spirit Siphon
 - juggernaut blade fury = Blade Fury, juggernaut omni slash = Omnislash
 - sniper assassinate = Assassinate, sniper shrapnel = Shrapnel
-- dark seer wall of replica = Wall of Replica, dark seer ion shell = Ion Shell, dark seer surge = Surge
+- dark seer wall of replica = Wall of Replica, dark seer ion shell = Ion Shell
 - muerta dead shot = Dead Shot, muerta the calling = The Calling, muerta pierce the veil = Pierce the Veil
 - drow ranger multishot = Multishot, drow ranger frost arrows = Frost Arrows
-- venomancer venomous gale = Venomous Gale, venomancer poison sting = Poison Sting, venomancer plague ward = Plague Ward, venomancer noxious plague = Noxious Plague
+- venomancer venomous gale = Venomous Gale, venomancer poison sting = Poison Sting, venomancer plague ward = Plague Ward
 - lina laguna blade = Laguna Blade, lina light strike array = Light Strike Array, lina dragon slave = Dragon Slave
-- "null" or "Right Click" = auto-attack / right-click damage
-If you see an internal name not listed here, derive the display name from context (hero name prefix + ability descriptor). NEVER present raw internal names to the user.
+- "null" or "Right Click" = auto-attack damage
+If you see an internal name not listed, derive the display name from context. NEVER show raw internal names.
 
-CRITICAL — Damage type accuracy:
-- Physical damage abilities (commonly misidentified as magical): Exorcism (Death Prophet), Omnislash (Juggernaut), Flak Cannon (Gyrocopter), Tidebringer (Kunkka), Sleight of Fist (Ember Spirit), March of the Machines (Tinker), Quill Spray (Bristleback), Blade Fury (deals magical but renders Jugg unable to attack).
-- Pure damage abilities: Tinker Laser, Timber Chain, Whirling Death, Brain Sap, Purification, Laguna Blade (with Aghanim's Scepter).
-- Always verify damage types before claiming an item counters a specific ability.
+Damage type accuracy:
+- Physical: Exorcism, Omnislash, Flak Cannon, Tidebringer, Sleight of Fist, Quill Spray
+- Pure: Tinker Laser, Timber Chain, Whirling Death, Brain Sap, Purification, Laguna Blade (w/ Aghs)
+- Verify damage types before claiming item counters.
 
-CRITICAL — Player coverage:
-- Every player on the losing team should get at least a brief mention in the analysis — don't skip anyone.
+Player coverage:
+- Every player on the LOSING team must get at least a brief mention — don't skip anyone.
+- Roast caow or epi if present (running joke), but never replace real analysis with just roasts.
 
-CRITICAL - Make sure your information is based on the latest patch.`;
+Be direct, spicy, and concise. Use Discord markdown (**bold** for names). Base everything on the provided data, not assumptions.`;
 
 // ── Structured output schema for +analyze ────────────────────────────────────
 const ANALYZE_RESPONSE_FORMAT = {
@@ -100,30 +125,30 @@ const ANALYZE_RESPONSE_FORMAT = {
             properties: {
                 gameNarrative: {
                     type: 'string',
-                    description: 'Match story: key turning points with timings and gold/XP shifts. Use **bold** for player and hero names. MAX 3 sentences.',
+                    description: 'The story of this match in 2-4 sentences. Reference specific timings, gold leads from the advantage graph, and the decisive moment that ended the game. Include comeback/throw values if dramatic (e.g. "Radiant came back from a 12k gold deficit"). Use **bold** for player and hero names.',
                 },
-                laningPhase: {
+                draftAndLaning: {
                     type: 'string',
-                    description: 'Lane winners/losers with efficiency stats. Did laning decide the game? Use **bold** for hero names. MAX 2 sentences.',
+                    description: 'Combined draft + laning analysis in 2-3 sentences. Comment on draft synergies/weaknesses, facet choices (if notable), and lane outcomes using lane efficiency and CS data. Name lane winners/losers. Use **bold** for hero names.',
                 },
-                draftItemsDamage: {
+                itemizationAndDamage: {
                     type: 'string',
-                    description: 'Damage types vs defenses, key itemization failures. Use **bold** for item and hero names. MAX 3 sentences.',
+                    description: 'Analyze item choices and timings against enemy damage types. Reference specific item timing data (e.g. "BKB at 22:00 was too late against triple magic damage"). Note damage type mismatches. 2-3 sentences. Use **bold** for items and heroes.',
                 },
-                biggestMistakes: {
+                keyMistakes: {
                     type: 'string',
-                    description: '2-3 errors by losing team, one sentence each. Use **bold** for player names.',
+                    description: 'The 2-3 biggest mistakes by the losing team. Each mistake should reference specific data: buyback timings, kill timeline events, fights lost, or objectives conceded. One sentence each. Use **bold** for player names.',
                 },
-                mvpLvp: {
+                mvpAndStandouts: {
                     type: 'string',
-                    description: 'Format: **MVP: Player — Hero** stats. **LVP: Player — Hero** stats. One sentence each. Optionally mention 1-2 other standouts.',
+                    description: 'Format: **MVP: Player — Hero** with 1 sentence on why (cite stats: damage, KDA, benchmarks). **LVP: Player — Hero** with 1 sentence. Optionally 1-2 other standouts (multi-kills, highest damage, best farm).',
                 },
-                losingTeamActions: {
+                whatToImprove: {
                     type: 'string',
-                    description: 'What losing team needed differently. 2-3 short bullet points.',
+                    description: 'What the losing team should do differently next time. 2-3 bullet points, each actionable and specific (e.g. "• Pick a BKB-piercing disable against this lineup" not "play better").',
                 },
             },
-            required: ['gameNarrative', 'laningPhase', 'draftItemsDamage', 'biggestMistakes', 'mvpLvp', 'losingTeamActions'],
+            required: ['gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'whatToImprove'],
             additionalProperties: false,
         },
     },
@@ -132,12 +157,12 @@ const ANALYZE_RESPONSE_FORMAT = {
 // ── Format structured analysis into a single Discord embed ────────────────────
 function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder {
     const sections = [
-        `**GAME NARRATIVE**\n${data.gameNarrative}`,
-        `**LANING PHASE**\n${data.laningPhase}`,
-        `**DRAFT, ITEMS & DAMAGE ANALYSIS**\n${data.draftItemsDamage}`,
-        `**BIGGEST MISTAKES**\n${data.biggestMistakes}`,
-        `**MVP & LVP**\n${data.mvpLvp}`,
-        `**WHAT THE LOSING TEAM NEEDED TO DO**\n${data.losingTeamActions}`,
+        `**📖 GAME NARRATIVE**\n${data.gameNarrative}`,
+        `**🏗️ DRAFT & LANING**\n${data.draftAndLaning}`,
+        `**⚔️ ITEMS & DAMAGE**\n${data.itemizationAndDamage}`,
+        `**💀 KEY MISTAKES**\n${data.keyMistakes}`,
+        `**🏆 MVP & STANDOUTS**\n${data.mvpAndStandouts}`,
+        `**📝 WHAT TO IMPROVE**\n${data.whatToImprove}`,
     ];
 
     return new EmbedBuilder()
@@ -251,21 +276,68 @@ export async function analyze(message: Message, args: string[]) {
             }
         }
 
-        // ── Player block with enriched data (null-safe) ──────────────────────
+        // ── Build structured prompt with clear sections ─────────────────────
+
+        // Match summary header
+        const winner = matchData.radiantWin ? 'Radiant' : 'Dire';
+        const summaryParts = [
+            `Match #${matchData.matchId}`,
+            `Duration: ${formatDuration(matchData.duration)}`,
+            `Winner: ${winner}`,
+            matchData.radiantScore != null ? `Score: Radiant ${matchData.radiantScore} — Dire ${matchData.direScore}` : '',
+            matchData.skillBracket ? `Bracket: ${matchData.skillBracket}` : '',
+            matchData.firstBloodTime != null ? `First Blood: ${formatDuration(matchData.firstBloodTime)}` : '',
+            matchData.comeback ? `Comeback: ${matchData.comeback.toLocaleString()} gold deficit overcome` : '',
+            matchData.throw ? `Throw: ${matchData.throw.toLocaleString()} gold lead squandered` : '',
+            `Game Mode: ${matchData.gameMode}`,
+        ].filter(Boolean);
+
+        // Draft block
+        const draftBlock = matchData.draft?.length
+            ? `\n=== DRAFT ORDER ===\n${matchData.draft.map((d: any) =>
+                `${d.order + 1}. ${d.team} ${d.isPick ? 'PICK' : 'BAN'}: ${d.heroName}`
+            ).join('\n')}`
+            : '';
+
+        // Player blocks with all new fields
         const playerBlock = matchData.players.map((p: any) => {
+            const header = [
+                `[${p.team}] ${p.name} — ${p.heroName}`,
+                p.heroVariant ? `(Facet ${p.heroVariant})` : '',
+                `(${p.lane}${p.isRoaming ? ' Roam' : ''})`,
+                p.rankTier ? `[${p.rankTier}]` : '',
+            ].filter(Boolean).join(' ');
+
             const lines = [
-                `[${p.team}] ${p.name} — ${p.heroName} (${p.lane}${p.isRoaming ? ' Roam' : ''})`,
+                header,
                 `  KDA: ${p.kills}/${p.deaths}/${p.assists} (${p.kda}) | Lvl: ${p.level || '?'} | NW: ${(p.netWorth ?? 0).toLocaleString()} | GPM: ${p.gpm ?? '?'} | XPM: ${p.xpm ?? '?'}`,
-                `  Dmg: ${(p.heroDamage ?? 0).toLocaleString()} | Tower: ${(p.towerDamage ?? 0).toLocaleString()} | Heal: ${(p.heroHealing ?? 0).toLocaleString()} | LH: ${p.lastHits ?? '?'}`,
+                `  Dmg: ${(p.heroDamage ?? 0).toLocaleString()} | Tower: ${(p.towerDamage ?? 0).toLocaleString()} | Heal: ${(p.heroHealing ?? 0).toLocaleString()} | LH: ${p.lastHits ?? '?'} | DN: ${p.denies ?? 0}`,
                 `  Items: ${p.items?.length ? p.items.join(', ') : 'None'}`,
             ];
 
             // Only include if data exists
             if (p.backpack?.length) lines.push(`  Backpack: ${p.backpack.join(', ')}`);
-            if (p.buybacks > 0) lines.push(`  Buybacks: ${p.buybacks}`);
+            if (p.buybacks > 0) {
+                const buybackTimes = p.buybackLog?.length
+                    ? ` (at ${p.buybackLog.map((bb: any) => formatDuration(bb.time)).join(', ')})`
+                    : '';
+                lines.push(`  Buybacks: ${p.buybacks}${buybackTimes}`);
+            }
             if (p.obsPlaced > 0 || p.senPlaced > 0) lines.push(`  Wards: ${p.obsPlaced} obs / ${p.senPlaced} sentries`);
             if (p.runePickups > 0) lines.push(`  Runes: ${p.runePickups}`);
             if (p.permanentBuffs?.length) lines.push(`  Buffs: ${p.permanentBuffs.join(', ')}`);
+
+            // Multi-kills and streaks
+            if (p.multiKills) lines.push(`  Multi-kills: ${p.multiKills}`);
+            if (p.killStreaks) lines.push(`  Max Kill Streak: ${p.killStreaks}`);
+
+            // Farming stats
+            const farmStats: string[] = [];
+            if (p.campsStacked > 0) farmStats.push(`Stacked: ${p.campsStacked}`);
+            if (p.neutralKills > 0) farmStats.push(`Jungle: ${p.neutralKills}`);
+            if (p.towerKills > 0) farmStats.push(`Tower Kills: ${p.towerKills}`);
+            if (p.roshanKills > 0) farmStats.push(`Rosh Kills: ${p.roshanKills}`);
+            if (farmStats.length) lines.push(`  Farming: ${farmStats.join(' | ')}`);
 
             // Key item timings
             if (p.keyItemTimings?.length) {
@@ -292,6 +364,7 @@ export async function analyze(message: Message, args: string[]) {
             if (p.timeSpentDead > 0) extras.push(`Dead: ${p.timeSpentDead}s`);
             if (p.teamfightParticipation != null) extras.push(`TF: ${p.teamfightParticipation}%`);
             if (p.stunDuration > 0) extras.push(`Stuns: ${p.stunDuration}s`);
+            if (p.leaverStatus >= 2) extras.push(`⚠️ ABANDONED`);
             if (extras.length) lines.push(`  ${extras.join(' | ')}`);
 
             // Top damage abilities
@@ -302,6 +375,14 @@ export async function analyze(message: Message, args: string[]) {
                 lines.push(`  Dmg Sources: ${abilities}`);
             }
 
+            // Damage received
+            if (p.damageReceived?.length) {
+                const recv = p.damageReceived.map((r: any) =>
+                    `${r.ability} (${r.damage.toLocaleString()})`
+                ).join(', ');
+                lines.push(`  Dmg Received: ${recv}`);
+            }
+
             // Damage dealt to each enemy hero
             if (p.damageToHeroes?.length) {
                 const targets = p.damageToHeroes.map((t: any) =>
@@ -309,6 +390,14 @@ export async function analyze(message: Message, args: string[]) {
                 ).join(', ');
                 lines.push(`  Dmg Targets: ${targets}`);
             }
+
+            // Max hero hit
+            if (p.maxHeroHit) {
+                lines.push(`  Biggest Hit: ${p.maxHeroHit.value.toLocaleString()} dmg (${p.maxHeroHit.inflictor} on ${p.maxHeroHit.target})`);
+            }
+
+            // Net worth curve (sampled)
+            if (p.goldCurve?.length) lines.push(`  Gold Curve: ${p.goldCurve.join(' → ')}`);
 
             // Benchmarks
             const benchKeys = Object.keys(p.benchmarks || {});
@@ -319,6 +408,19 @@ export async function analyze(message: Message, args: string[]) {
 
             return lines.join('\n');
         }).join('\n\n');
+
+        // Party groupings
+        const parties = new Map<number, string[]>();
+        for (const p of matchData.players) {
+            if (p.partyId != null) {
+                if (!parties.has(p.partyId)) parties.set(p.partyId, []);
+                parties.get(p.partyId)!.push(p.name);
+            }
+        }
+        const partyBlock = Array.from(parties.values())
+            .filter(members => members.length > 1)
+            .map(members => `Party: ${members.join(' + ')}`)
+            .join('\n');
 
         const goldGraph = matchData.goldAdvantage?.length
             ? `\n=== GOLD ADVANTAGE (Radiant perspective) ===\n${matchData.goldAdvantage.join(' → ')}`
@@ -335,13 +437,17 @@ export async function analyze(message: Message, args: string[]) {
             : '';
 
         const objectivesBlock = matchData.objectives?.length
-            ? `\n=== OBJECTIVES ===\n${matchData.objectives.slice(0, 20).map((o: any) =>
+            ? `\n=== OBJECTIVES ===\n${matchData.objectives.slice(0, 25).map((o: any) =>
                 `${formatDuration(o.time)} ${o.team} ${o.type}${o.key ? ' (' + o.key + ')' : ''}`
             ).join(', ')}`
             : '';
 
-        const prompt = `Analyze this Dota 2 match #${matchData.matchId}:
-Duration: ${formatDuration(matchData.duration)} | Winner: ${matchData.radiantWin ? 'Radiant' : 'Dire'} | Game Mode: ${matchData.gameMode}
+        const prompt = `Analyze this Dota 2 match:
+
+=== MATCH SUMMARY ===
+${summaryParts.join(' | ')}
+${draftBlock}
+${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
 
 === PLAYERS ===
 ${playerBlock}
@@ -350,7 +456,7 @@ ${xpGraph}
 ${teamfightBlock}
 ${objectivesBlock}
 
-Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Use Discord markdown (**bold** for player names, hero names, key items). Be direct and spicy. STRICT LIMIT: 200 words total across all fields. Each field 1-3 sentences max.`;
+Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Reference specific numbers from the data above. Use Discord markdown (**bold** for names). Be direct and spicy. STRICT LIMIT: 250 words total across all fields. Each field 2-4 sentences max.`;
 
         // Debug: log the full prompt so we can inspect what the model receives
         logger.debug(`[+analyze] System prompt:\n${ANALYZE_SYSTEM}`);
@@ -363,7 +469,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. U
 
         const response = await callAI(ANALYZE_SYSTEM, prompt, {
             model: useModel,
-            params: modelOverride ? { max_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
+            params: modelOverride ? { max_completion_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
             response_format: ANALYZE_RESPONSE_FORMAT,
         });
 
@@ -373,12 +479,13 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. U
             analysisData = JSON.parse(response);
         } catch (parseErr) {
             logger.error('[+analyze] Failed to parse structured response, falling back to raw text');
-            logger.debug(`[+analyze] Raw response: ${response.slice(0, 500)}`);
+            logger.debug(`[+analyze] Raw response (${response.length} chars): ${response.slice(0, 500)}`);
             // Fallback: send raw text in embed if JSON parsing fails
+            const fallbackText = response.trim() || 'AI returned an empty response. Try again later.';
             const fallbackEmbed = new EmbedBuilder()
                 .setColor('#ef4444')
                 .setTitle(`🔍 Match Analysis — #${matchId}`)
-                .setDescription(trunc(response, 4096))
+                .setDescription(trunc(fallbackText, 4096))
                 .setURL(`https://www.opendota.com/matches/${matchId}`)
                 .setFooter({ text: `doto-chan coaching • ${useModel}` })
                 .setTimestamp();
