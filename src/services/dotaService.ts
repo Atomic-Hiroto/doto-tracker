@@ -246,27 +246,71 @@ export async function getDetailedMatchData(matchId: number) {
       return null;
     }
 
+    // ── Skill bracket mapping ────────────────────────────────────────────────
+    const skillBrackets: Record<number, string> = { 1: 'Normal', 2: 'High', 3: 'Very High' };
+
+    // ── Rank tier to medal name ──────────────────────────────────────────────
+    const rankMedals: Record<number, string> = {
+      1: 'Herald', 2: 'Guardian', 3: 'Crusader', 4: 'Archon',
+      5: 'Legend', 6: 'Ancient', 7: 'Divine', 8: 'Immortal',
+    };
+    const rankTierToString = (tier: number | null | undefined): string | null => {
+      if (tier == null || tier === 0) return null;
+      const medal = rankMedals[Math.floor(tier / 10)];
+      const stars = tier % 10;
+      return medal ? `${medal}${stars > 0 ? ` ${stars}` : ''}` : null;
+    };
+
+    // ── Draft / picks-bans ───────────────────────────────────────────────────
+    const draft = await Promise.all(
+      (match.picks_bans || []).map(async (pb: any) => ({
+        order: pb.order,
+        isPick: pb.is_pick,
+        team: pb.team === 0 || pb.team === 2 ? 'Radiant' : 'Dire',
+        heroName: await dotaDataService.getHeroName(pb.hero_id),
+      }))
+    );
+
+    // ── Sample array at ~8 points for concise curves ─────────────────────────
+    const sampleCurve = (arr: number[] | undefined, points = 8): string[] => {
+      if (!arr || arr.length === 0) return [];
+      const step = Math.max(1, Math.floor(arr.length / points));
+      return arr
+        .filter((_: number, i: number) => i % step === 0 || i === arr.length - 1)
+        .map((v: number, i: number) => `${i * step}min: ${v.toLocaleString()}`);
+    };
+
     const processedData = {
       matchId: match.match_id,
       duration: match.duration,
       radiantWin: match.radiant_win,
       gameMode: match.game_mode,
       patch: match.patch,
+      firstBloodTime: match.first_blood_time ?? null,
+      radiantScore: match.radiant_score ?? null,
+      direScore: match.dire_score ?? null,
+      skillBracket: skillBrackets[match.skill] || null,
+      // Max gold advantage of the winning team / losing team (tells the game's drama)
+      comeback: match.comeback ?? null,  // max gold disadvantage of winning team
+      throw: match.throw ?? null,        // max gold advantage of losing team
 
-      // Gold/XP advantage snapshots (sampled every 3 min)
+      // Draft order
+      draft,
+
+      // Gold/XP advantage snapshots (sampled every ~5 min)
       goldAdvantage: (() => {
         const adv: number[] = match.radiant_gold_adv || [];
-        const step = Math.max(1, Math.floor(adv.length / 6));
+        const step = Math.max(1, Math.floor(adv.length / 8));
         return adv
-          .filter((_: number, i: number) => i % step === 0)
+          .filter((_: number, i: number) => i % step === 0 || i === adv.length - 1)
           .map((g: number, i: number) => `${i * step}min: ${g > 0 ? '+' : ''}${g}`);
       })(),
 
       xpAdvantage: (() => {
         const adv: number[] = match.radiant_xp_adv || [];
-        const step = Math.max(1, Math.floor(adv.length / 6));
+        const step = Math.max(1, Math.floor(adv.length / 8));
         return adv
-          .filter((_: number, i: number) => i % step === 0)
+          .filter((_: number, i: number) => i % step === 0 || i === adv.length - 1)
           .map((x: number, i: number) => `${i * step}min: ${x > 0 ? '+' : ''}${x}`);
       })(),
 
@@ -307,8 +351,11 @@ export async function getDetailedMatchData(matchId: number) {
 
         return {
           heroName: await dotaDataService.getHeroName(p.hero_id),
+          heroVariant: p.hero_variant ?? null,  // 1-indexed facet selection
           name: p.personaname || 'Anonymous',
           team: p.player_slot < 128 ? 'Radiant' : 'Dire',
+          rankTier: rankTierToString(p.rank_tier),
+          partyId: p.party_id ?? null,
           kills: p.kills,
           deaths: p.deaths,
           assists: p.assists,
@@ -317,6 +364,7 @@ export async function getDetailedMatchData(matchId: number) {
           gpm: p.gold_per_min,
           xpm: p.xp_per_min,
           lastHits: p.last_hits,
+          denies: p.denies ?? 0,
           heroDamage: p.hero_damage,
           towerDamage: p.tower_damage,
           heroHealing: p.hero_healing,
@@ -326,11 +374,74 @@ export async function getDetailedMatchData(matchId: number) {
           backpack,
           level: p.level ?? 0,
           buybacks: p.buyback_count ?? 0,
+          buybackLog: (p.buyback_log || []).map((bb: any) => ({ time: bb.time })),
           obsPlaced: p.obs_placed ?? 0,
           senPlaced: p.sen_placed ?? 0,
           runePickups: p.rune_pickups ?? 0,
           benchmarks,
           permanentBuffs: (p.permanent_buffs || []).map((b: any) => b.name || `buff_${b.permanent_buff}`),
+
+          // ── New fields ──────────────────────────────────────────────────────
+          // Multi-kills and killstreaks
+          multiKills: (() => {
+            const mk: Record<string, number> = p.multi_kills || {};
+            const labels: Record<string, string> = { '2': 'Double', '3': 'Triple', '4': 'Ultra', '5': 'Rampage' };
+            return Object.entries(mk)
+              .filter(([, count]) => count > 0)
+              .map(([size, count]) => `${labels[size] || `${size}x`} Kill x${count}`)
+              .join(', ') || null;
+          })(),
+
+          killStreaks: (() => {
+            const ks: Record<string, number> = p.kill_streaks || {};
+            const maxStreak = Object.keys(ks).map(Number).filter(n => n > 0).sort((a, b) => b - a)[0];
+            return maxStreak && maxStreak >= 3 ? maxStreak : null;
+          })(),
+
+          // Farming / economy
+          campsStacked: p.camps_stacked ?? 0,
+          neutralKills: p.neutral_kills ?? 0,
+          laneKills: p.lane_kills ?? 0,
+          towerKills: p.tower_kills ?? 0,
+          roshanKills: p.roshan_kills ?? 0,
+          courierKills: p.courier_kills ?? 0,
+
+          // Biggest single damage instance
+          maxHeroHit: (() => {
+            const mhh = p.max_hero_hit;
+            if (!mhh || !mhh.value) return null;
+            const rawInflictor = mhh.inflictor;
+            return {
+              value: mhh.value,
+              inflictor: (!rawInflictor || rawInflictor === 'null') ? 'Right Click'
+                : rawInflictor.replace(/^(npc_dota_hero_)?/, '').replace(/_/g, ' '),
+              target: (mhh.key || '').replace('npc_dota_hero_', '').replace(/_/g, ' '),
+            };
+          })(),
+
+          // Incoming damage breakdown — top 5 sources
+          damageReceived: (() => {
+            const recv: Record<string, number> = p.damage_inflictor_received || {};
+            return Object.entries(recv)
+              .sort(([, a], [, b]) => b - a)
+              .slice(0, 5)
+              .map(([ability, dmg]) => ({
+                ability: ability === 'null' ? 'Right Click'
+                  : ability.replace(/^(npc_dota_hero_)?/, '').replace(/_/g, ' '),
+                damage: dmg,
+              }));
+          })(),
+
+          // Net worth curve (sampled)
+          goldCurve: sampleCurve(p.gold_t),
+          xpCurve: sampleCurve(p.xp_t),
+          lhCurve: sampleCurve(p.lh_t),
+
+          // Disconnect / leaver
+          leaverStatus: p.leaver_status ?? 0,  // 0 = stayed, 1 = left safely, 2+ = abandoned
+
+          // Skill build (ability upgrades as array of ability IDs)
+          abilityBuild: p.ability_upgrades_arr || null,
 
           // Key item timings — major items only (completed items from purchase_log)
           keyItemTimings: (p.purchase_log || [])
@@ -346,7 +457,8 @@ export async function getDetailedMatchData(matchId: number) {
                 'orchid', 'gleipnir', 'aether_lens', 'octarine_core', 'pipe',
                 'crimson_guard', 'halberd', 'basher', 'mask_of_madness', 'maelstrom',
                 'kaya_and_sange', 'sange_and_yasha', 'yasha_and_kaya',
-                'veil_of_discord', 'rod_of_atos',
+                'veil_of_discord', 'rod_of_atos', 'hand_of_midas', 'echo_sabre',
+                'ethereal_blade', 'diffusal_blade', 'heavens_halberd', 'solar_crest',
               ];
               return majorItems.includes(purchase.key);
             })
@@ -436,7 +548,7 @@ export async function getDetailedMatchData(matchId: number) {
         }),
 
       // Teamfights — killed is an object {hero_key: count}, not a simple kills int
-      teamfights: (match.teamfights || []).slice(0, 8).map((fight: any) => {
+      teamfights: (match.teamfights || []).slice(0, 10).map((fight: any) => {
         const countKills = (p: any) =>
           Object.values(p?.killed || {}).reduce((s: number, v: any) => s + (typeof v === 'number' ? v : 0), 0);
         const players = fight.players || [];
