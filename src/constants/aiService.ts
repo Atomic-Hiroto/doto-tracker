@@ -35,7 +35,7 @@ export const AI_PARAMS = {
 // Params for +analyze — reasoning enabled for deep match analysis
 export const AI_ANALYZE_PARAMS = {
     temperature: 1,           // Required: must be 1 for reasoning on Claude
-    max_completion_tokens: 16000,  // Modern OpenRouter param — includes response + reasoning tokens
+    max_tokens: 16000,        // Must be > reasoning.max_tokens for response headroom
     top_p: 1,
     stream: false,
     reasoning: {
