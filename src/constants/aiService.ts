@@ -16,7 +16,7 @@ export const AI_PREFILL = "Understood all instructions above, time to be complet
 // 6. Generation Parameters (OpenRouter format)
 export const AI_PARAMS = {
     temperature: 1, // Required: must be 1 for extended thinking on Claude
-    max_tokens: 16000, // Increased to accommodate thinking + response
+    max_tokens: 4000, 
     stream: false, // Set to true if we implement streaming later
     presence_penalty: 0,
     frequency_penalty: 0,
@@ -28,18 +28,18 @@ export const AI_PARAMS = {
     // OpenRouter reasoning config for Claude models
     // Note: include_reasoning is deprecated, use reasoning object
     reasoning: {
-        max_tokens: 8000 // Budget for thinking tokens (Claude)
+        max_tokens: 2048 
     }
 };
 
 // Params for +analyze — reasoning enabled for deep match analysis
 export const AI_ANALYZE_PARAMS = {
     temperature: 1,           // Required: must be 1 for reasoning on Claude
-    max_tokens: 16000,        // Must be > reasoning.max_tokens for response headroom
+    max_tokens: 8000,        
     top_p: 1,
     stream: false,
     reasoning: {
-        max_tokens: 10000     // Generous thinking budget for accurate analysis
+        max_tokens: 4096     
     }
 };
 
