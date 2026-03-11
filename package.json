@@ -5,7 +5,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "tsc && node dist/index.js",
-    "test:analyze": "npx -y tsx scripts/test-analyze.ts"
+    "test:analyze": "npx -y tsx scripts/test-analyze.ts",
+    "remote-deploy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1"
   },
   "devDependencies": {
     "typescript": "latest"

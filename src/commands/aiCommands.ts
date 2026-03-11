@@ -4,6 +4,7 @@ import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
 import { getDetailedMatchData, requestMatchParse, waitForMatchParse } from '../services/dotaService';
+import { fetchStratzMatch } from '../services/stratzClient';
 import { fetchDotabuffTurboMeta } from '../services/dotabuffScraper';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping, safeSend } from '../utils/channelHelpers';
@@ -138,12 +139,12 @@ const ANALYZE_RESPONSE_FORMAT = {
                     type: 'string',
                     description: 'Format EXACTLY like this with NEWLINES:\\n**MVP: Player — Hero** - 1 sentence on why.\\n**LVP: Player — Hero** - 1 sentence on why.\\n**Honorable Mention: Player — Hero** - 1 sentence on why.',
                 },
-                whatToImprove: {
+                mapControl: {
                     type: 'string',
-                    description: 'What the losing team should do differently next time. 2-3 bullet points, each actionable and specific.',
+                    description: 'Analyze vision (wards placed/destroyed), rune control, and Roshan/Aegis secures. 2-3 sentences max. Use **bold** for items and heroes.',
                 },
             },
-            required: ['gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'whatToImprove'],
+            required: ['gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'mapControl', 'whatToImprove'],
             additionalProperties: false,
         },
     },
@@ -156,6 +157,7 @@ function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder
         `**🏗️ DRAFT & LANING**\n${data.draftAndLaning}`,
         `**⚔️ ITEMS & DAMAGE**\n${data.itemizationAndDamage}`,
         `**💀 KEY MISTAKES**\n${data.keyMistakes}`,
+        `**👁️ MAP CONTROL & VISION**\n${data.mapControl}`,
         `**🏆 MVP & STANDOUTS**\n${data.mvpAndStandouts}`,
         `**📝 WHAT TO IMPROVE**\n${data.whatToImprove}`,
     ];
@@ -172,8 +174,9 @@ function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder
 const BOT_OWNER_ID = '78168838910246912';
 
 export async function analyze(message: Message, args: string[]) {
-    // Parse flags: -model <model_name> (owner-only)
+    // Parse flags: -model <model_name> (owner-only), -stratz
     let modelOverride: string | null = null;
+    let useStratz = false;
     const cleanArgs: string[] = [];
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '-model' && args[i + 1]) {
@@ -183,6 +186,8 @@ export async function analyze(message: Message, args: string[]) {
             } else {
                 return message.reply('❌ Model override is restricted to the bot owner.');
             }
+        } else if (args[i] === '-stratz') {
+            useStratz = true;
         } else {
             cleanArgs.push(args[i]);
         }
@@ -195,11 +200,21 @@ export async function analyze(message: Message, args: string[]) {
 
     try {
         safeTyping(message.channel);
-        let matchData = await getDetailedMatchData(matchId);
+        
+        // ── Determine which data source to use ───────────────────────────────
+        let prompt = '';
+        if (useStratz) {
+            const stratzMatch = await fetchStratzMatch(matchId);
+            if (!stratzMatch) {
+                return message.reply(`❌ Could not fetch data from Stratz for match **${matchId}**.`);
+            }
+            prompt = generateStratzPrompt(stratzMatch);
+        } else {
+            let matchData = await getDetailedMatchData(matchId);
 
-        // ── Auto-parse wait: if not parsed, request parse and poll ────────
-        if (!matchData) {
-            await requestMatchParse(matchId);
+            // ── Auto-parse wait: if not parsed, request parse and poll ────────
+            if (!matchData) {
+                await requestMatchParse(matchId);
 
             const waitEmbed = new EmbedBuilder()
                 .setColor('#f59e0b')
@@ -271,173 +286,180 @@ export async function analyze(message: Message, args: string[]) {
             }
         }
 
-        // ── Build structured prompt with clear sections ─────────────────────
+            // ── Build structured prompt with clear sections ─────────────────────
 
-        // Match summary header
-        const winner = matchData.radiantWin ? 'Radiant' : 'Dire';
-        const summaryParts = [
-            `Match #${matchData.matchId}`,
-            `Duration: ${formatDuration(matchData.duration)}`,
-            `Winner: ${winner}`,
-            matchData.radiantScore != null ? `Score: Radiant ${matchData.radiantScore} — Dire ${matchData.direScore}` : '',
-            matchData.skillBracket ? `Bracket: ${matchData.skillBracket}` : '',
-            matchData.firstBloodTime != null ? `First Blood: ${formatDuration(matchData.firstBloodTime)}` : '',
-            matchData.comeback ? `Comeback: ${matchData.comeback.toLocaleString()} gold deficit overcome` : '',
-            matchData.throw ? `Throw: ${matchData.throw.toLocaleString()} gold lead squandered` : '',
-            `Game Mode: ${matchData.gameMode}`,
-        ].filter(Boolean);
+            // Match summary header
+            const winner = matchData.radiantWin ? 'Radiant' : 'Dire';
+            const summaryParts = [
+                `Match #${matchData.matchId}`,
+                `Duration: ${formatDuration(matchData.duration)}`,
+                `Winner: ${winner}`,
+                matchData.radiantScore != null ? `Score: Radiant ${matchData.radiantScore} — Dire ${matchData.direScore}` : '',
+                matchData.skillBracket ? `Bracket: ${matchData.skillBracket}` : '',
+                matchData.firstBloodTime != null ? `First Blood: ${formatDuration(matchData.firstBloodTime)}` : '',
+                matchData.comeback ? `Comeback: ${matchData.comeback.toLocaleString()} gold deficit overcome` : '',
+                matchData.throw ? `Throw: ${matchData.throw.toLocaleString()} gold lead squandered` : '',
+                `Game Mode: ${matchData.gameMode}`,
+            ].filter(Boolean);
 
-        // Draft block — only relevant for Captain's Mode (2) or Captain's Draft (16)
-        const hasDraft = matchData.gameModeId === 2 || matchData.gameModeId === 16;
-        const draftBlock = (hasDraft && matchData.draft?.length)
-            ? `\n=== DRAFT ORDER ===\n${matchData.draft.map((d: any) =>
-                `${d.order + 1}. ${d.team} ${d.isPick ? 'PICK' : 'BAN'}: ${d.heroName}`
-            ).join('\n')}`
-            : '';
+            // Draft block — only relevant for Captain's Mode (2) or Captain's Draft (16)
+            const hasDraft = matchData.gameModeId === 2 || matchData.gameModeId === 16;
+            const draftBlock = (hasDraft && matchData.draft?.length)
+                ? `\n=== DRAFT ORDER ===\n${matchData.draft.map((d: any) =>
+                    `${d.order + 1}. ${d.team} ${d.isPick ? 'PICK' : 'BAN'}: ${d.heroName}`
+                ).join('\n')}`
+                : '';
 
-        // Player blocks with all new fields
-        const playerBlock = matchData.players.map((p: any) => {
-            const header = [
-                `[${p.team}] ${p.name} — ${p.heroName}`,
-                p.heroVariant ? `(Facet ${p.heroVariant})` : '',
-                `(${p.lane}${p.isRoaming ? ' Roam' : ''})`
-            ].filter(Boolean).join(' ');
+            // Player blocks with all new fields
+            const playerBlock = matchData.players.map((p: any) => {
+                const header = [
+                    `[${p.team}] ${p.name} — ${p.heroName}`,
+                    p.heroVariant ? `(Facet ${p.heroVariant})` : '',
+                    `(${p.lane}${p.isRoaming ? ' Roam' : ''})`
+                ].filter(Boolean).join(' ');
 
-            const lines = [
-                header,
-                `  KDA: ${p.kills}/${p.deaths}/${p.assists} (${p.kda}) | Lvl: ${p.level || '?'} | NW: ${(p.netWorth ?? 0).toLocaleString()} | GPM: ${p.gpm ?? '?'} | XPM: ${p.xpm ?? '?'}`,
-                `  Dmg: ${(p.heroDamage ?? 0).toLocaleString()} | Tower: ${(p.towerDamage ?? 0).toLocaleString()} | Heal: ${(p.heroHealing ?? 0).toLocaleString()} | LH: ${p.lastHits ?? '?'} | DN: ${p.denies ?? 0}`,
-                `  Items: ${p.items?.length ? p.items.join(', ') : 'None'}`,
-            ];
+                const lines = [
+                    header,
+                    `  KDA: ${p.kills}/${p.deaths}/${p.assists} (${p.kda}) | Lvl: ${p.level || '?'} | NW: ${(p.netWorth ?? 0).toLocaleString()} | GPM: ${p.gpm ?? '?'} | XPM: ${p.xpm ?? '?'}`,
+                    `  Dmg: ${(p.heroDamage ?? 0).toLocaleString()} | Tower: ${(p.towerDamage ?? 0).toLocaleString()} | Heal: ${(p.heroHealing ?? 0).toLocaleString()} | LH: ${p.lastHits ?? '?'} | DN: ${p.denies ?? 0}`,
+                    `  Items: ${p.items?.length ? p.items.join(', ') : 'None'}`,
+                ];
 
-            // Only include if data exists
-            if (p.backpack?.length) lines.push(`  Backpack: ${p.backpack.join(', ')}`);
-            if (p.buybacks > 0) {
-                const buybackTimes = p.buybackLog?.length
-                    ? ` (at ${p.buybackLog.map((bb: any) => formatDuration(bb.time)).join(', ')})`
-                    : '';
-                lines.push(`  Buybacks: ${p.buybacks}${buybackTimes}`);
-            }
-            if (p.obsPlaced > 0 || p.senPlaced > 0) lines.push(`  Wards: ${p.obsPlaced} obs / ${p.senPlaced} sentries`);
-            if (p.runePickups > 0) lines.push(`  Runes: ${p.runePickups}`);
-            if (p.permanentBuffs?.length) lines.push(`  Buffs: ${p.permanentBuffs.join(', ')}`);
+                // Only include if data exists
+                if (p.backpack?.length) lines.push(`  Backpack: ${p.backpack.join(', ')}`);
+                if (p.buybacks > 0) {
+                    const buybackTimes = p.buybackLog?.length
+                        ? ` (at ${p.buybackLog.map((bb: any) => formatDuration(bb.time)).join(', ')})`
+                        : '';
+                    lines.push(`  Buybacks: ${p.buybacks}${buybackTimes}`);
+                }
+                if (p.obsPlaced > 0 || p.senPlaced > 0 || p.obsKilled > 0 || p.senKilled > 0) {
+                    lines.push(`  Vision: ${p.obsPlaced} obs / ${p.senPlaced} sen placed | ${p.obsKilled} obs / ${p.senKilled} sen destroyed`);
+                }
+                if (p.runePickups > 0) {
+                    const importantRunes = p.runesLog?.filter((r: any) => r.key === 5 || r.key === 7) // 5=bounty, 7=wisdom in some maps, or wait: 5=bounty etc (rough filter). We will just show count.
+                        .length;
+                    lines.push(`  Runes: ${p.runePickups} total pickups`);
+                }
+                if (p.permanentBuffs?.length) lines.push(`  Buffs: ${p.permanentBuffs.join(', ')}`);
 
-            // Multi-kills and streaks
-            if (p.multiKills) lines.push(`  Multi-kills: ${p.multiKills}`);
-            if (p.killStreaks) lines.push(`  Max Kill Streak: ${p.killStreaks}`);
+                // Multi-kills and streaks
+                if (p.multiKills) lines.push(`  Multi-kills: ${p.multiKills}`);
+                if (p.killStreaks) lines.push(`  Max Kill Streak: ${p.killStreaks}`);
 
-            // Farming stats
-            const farmStats: string[] = [];
-            if (p.campsStacked > 0) farmStats.push(`Stacked: ${p.campsStacked}`);
-            if (p.neutralKills > 0) farmStats.push(`Jungle: ${p.neutralKills}`);
-            if (p.towerKills > 0) farmStats.push(`Tower Kills: ${p.towerKills}`);
-            if (p.roshanKills > 0) farmStats.push(`Rosh Kills: ${p.roshanKills}`);
-            if (farmStats.length) lines.push(`  Farming: ${farmStats.join(' | ')}`);
+                // Farming stats
+                const farmStats: string[] = [];
+                if (p.campsStacked > 0) farmStats.push(`Stacked: ${p.campsStacked}`);
+                if (p.neutralKills > 0) farmStats.push(`Jungle: ${p.neutralKills}`);
+                if (p.towerKills > 0) farmStats.push(`Tower Kills: ${p.towerKills}`);
+                if (p.roshanKills > 0 || p.aegisPickups > 0) farmStats.push(`Roshan: ${p.roshanKills} kills / ${p.aegisPickups} aegis`);
+                if (farmStats.length) lines.push(`  Farming: ${farmStats.join(' | ')}`);
 
-            // Key item timings
-            if (p.keyItemTimings?.length) {
-                const timings = p.keyItemTimings.map((t: any) =>
-                    `${t.item.replace(/_/g, ' ')} @ ${formatDuration(t.time)}`
-                ).join(', ');
-                lines.push(`  Item Timings: ${timings}`);
-            }
-
-            // Kill timeline
-            if (p.killTimeline?.length) {
-                const kills = p.killTimeline
-                    .filter((k: any) => k.time >= 0)
-                    .map((k: any) =>
-                        `${formatDuration(k.time)} ${k.victim.replace(/_/g, ' ')}`
+                // Key item timings
+                if (p.keyItemTimings?.length) {
+                    const timings = p.keyItemTimings.map((t: any) =>
+                        `${t.item.replace(/_/g, ' ')} @ ${formatDuration(t.time)}`
                     ).join(', ');
-                if (kills) lines.push(`  Kills: ${kills}`);
+                    lines.push(`  Item Timings: ${timings}`);
+                }
+
+                // Kill timeline
+                if (p.killTimeline?.length) {
+                    const kills = p.killTimeline
+                        .filter((k: any) => k.time >= 0)
+                        .map((k: any) =>
+                            `${formatDuration(k.time)} ${k.victim.replace(/_/g, ' ')}`
+                        ).join(', ');
+                    if (kills) lines.push(`  Kills: ${kills}`);
+                }
+
+                // Extra stats line
+                const extras: string[] = [];
+                if (p.laneEfficiency != null) extras.push(`Lane Eff: ${p.laneEfficiency}%`);
+                if (p.apm > 0) extras.push(`APM: ${p.apm}`);
+                if (p.timeSpentDead > 0) extras.push(`Dead: ${p.timeSpentDead}s`);
+                if (p.teamfightParticipation != null) extras.push(`TF: ${p.teamfightParticipation}%`);
+                if (p.stunDuration > 0) extras.push(`Stuns: ${p.stunDuration}s`);
+                if (p.leaverStatus >= 2) extras.push(`⚠️ ABANDONED`);
+                if (extras.length) lines.push(`  ${extras.join(' | ')}`);
+
+                // Top damage abilities
+                if (p.topDamageAbilities?.length) {
+                    const abilities = p.topDamageAbilities.map((a: any) =>
+                        `${a.ability} (${a.damage.toLocaleString()})`
+                    ).join(', ');
+                    lines.push(`  Dmg Sources: ${abilities}`);
+                }
+
+                // Damage received
+                if (p.damageReceived?.length) {
+                    const recv = p.damageReceived.map((r: any) =>
+                        `${r.ability} (${r.damage.toLocaleString()})`
+                    ).join(', ');
+                    lines.push(`  Dmg Received: ${recv}`);
+                }
+
+                // Damage dealt to each enemy hero
+                if (p.damageToHeroes?.length) {
+                    const targets = p.damageToHeroes.map((t: any) =>
+                        `${t.hero} (${t.damage.toLocaleString()})`
+                    ).join(', ');
+                    lines.push(`  Dmg Targets: ${targets}`);
+                }
+
+                // Max hero hit
+                if (p.maxHeroHit) {
+                    lines.push(`  Biggest Hit: ${p.maxHeroHit.value.toLocaleString()} dmg (${p.maxHeroHit.inflictor} on ${p.maxHeroHit.target})`);
+                }
+
+                // Net worth curve (sampled)
+                if (p.goldCurve?.length) lines.push(`  Gold Curve: ${p.goldCurve.join(' → ')}`);
+
+                // Benchmarks
+                const benchKeys = Object.keys(p.benchmarks || {});
+                if (benchKeys.length > 0) {
+                    const bStr = benchKeys.map(k => `${k}: ${p.benchmarks[k]}`).join(', ');
+                    lines.push(`  Benchmarks: ${bStr}`);
+                }
+
+                return lines.join('\n');
+            }).join('\n\n');
+
+            // Party groupings
+            const parties = new Map<number, string[]>();
+            for (const p of matchData.players) {
+                if (p.partyId != null) {
+                    if (!parties.has(p.partyId)) parties.set(p.partyId, []);
+                    parties.get(p.partyId)!.push(p.name);
+                }
             }
+            const partyBlock = Array.from(parties.values())
+                .filter(members => members.length > 1)
+                .map(members => `Party: ${members.join(' + ')}`)
+                .join('\n');
 
-            // Extra stats line
-            const extras: string[] = [];
-            if (p.laneEfficiency != null) extras.push(`Lane Eff: ${p.laneEfficiency}%`);
-            if (p.apm > 0) extras.push(`APM: ${p.apm}`);
-            if (p.timeSpentDead > 0) extras.push(`Dead: ${p.timeSpentDead}s`);
-            if (p.teamfightParticipation != null) extras.push(`TF: ${p.teamfightParticipation}%`);
-            if (p.stunDuration > 0) extras.push(`Stuns: ${p.stunDuration}s`);
-            if (p.leaverStatus >= 2) extras.push(`⚠️ ABANDONED`);
-            if (extras.length) lines.push(`  ${extras.join(' | ')}`);
+            const goldGraph = matchData.goldAdvantage?.length
+                ? `\n=== GOLD ADVANTAGE (Radiant perspective) ===\n${matchData.goldAdvantage.join(' → ')}`
+                : '';
 
-            // Top damage abilities
-            if (p.topDamageAbilities?.length) {
-                const abilities = p.topDamageAbilities.map((a: any) =>
-                    `${a.ability} (${a.damage.toLocaleString()})`
-                ).join(', ');
-                lines.push(`  Dmg Sources: ${abilities}`);
-            }
+            const xpGraph = matchData.xpAdvantage?.length
+                ? `\n=== XP ADVANTAGE (Radiant perspective) ===\n${matchData.xpAdvantage.join(' → ')}`
+                : '';
 
-            // Damage received
-            if (p.damageReceived?.length) {
-                const recv = p.damageReceived.map((r: any) =>
-                    `${r.ability} (${r.damage.toLocaleString()})`
-                ).join(', ');
-                lines.push(`  Dmg Received: ${recv}`);
-            }
+            const teamfightBlock = matchData.teamfights?.length
+                ? `\n=== TEAMFIGHTS ===\n${matchData.teamfights.map((f: any) =>
+                    `  ${formatDuration(f.start)}-${formatDuration(f.end)}: Radiant got ${f.radiantKills} kills, Dire got ${f.direKills} kills.\n    Radiant dead: ${f.radiantDeaths}\n    Dire dead: ${f.direDeaths}`
+                ).join('\n')}`
+                : '';
 
-            // Damage dealt to each enemy hero
-            if (p.damageToHeroes?.length) {
-                const targets = p.damageToHeroes.map((t: any) =>
-                    `${t.hero} (${t.damage.toLocaleString()})`
-                ).join(', ');
-                lines.push(`  Dmg Targets: ${targets}`);
-            }
+            const objectivesBlock = matchData.objectives?.length
+                ? `\n=== OBJECTIVES ===\n${matchData.objectives.slice(0, 25).map((o: any) => {
+                    const byWho = o.player !== 'Unknown' ? ` (by ${o.player})` : '';
+                    return `${formatDuration(o.time)} ${o.team} ${o.type}${o.key ? ' (' + o.key + ')' : ''}${byWho}`;
+                }).join(', ')}`
+                : '';
 
-            // Max hero hit
-            if (p.maxHeroHit) {
-                lines.push(`  Biggest Hit: ${p.maxHeroHit.value.toLocaleString()} dmg (${p.maxHeroHit.inflictor} on ${p.maxHeroHit.target})`);
-            }
-
-            // Net worth curve (sampled)
-            if (p.goldCurve?.length) lines.push(`  Gold Curve: ${p.goldCurve.join(' → ')}`);
-
-            // Benchmarks
-            const benchKeys = Object.keys(p.benchmarks || {});
-            if (benchKeys.length > 0) {
-                const bStr = benchKeys.map(k => `${k}: ${p.benchmarks[k]}`).join(', ');
-                lines.push(`  Benchmarks: ${bStr}`);
-            }
-
-            return lines.join('\n');
-        }).join('\n\n');
-
-        // Party groupings
-        const parties = new Map<number, string[]>();
-        for (const p of matchData.players) {
-            if (p.partyId != null) {
-                if (!parties.has(p.partyId)) parties.set(p.partyId, []);
-                parties.get(p.partyId)!.push(p.name);
-            }
-        }
-        const partyBlock = Array.from(parties.values())
-            .filter(members => members.length > 1)
-            .map(members => `Party: ${members.join(' + ')}`)
-            .join('\n');
-
-        const goldGraph = matchData.goldAdvantage?.length
-            ? `\n=== GOLD ADVANTAGE (Radiant perspective) ===\n${matchData.goldAdvantage.join(' → ')}`
-            : '';
-
-        const xpGraph = matchData.xpAdvantage?.length
-            ? `\n=== XP ADVANTAGE (Radiant perspective) ===\n${matchData.xpAdvantage.join(' → ')}`
-            : '';
-
-        const teamfightBlock = matchData.teamfights?.length
-            ? `\n=== TEAMFIGHTS ===\n${matchData.teamfights.map((f: any) =>
-                `  ${formatDuration(f.start)}-${formatDuration(f.end)}: Radiant ${f.radiantKills}k / Dire ${f.direKills}k (${f.totalDeaths} deaths)`
-            ).join('\n')}`
-            : '';
-
-        const objectivesBlock = matchData.objectives?.length
-            ? `\n=== OBJECTIVES ===\n${matchData.objectives.slice(0, 25).map((o: any) =>
-                `${formatDuration(o.time)} ${o.team} ${o.type}${o.key ? ' (' + o.key + ')' : ''}`
-            ).join(', ')}`
-            : '';
-
-        const prompt = `Analyze this Dota 2 match:
+            prompt = `Analyze this Dota 2 match:
 
 === MATCH SUMMARY ===
 ${summaryParts.join(' | ')}
@@ -452,6 +474,7 @@ ${teamfightBlock}
 ${objectivesBlock}
 
 Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Reference specific numbers from the data above. Use Discord markdown (**bold** for names). Be direct and spicy. STRICT LIMIT: 250 words total across all fields. Each field 2-4 sentences max.`;
+        }
 
         // Debug: log the full prompt so we can inspect what the model receives
         logger.debug(`[+analyze] System prompt:\n${ANALYZE_SYSTEM}`);
@@ -736,4 +759,108 @@ Keep it spicy and punchy.`;
         if (loadingMsg) await loadingMsg.delete().catch(() => null);
         await safeSend(message.channel, 'An error occurred fetching meta data. Please try again.');
     }
+}
+
+// ── Helper to generate Stratz prompt ─────────────────────────────────────────
+function generateStratzPrompt(matchData: any): string {
+    const winner = matchData.didRadiantWin ? 'Radiant' : 'Dire';
+    const summaryParts = [
+        `Match #${matchData.id || matchData.match_id}`,
+        `Duration: ${formatDuration(matchData.durationSeconds || matchData.duration)}`,
+        `Winner: ${winner}`,
+        matchData.firstBloodTime != null ? `First Blood: ${formatDuration(matchData.firstBloodTime)}` : '',
+        `Game Mode: Mode ${matchData.gameMode || matchData.game_mode}`,
+        `Average Rank: ${matchData.averageRank || 'Unknown'}`,
+        `Lane Outcomes (0=Draw, 1=Rad, 2=Dire): Top ${matchData.topLaneOutcome}, Mid ${matchData.midLaneOutcome}, Bot ${matchData.bottomLaneOutcome}`
+    ].filter(Boolean);
+
+    const hasDraft = matchData.pickBans?.length > 0;
+    const draftBlock = hasDraft
+        ? `\n=== DRAFT ORDER ===\n${matchData.pickBans.map((d: any) =>
+            `${d.order + 1}. ${d.isRadiant ? 'Radiant' : 'Dire'} ${d.isPick ? 'PICK' : 'BAN'}: HeroId ${d.heroId}`
+        ).join('\n')}`
+        : '';
+
+    const goldGraph = `\n=== GOLD ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantNetworthLeads?.join(' → ') || 'N/A'}`;
+    const xpGraph = `\n=== XP ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantExperienceLeads?.join(' → ') || 'N/A'}`;
+
+    const playerBlock = matchData.players.map((p: any) => {
+        const header = [
+            `[${p.isRadiant ? 'Radiant' : 'Dire'}] ${p.steamAccount?.name || 'Anonymous'} — ${p.hero?.displayName || `Hero ${p.heroId}`}`,
+            p.variant ? `(Facet ${p.variant})` : ''
+        ].filter(Boolean).join(' ');
+
+        const lines = [
+            header,
+            `  KDA: ${p.kills}/${p.deaths}/${p.assists} | Lvl: ${p.level} | NW: ${p.networth} | GPM: ${p.goldPerMinute} | XPM: ${p.experiencePerMinute}`,
+            `  Dmg: ${p.heroDamage} | Tower: ${p.towerDamage} | Heal: ${p.heroHealing} | LH: ${p.numLastHits} | DN: ${p.numDenies}`,
+            `  Pos: ${p.position?.toString().replace('POSITION_', '') ?? 'Unknown'} | IMP: ${p.imp ?? 'N/A'} | Award: ${p.award === 1 ? 'MVP' : (p.award ? 'Standout' : 'None')}`,
+            p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : ''
+        ].filter(Boolean);
+
+        // Items (we only have IDs but can list them if needed, or pass IDs directly)
+        const itemIds = [p.item0Id, p.item1Id, p.item2Id, p.item3Id, p.item4Id, p.item5Id].filter((id: number) => id && id !== 0);
+        if (itemIds.length) lines.push(`  Final item IDs: ${itemIds.join(', ')}`);
+
+        // Extra stats if available
+        if (p.stats) {
+            lines.push(`  APM (max per min): ${Math.max(...(p.stats.actionsPerMinute || [0]))}`);
+            if (p.stats.wardDestruction?.length || p.stats.wards?.length) {
+                lines.push(`  Vision: ${p.stats.wards?.length || 0} wards placed | ${p.stats.wardDestruction?.length || 0} destroyed`);
+            }
+            if (p.stats.runes?.length) {
+                lines.push(`  Runes: ${p.stats.runes.length} pickups`);
+            }
+            if (p.stats.campStack?.length) {
+                lines.push(`  Camps Stacked: ${p.stats.campStack.length}`);
+            }
+            if (p.stats.killEvents?.length) {
+                const kills = p.stats.killEvents.map((k: any) => `${formatDuration(k.time)}`).join(', ');
+                lines.push(`  Kill Times: ${kills}`);
+            }
+            if (p.stats.deathEvents?.length) {
+                const deaths = p.stats.deathEvents.map((d: any) => `${formatDuration(d.time)}`).join(', ');
+                lines.push(`  Death Times: ${deaths}`);
+            }
+            if (p.stats.courierKills?.length) {
+                lines.push(`  Courier Kills: ${p.stats.courierKills.length}`);
+            }
+            if (p.stats.heroDamageReport?.dealtTotal) {
+                const dt = p.stats.heroDamageReport.dealtTotal;
+                lines.push(`  Damage Output - Phys: ${dt.physicalDamage}, Mag: ${dt.magicalDamage}, Pure: ${dt.pureDamage}`);
+            }
+            if (p.stats.heroDamageReport?.receivedTotal) {
+                const rt = p.stats.heroDamageReport.receivedTotal;
+                lines.push(`  Damage Taken - Phys: ${rt.physicalDamage}, Mag: ${rt.magicalDamage}, Pure: ${rt.pureDamage}`);
+            }
+        }
+
+        return lines.join('\n');
+    }).join('\n\n');
+
+    const parties = new Map<number, string[]>();
+    for (const p of matchData.players) {
+        if (p.partyId != null) {
+            if (!parties.has(p.partyId)) parties.set(p.partyId, []);
+            parties.get(p.partyId)!.push(p.steamAccount?.name || 'Anonymous');
+        }
+    }
+    const partyBlock = Array.from(parties.values())
+        .filter(members => members.length > 1)
+        .map(members => `Party: ${members.join(' + ')}`)
+        .join('\n');
+
+    return `Analyze this Dota 2 match (from Stratz high-detail API):
+
+=== MATCH SUMMARY ===
+${summaryParts.join(' | ')}
+${draftBlock}
+${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
+
+=== PLAYERS ===
+${playerBlock}
+${goldGraph}
+${xpGraph}
+
+Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Reference specific numbers like IMP scores, Lane Outcomes, and specific minute marks from the advantage graph. Use Discord markdown (**bold** for names). Be direct and spicy. STRICT LIMIT: 250 words total across all fields. Each field 2-4 sentences max.`;
 }

@@ -55,7 +55,8 @@ export async function fetchStratzHeroLaneStats(
                 headers: {
                     Authorization: `Bearer ${STRATZ_API_KEY}`,
                     'Content-Type': 'application/json',
-                    'User-Agent': 'doto-tracker-bot/1.0',
+                    'User-Agent': 'STRATZ_API',
+                    'Accept': 'application/json',
                 },
                 timeout: 15000,
             }
@@ -80,3 +81,204 @@ export async function fetchStratzHeroLaneStats(
 }
 
 export const StratzGameModes = STRATZ_GAME_MODES;
+
+export const MATCH_QUERY = `
+query ($matchId: Long!) {
+  match(id: $matchId) {
+    id
+    parsedDateTime
+    didRadiantWin
+    durationSeconds
+    startDateTime
+    gameMode
+    lobbyType
+    averageRank
+    firstBloodTime
+    radiantKills
+    direKills
+    towerDeaths {
+      time
+      isRadiant
+    }
+    chatEvents {
+      time
+      type
+      fromHeroId
+      value
+      isRadiant
+    }
+    topLaneOutcome
+    midLaneOutcome
+    bottomLaneOutcome
+    radiantNetworthLeads
+    radiantExperienceLeads
+    winRates
+    predictedWinRates
+    pickBans {
+      isPick
+      isRadiant
+      heroId
+      order
+    }
+    players {
+      steamAccountId
+      playerSlot
+      isRadiant
+      imp
+      award
+      level
+      kills
+      deaths
+      assists
+      networth
+      heroDamage
+      towerDamage
+      heroHealing
+      numLastHits
+      numDenies
+      role
+      lane
+      position
+      partyId
+      isRandom
+      variant
+      behavior
+      intentionalFeeding
+      invisibleSeconds
+      goldPerMinute
+      experiencePerMinute
+      item0Id item1Id item2Id item3Id item4Id item5Id
+      backpack0Id backpack1Id backpack2Id neutral0Id
+      abilities {
+        abilityId
+        level
+        time
+        isTalent
+      }
+      stats {
+        actionsPerMinute
+        heroDamageReceivedPerMinute
+        goldPerMinute
+        experiencePerMinute
+        lastHitsPerMinute
+        networthPerMinute
+        healPerMinute
+        heroDamagePerMinute
+        towerDamagePerMinute
+        impPerMinute
+        courierKills {
+          time
+        }
+        tripsFountainPerMinute
+        wardDestruction {
+          time
+          gold
+        }
+        campStack
+        runes {
+          time
+          rune
+          action
+        }
+        wards {
+          time
+          type
+        }
+        killEvents {
+          time
+          target
+          assist
+          isSolo
+          isSmoke
+        }
+        deathEvents {
+          time
+        }
+        farmDistributionReport {
+          creepType { count gold xp }
+          buildings { count gold xp }
+          bountyGold { count gold xp }
+          other { count gold xp }
+        }
+        abilityCastReport {
+          abilityId
+          count
+        }
+        heroDamageReport {
+          dealtTotal { physicalDamage magicalDamage pureDamage }
+          receivedTotal { physicalDamage magicalDamage pureDamage }
+        }
+      }
+      hero {
+        id
+        displayName
+        shortName
+      }
+      steamAccount {
+        name
+        seasonRank
+      }
+    }
+  }
+}
+`;
+
+import { StratzMatch } from '../models/StratzMatchData';
+
+/**
+ * Fetches a full match's details from the Stratz GraphQL API.
+ * 
+ * @param matchId  The ID of the match to fetch
+ */
+export async function fetchStratzMatch(matchId: number): Promise<StratzMatch | null> {
+    if (!STRATZ_API_KEY) {
+        logger.warn('STRATZ_API_KEY not set — cannot fetch Stratz match data');
+        return null;
+    }
+
+    try {
+        logger.info(`Sending Stratz request with token prefix: ${STRATZ_API_KEY.substring(0, 10)}...`);
+
+        const response = await axios.post(
+            STRATZ_GQL,
+            {
+                query: MATCH_QUERY,
+                variables: { matchId } 
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${STRATZ_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'STRATZ_API',
+                    'Accept': 'application/json',
+                },
+                timeout: 15000,
+            }
+        );
+
+        if (response.data?.errors) {
+            logger.error(`Stratz API GraphQL Errors for match ${matchId}:`, response.data.errors);
+            return null;
+        }
+
+        const match: StratzMatch | undefined = response.data?.data?.match;
+        
+        if (!match) {
+            logger.warn(`Stratz API returned no match data for ${matchId}`);
+            return null;
+        }
+
+        logger.info(`Stratz match ${matchId} fetched successfully.`);
+        return match;
+    } catch (error: any) {
+        const errorData = error?.response?.data;
+        logger.error(`Stratz fetch match error for ${matchId}:`, errorData ?? error?.message ?? error);
+        
+        // Let's dump the HTML/Text to console to see what the server actually says
+        if (typeof errorData === 'string') {
+           console.error(`\n[STRATZ RAW HTTP ERROR DUMP]\n${errorData.substring(0, 1000)}\n[END DUMP]\n`);
+        }
+        
+        return null;
+    }
+}

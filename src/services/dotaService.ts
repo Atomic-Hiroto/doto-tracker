@@ -384,9 +384,18 @@ export async function getDetailedMatchData(matchId: number) {
           level: p.level ?? 0,
           buybacks: p.buyback_count ?? 0,
           buybackLog: (p.buyback_log || []).map((bb: any) => ({ time: bb.time })),
+          
+          // Map Control
           obsPlaced: p.obs_placed ?? 0,
           senPlaced: p.sen_placed ?? 0,
+          obsLog: (p.obs_log || []).map((l: any) => l.time),
+          senLog: (p.sen_log || []).map((l: any) => l.time),
+          obsKilled: p.observer_kills ?? 0,
+          senKilled: p.sentry_kills ?? 0,
+          
           runePickups: p.rune_pickups ?? 0,
+          runesLog: (p.runes_log || []).map((r: any) => ({ time: r.time, key: r.key })),
+          
           benchmarks,
           permanentBuffs: (p.permanent_buffs || []).map((b: any) => b.name || `buff_${b.permanent_buff}`),
 
@@ -413,6 +422,7 @@ export async function getDetailedMatchData(matchId: number) {
           laneKills: p.lane_kills ?? 0,
           towerKills: p.tower_kills ?? 0,
           roshanKills: p.roshan_kills ?? 0,
+          aegisPickups: p.hero_kills ? (p.hero_kills['aegis'] ?? 0) : 0, // Using hero_kills mapped objects from opendota if possible though usually it is in objectives
           courierKills: p.courier_kills ?? 0,
 
           // Biggest single damage instance
@@ -536,12 +546,14 @@ export async function getDetailedMatchData(matchId: number) {
         .map((obj: any) => {
           // Determine which team performed this action
           let team = 'Unknown';
+          let player = 'Unknown';
           if (obj.team === 2) {
             team = 'Radiant';
           } else if (obj.team === 3) {
             team = 'Dire';
           } else if (obj.player_slot != null) {
             team = obj.player_slot < 128 ? 'Radiant' : 'Dire';
+            player = match.players.find((p: any) => p.player_slot === obj.player_slot)?.personaname || 'Unknown';
           } else if (obj.type === 'building_kill' && obj.key) {
             // goodguys building killed = Dire killed it; badguys building killed = Radiant killed it
             team = obj.key.includes('goodguys') ? 'Dire' : 'Radiant';
@@ -552,19 +564,48 @@ export async function getDetailedMatchData(matchId: number) {
           if (obj.type === 'building_kill') {
             key = key.replace('npc_dota_', '').replace('badguys_', '').replace('goodguys_', '');
           }
+          if (obj.type === 'CHAT_MESSAGE_ROSHAN_KILL') {
+            key = 'Roshan';
+          }
+          if (obj.type === 'CHAT_MESSAGE_AEGIS') {
+            key = 'Aegis';
+          }
 
-          return { time: Math.max(0, obj.time), type: obj.type, team, key };
+          return { time: Math.max(0, obj.time), type: obj.type, team, player, key };
         }),
 
-      // Teamfights — killed is an object {hero_key: count}, not a simple kills int
+      // Teamfights — determine exactly who died
       teamfights: (match.teamfights || []).slice(0, 10).map((fight: any) => {
+        // Collect deaths by checking hero_id in players who died
+        const radiantDeaths: string[] = [];
+        const direDeaths: string[] = [];
+        
+        for (const p of (fight.players || [])) {
+          if (p.deaths > 0) {
+            const playerInfo = match.players.find((mp: any) => mp.player_slot === p.player_slot);
+            if (playerInfo) {
+               const name = playerInfo.hero_id 
+                 ? dotaDataService.getHeroById(playerInfo.hero_id)?.localized_name || `Hero ${playerInfo.hero_id}`
+                 : `Slot ${p.player_slot}`;
+               if (p.player_slot < 128) {
+                 radiantDeaths.push(name);
+               } else {
+                 direDeaths.push(name);
+               }
+            }
+          }
+        }
+
         const countKills = (p: any) =>
           Object.values(p?.killed || {}).reduce((s: number, v: any) => s + (typeof v === 'number' ? v : 0), 0);
         const players = fight.players || [];
+        
         return {
           start: fight.start,
           end: fight.end,
           totalDeaths: fight.deaths,
+          radiantDeaths: radiantDeaths.length > 0 ? radiantDeaths.join(', ') : 'None',
+          direDeaths: direDeaths.length > 0 ? direDeaths.join(', ') : 'None',
           radiantKills: players.slice(0, 5).reduce((s: number, p: any) => s + countKills(p), 0),
           direKills: players.slice(5).reduce((s: number, p: any) => s + countKills(p), 0),
         };
