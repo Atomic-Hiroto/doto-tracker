@@ -284,7 +284,16 @@ export async function getDetailedMatchData(matchId: number) {
       matchId: match.match_id,
       duration: match.duration,
       radiantWin: match.radiant_win,
-      gameMode: match.game_mode,
+      gameMode: (() => {
+        const modes: Record<number, string> = {
+          0: 'Unknown', 1: 'All Pick', 2: "Captain's Mode", 3: 'Random Draft',
+          4: 'Single Draft', 5: 'All Random', 11: 'Mid Only', 12: 'Least Played',
+          13: 'Limited Heroes', 14: 'Compendium', 15: 'Custom', 16: 'Captain\'s Draft',
+          18: 'Ability Draft', 22: 'All Pick (Ranked)', 23: 'Turbo', 24: 'Mutation',
+        };
+        return modes[match.game_mode] || `Mode ${match.game_mode}`;
+      })(),
+      gameModeId: match.game_mode as number,
       patch: match.patch,
       firstBloodTime: match.first_blood_time ?? null,
       radiantScore: match.radiant_score ?? null,

@@ -65,19 +65,19 @@ async function callAI(
 
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply based on the latest patch — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
 
+// ── System prompt for deep match analysis ─────────────────────────────────
 const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. You receive rich structured match data and produce data-driven analysis.
 
 ## Your Analytical Framework
 Follow this reasoning order to ensure comprehensive analysis:
-1. **Draft context** — Evaluate pick/ban synergies, lane matchups, team compositions, and hero facet choices
+1. **Draft context** — Evaluate pick/ban synergies and hero facet choices (skip if Turbo/All Pick where draft matters less)
 2. **Laning phase** — Use lane efficiency %, CS curves, first blood timing, and gold curves to determine lane outcomes
-3. **Economy & itemization** — Cross-reference item timings with gold curves, evaluate choices against enemy damage types and compositions
+3. **Economy & itemization** — Cross-reference item timings with gold curves, evaluate choices against enemy damage types
 4. **Teamfights & objectives** — Identify key fights from the teamfight log, correlate with objective kills and gold swings
-5. **Decisive plays** — Pin down the specific moment(s) that decided the game using kill timelines, buyback logs, and comeback/throw values
+5. **Decisive plays** — Pin down the specific moment(s) that decided the game using kill timelines, buyback logs, and gold swings
 
 ## Data Field Guide
 - **heroVariant** = hero facet (1-indexed), the Dota 2 facet system. Mention if a facet choice was suboptimal.
-- **rankTier** = player rank medal. Use to contextualize play quality.
 - **partyId** = party grouping. Players sharing a partyId queued together — note coordinated plays.
 - **multiKills / killStreaks** = highlight spectacular multi-kill and streak performances.
 - **campsStacked / neutralKills** = jungle efficiency and support contribution.
@@ -89,24 +89,19 @@ Follow this reasoning order to ensure comprehensive analysis:
 
 ## CRITICAL RULES
 
+Zero Hallucination Policy:
+- ONLY mention heroes, players, and items that actually exist in the provided MATCH DATA block.
+- NEVER accidentally reference heroes from previous matches or standard Dota lore that didn't play in this specific game. If you see a Pipe of Insight, verify WHICH player in THIS match bought it before writing about it.
+
+Game Mode Context:
+- If the Game Mode says "Turbo", remember that gold/XP is massively accelerated, towers are weaker, and games end faster. Analyze timings accordingly (a 15 min item in Turbo is like a 30 min item in regular Dota).
+
 Ability name accuracy:
-Dmg Sources use Dota 2 INTERNAL ability names. Always translate to display names:
-- dawnbreaker fire wreath = Starbreaker (Q), dawnbreaker celestial hammer = Celestial Hammer (W), dawnbreaker luminosity = Luminosity (passive)
-- death prophet exorcism = Exorcism, death prophet spirit siphon = Spirit Siphon
-- juggernaut blade fury = Blade Fury, juggernaut omni slash = Omnislash
-- sniper assassinate = Assassinate, sniper shrapnel = Shrapnel
-- dark seer wall of replica = Wall of Replica, dark seer ion shell = Ion Shell
-- muerta dead shot = Dead Shot, muerta the calling = The Calling, muerta pierce the veil = Pierce the Veil
-- drow ranger multishot = Multishot, drow ranger frost arrows = Frost Arrows
-- venomancer venomous gale = Venomous Gale, venomancer poison sting = Poison Sting, venomancer plague ward = Plague Ward
-- lina laguna blade = Laguna Blade, lina light strike array = Light Strike Array, lina dragon slave = Dragon Slave
-- "null" or "Right Click" = auto-attack damage
-If you see an internal name not listed, derive the display name from context. NEVER show raw internal names.
+Dmg Sources use Dota 2 INTERNAL ability names. Always translate to display names (e.g. dawnbreaker fire wreath = Starbreaker, death prophet exorcism = Exorcism). "null" or "Right Click" = auto-attack damage.
 
 Damage type accuracy:
 - Physical: Exorcism, Omnislash, Flak Cannon, Tidebringer, Sleight of Fist, Quill Spray
 - Pure: Tinker Laser, Timber Chain, Whirling Death, Brain Sap, Purification, Laguna Blade (w/ Aghs)
-- Verify damage types before claiming item counters.
 
 Player coverage:
 - Every player on the LOSING team must get at least a brief mention — don't skip anyone.
@@ -125,15 +120,15 @@ const ANALYZE_RESPONSE_FORMAT = {
             properties: {
                 gameNarrative: {
                     type: 'string',
-                    description: 'The story of this match in 2-4 sentences. Reference specific timings, gold leads from the advantage graph, and the decisive moment that ended the game. Include comeback/throw values if dramatic (e.g. "Radiant came back from a 12k gold deficit"). Use **bold** for player and hero names.',
+                    description: 'The story of this match in 2-4 sentences. Reference specific timings, gold leads from the advantage graph, and the decisive moment that ended the game. Include comeback/throw values if dramatic. Use **bold** for player and hero names.',
                 },
                 draftAndLaning: {
                     type: 'string',
-                    description: 'Combined draft + laning analysis in 2-3 sentences. Comment on draft synergies/weaknesses, facet choices (if notable), and lane outcomes using lane efficiency and CS data. Name lane winners/losers. Use **bold** for hero names.',
+                    description: 'Combined draft + laning analysis in 2-3 sentences. Comment on draft synergies/weaknesses, facet choices, and lane outcomes using lane efficiency and CS data. Name lane winners/losers. Use **bold** for hero names.',
                 },
                 itemizationAndDamage: {
                     type: 'string',
-                    description: 'Analyze item choices and timings against enemy damage types. Reference specific item timing data (e.g. "BKB at 22:00 was too late against triple magic damage"). Note damage type mismatches. 2-3 sentences. Use **bold** for items and heroes.',
+                    description: 'Analyze item choices and timings against enemy damage types. Reference specific item timing data. Note damage type mismatches. 2-3 sentences. Use **bold** for items and heroes.',
                 },
                 keyMistakes: {
                     type: 'string',
@@ -141,11 +136,11 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 mvpAndStandouts: {
                     type: 'string',
-                    description: 'Format: **MVP: Player — Hero** with 1 sentence on why (cite stats: damage, KDA, benchmarks). **LVP: Player — Hero** with 1 sentence. Optionally 1-2 other standouts (multi-kills, highest damage, best farm).',
+                    description: 'Format EXACTLY like this with NEWLINES:\\n**MVP: Player — Hero** - 1 sentence on why.\\n**LVP: Player — Hero** - 1 sentence on why.\\n**Honorable Mention: Player — Hero** - 1 sentence on why.',
                 },
                 whatToImprove: {
                     type: 'string',
-                    description: 'What the losing team should do differently next time. 2-3 bullet points, each actionable and specific (e.g. "• Pick a BKB-piercing disable against this lineup" not "play better").',
+                    description: 'What the losing team should do differently next time. 2-3 bullet points, each actionable and specific.',
                 },
             },
             required: ['gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'whatToImprove'],
@@ -292,8 +287,9 @@ export async function analyze(message: Message, args: string[]) {
             `Game Mode: ${matchData.gameMode}`,
         ].filter(Boolean);
 
-        // Draft block
-        const draftBlock = matchData.draft?.length
+        // Draft block — only relevant for Captain's Mode (2) or Captain's Draft (16)
+        const hasDraft = matchData.gameModeId === 2 || matchData.gameModeId === 16;
+        const draftBlock = (hasDraft && matchData.draft?.length)
             ? `\n=== DRAFT ORDER ===\n${matchData.draft.map((d: any) =>
                 `${d.order + 1}. ${d.team} ${d.isPick ? 'PICK' : 'BAN'}: ${d.heroName}`
             ).join('\n')}`
@@ -304,8 +300,7 @@ export async function analyze(message: Message, args: string[]) {
             const header = [
                 `[${p.team}] ${p.name} — ${p.heroName}`,
                 p.heroVariant ? `(Facet ${p.heroVariant})` : '',
-                `(${p.lane}${p.isRoaming ? ' Roam' : ''})`,
-                p.rankTier ? `[${p.rankTier}]` : '',
+                `(${p.lane}${p.isRoaming ? ' Roam' : ''})`
             ].filter(Boolean).join(' ');
 
             const lines = [
