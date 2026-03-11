@@ -91,6 +91,10 @@ const ANALYZE_RESPONSE_FORMAT = {
                     type: 'string',
                     description: 'Analyze vision (wards placed/destroyed), rune control, and Roshan/Aegis secures. 2-3 sentences max. Use **bold** for items and heroes.',
                 },
+                whatToImprove: {
+                    type: 'string',
+                    description: 'One single, direct, concise sentence on what the losing team should have done differently to win.',
+                },
             },
             required: ['gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'mapControl', 'whatToImprove'],
             additionalProperties: false,
