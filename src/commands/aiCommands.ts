@@ -263,7 +263,7 @@ export async function analyze(message: Message, args: string[]) {
                     .setDescription(
                         `Match **#${matchId}** still isn't parsed after 5 minutes.\n` +
                         `OpenDota might be slow or the replay isn't available.\n` +
-                        `Try \`+analyze ${matchId}\` again later.`
+                        `Try \`+analyze ${matchId}\` again later, or use \`+analyze ${matchId} -stratz\` for an instant (but slightly different) analysis. 🔍`
                     )
                     .setFooter(null);
                 return waitMsg.edit({ embeds: [waitEmbed] });
