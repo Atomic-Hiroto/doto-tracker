@@ -1,0 +1,464 @@
+Mar 11 19:47:16 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 5.
+Mar 11 19:47:16 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:47:16 instance-20251222-2113 node[776076]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:47:16 instance-20251222-2113 node[776076]: 2026-03-11 19:47:16.451        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:47:16 instance-20251222-2113 node[776076]: 2026-03-11 19:47:16.714        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:47:16 instance-20251222-2113 node[776076]: 2026-03-11 19:47:16.715        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:47:16 instance-20251222-2113 node[776076]: 2026-03-11 19:47:16.715        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:47:17 instance-20251222-2113 node[776076]: 2026-03-11 19:47:17.647        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:47:17 instance-20251222-2113 node[776076]: 2026-03-11 19:47:17.648        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:47:17 instance-20251222-2113 node[776076]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:                                                    ^
+Mar 11 19:47:17 instance-20251222-2113 node[776076]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:     at Generator.next (<anonymous>)
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:47:17 instance-20251222-2113 node[776076]:   code: 'TokenInvalid'
+Mar 11 19:47:17 instance-20251222-2113 node[776076]: }
+Mar 11 19:47:17 instance-20251222-2113 node[776076]: Node.js v24.12.0
+Mar 11 19:47:17 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:47:17 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:47:27 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 6.
+Mar 11 19:47:27 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:47:27 instance-20251222-2113 node[794794]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:47:28 instance-20251222-2113 node[794794]: 2026-03-11 19:47:28.204        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:47:28 instance-20251222-2113 node[794794]: 2026-03-11 19:47:28.474        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:47:28 instance-20251222-2113 node[794794]: 2026-03-11 19:47:28.475        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:47:28 instance-20251222-2113 node[794794]: 2026-03-11 19:47:28.475        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:47:29 instance-20251222-2113 node[794794]: 2026-03-11 19:47:29.147        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:47:29 instance-20251222-2113 node[794794]: 2026-03-11 19:47:29.148        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:47:29 instance-20251222-2113 node[794794]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:                                                    ^
+Mar 11 19:47:29 instance-20251222-2113 node[794794]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:     at Generator.next (<anonymous>)
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:47:29 instance-20251222-2113 node[794794]:   code: 'TokenInvalid'
+Mar 11 19:47:29 instance-20251222-2113 node[794794]: }
+Mar 11 19:47:29 instance-20251222-2113 node[794794]: Node.js v24.12.0
+Mar 11 19:47:29 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:47:29 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:47:39 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 7.
+Mar 11 19:47:39 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:47:39 instance-20251222-2113 node[812907]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:47:39 instance-20251222-2113 node[812907]: 2026-03-11 19:47:39.698        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:47:39 instance-20251222-2113 node[812907]: 2026-03-11 19:47:39.958        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:47:39 instance-20251222-2113 node[812907]: 2026-03-11 19:47:39.959        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:47:39 instance-20251222-2113 node[812907]: 2026-03-11 19:47:39.959        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:47:41 instance-20251222-2113 node[812907]: 2026-03-11 19:47:41.136        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:47:41 instance-20251222-2113 node[812907]: 2026-03-11 19:47:41.137        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:47:41 instance-20251222-2113 node[812907]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:                                                    ^
+Mar 11 19:47:41 instance-20251222-2113 node[812907]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:     at Generator.next (<anonymous>)
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:47:41 instance-20251222-2113 node[812907]:   code: 'TokenInvalid'
+Mar 11 19:47:41 instance-20251222-2113 node[812907]: }
+Mar 11 19:47:41 instance-20251222-2113 node[812907]: Node.js v24.12.0
+Mar 11 19:47:41 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:47:41 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:47:51 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 8.
+Mar 11 19:47:51 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:47:51 instance-20251222-2113 node[831884]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:47:51 instance-20251222-2113 node[831884]: 2026-03-11 19:47:51.701        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:47:51 instance-20251222-2113 node[831884]: 2026-03-11 19:47:51.964        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:47:51 instance-20251222-2113 node[831884]: 2026-03-11 19:47:51.965        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:47:51 instance-20251222-2113 node[831884]: 2026-03-11 19:47:51.965        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:47:53 instance-20251222-2113 node[831884]: 2026-03-11 19:47:53.184        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:47:53 instance-20251222-2113 node[831884]: 2026-03-11 19:47:53.184        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:47:53 instance-20251222-2113 node[831884]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:                                                    ^
+Mar 11 19:47:53 instance-20251222-2113 node[831884]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:     at Generator.next (<anonymous>)
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:47:53 instance-20251222-2113 node[831884]:   code: 'TokenInvalid'
+Mar 11 19:47:53 instance-20251222-2113 node[831884]: }
+Mar 11 19:47:53 instance-20251222-2113 node[831884]: Node.js v24.12.0
+Mar 11 19:47:53 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:47:53 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:48:03 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 9.
+Mar 11 19:48:03 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:48:03 instance-20251222-2113 node[850636]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:48:03 instance-20251222-2113 node[850636]: 2026-03-11 19:48:03.701        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:48:03 instance-20251222-2113 node[850636]: 2026-03-11 19:48:03.967        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:48:03 instance-20251222-2113 node[850636]: 2026-03-11 19:48:03.967        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:48:03 instance-20251222-2113 node[850636]: 2026-03-11 19:48:03.968        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:48:05 instance-20251222-2113 node[850636]: 2026-03-11 19:48:05.263        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:48:05 instance-20251222-2113 node[850636]: 2026-03-11 19:48:05.264        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:48:05 instance-20251222-2113 node[850636]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:                                                    ^
+Mar 11 19:48:05 instance-20251222-2113 node[850636]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:     at Generator.next (<anonymous>)
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:48:05 instance-20251222-2113 node[850636]:   code: 'TokenInvalid'
+Mar 11 19:48:05 instance-20251222-2113 node[850636]: }
+Mar 11 19:48:05 instance-20251222-2113 node[850636]: Node.js v24.12.0
+Mar 11 19:48:05 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:48:05 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:48:15 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 10.
+Mar 11 19:48:15 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:48:15 instance-20251222-2113 node[869476]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:48:15 instance-20251222-2113 node[869476]: 2026-03-11 19:48:15.702        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:48:15 instance-20251222-2113 node[869476]: 2026-03-11 19:48:15.962        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:48:15 instance-20251222-2113 node[869476]: 2026-03-11 19:48:15.963        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:48:15 instance-20251222-2113 node[869476]: 2026-03-11 19:48:15.963        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:48:17 instance-20251222-2113 node[869476]: 2026-03-11 19:48:17.238        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:48:17 instance-20251222-2113 node[869476]: 2026-03-11 19:48:17.239        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:48:17 instance-20251222-2113 node[869476]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:                                                    ^
+Mar 11 19:48:17 instance-20251222-2113 node[869476]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:     at Generator.next (<anonymous>)
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:48:17 instance-20251222-2113 node[869476]:   code: 'TokenInvalid'
+Mar 11 19:48:17 instance-20251222-2113 node[869476]: }
+Mar 11 19:48:17 instance-20251222-2113 node[869476]: Node.js v24.12.0
+Mar 11 19:48:17 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:48:17 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:48:27 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 11.
+Mar 11 19:48:27 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:48:27 instance-20251222-2113 node[888522]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:48:27 instance-20251222-2113 node[888522]: 2026-03-11 19:48:27.694        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:48:27 instance-20251222-2113 node[888522]: 2026-03-11 19:48:27.955        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:48:27 instance-20251222-2113 node[888522]: 2026-03-11 19:48:27.955        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:48:27 instance-20251222-2113 node[888522]: 2026-03-11 19:48:27.956        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:48:28 instance-20251222-2113 node[888522]: 2026-03-11 19:48:28.924        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:48:28 instance-20251222-2113 node[888522]: 2026-03-11 19:48:28.924        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:48:28 instance-20251222-2113 node[888522]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:                                                    ^
+Mar 11 19:48:28 instance-20251222-2113 node[888522]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:     at Generator.next (<anonymous>)
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:48:28 instance-20251222-2113 node[888522]:   code: 'TokenInvalid'
+Mar 11 19:48:28 instance-20251222-2113 node[888522]: }
+Mar 11 19:48:28 instance-20251222-2113 node[888522]: Node.js v24.12.0
+Mar 11 19:48:28 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:48:28 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:48:39 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 12.
+Mar 11 19:48:39 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:48:39 instance-20251222-2113 node[907164]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:48:39 instance-20251222-2113 node[907164]: 2026-03-11 19:48:39.447        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:48:39 instance-20251222-2113 node[907164]: 2026-03-11 19:48:39.707        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:48:39 instance-20251222-2113 node[907164]: 2026-03-11 19:48:39.708        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:48:39 instance-20251222-2113 node[907164]: 2026-03-11 19:48:39.708        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:48:40 instance-20251222-2113 node[907164]: 2026-03-11 19:48:40.932        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:48:40 instance-20251222-2113 node[907164]: 2026-03-11 19:48:40.932        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:48:40 instance-20251222-2113 node[907164]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:                                                    ^
+Mar 11 19:48:40 instance-20251222-2113 node[907164]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:     at Generator.next (<anonymous>)
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:48:40 instance-20251222-2113 node[907164]:   code: 'TokenInvalid'
+Mar 11 19:48:40 instance-20251222-2113 node[907164]: }
+Mar 11 19:48:40 instance-20251222-2113 node[907164]: Node.js v24.12.0
+Mar 11 19:48:40 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:48:40 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:48:47 instance-20251222-2113 systemd[1]: Stopped doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:48:47 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:48:47 instance-20251222-2113 node[921033]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:48:48 instance-20251222-2113 node[921033]: 2026-03-11 19:48:48.185        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:48:48 instance-20251222-2113 node[921033]: 2026-03-11 19:48:48.446        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:48:48 instance-20251222-2113 node[921033]: 2026-03-11 19:48:48.447        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:48:48 instance-20251222-2113 node[921033]: 2026-03-11 19:48:48.447        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:48:49 instance-20251222-2113 node[921033]: 2026-03-11 19:48:49.634        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:48:49 instance-20251222-2113 node[921033]: 2026-03-11 19:48:49.634        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:48:49 instance-20251222-2113 node[921033]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:                                                    ^
+Mar 11 19:48:49 instance-20251222-2113 node[921033]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:     at Generator.next (<anonymous>)
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:48:49 instance-20251222-2113 node[921033]:   code: 'TokenInvalid'
+Mar 11 19:48:49 instance-20251222-2113 node[921033]: }
+Mar 11 19:48:49 instance-20251222-2113 node[921033]: Node.js v24.12.0
+Mar 11 19:48:49 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:48:49 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:48:59 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 13.
+Mar 11 19:48:59 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:48:59 instance-20251222-2113 node[940184]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:49:00 instance-20251222-2113 node[940184]: 2026-03-11 19:49:00.205        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:49:00 instance-20251222-2113 node[940184]: 2026-03-11 19:49:00.484        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:49:00 instance-20251222-2113 node[940184]: 2026-03-11 19:49:00.485        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:49:00 instance-20251222-2113 node[940184]: 2026-03-11 19:49:00.485        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:49:01 instance-20251222-2113 node[940184]: 2026-03-11 19:49:01.696        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:49:01 instance-20251222-2113 node[940184]: 2026-03-11 19:49:01.697        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:49:01 instance-20251222-2113 node[940184]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:                                                    ^
+Mar 11 19:49:01 instance-20251222-2113 node[940184]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:     at Generator.next (<anonymous>)
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:49:01 instance-20251222-2113 node[940184]:   code: 'TokenInvalid'
+Mar 11 19:49:01 instance-20251222-2113 node[940184]: }
+Mar 11 19:49:01 instance-20251222-2113 node[940184]: Node.js v24.12.0
+Mar 11 19:49:01 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:49:01 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:49:11 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 14.
+Mar 11 19:49:11 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:49:11 instance-20251222-2113 node[959243]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:49:12 instance-20251222-2113 node[959243]: 2026-03-11 19:49:12.195        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:49:12 instance-20251222-2113 node[959243]: 2026-03-11 19:49:12.457        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:49:12 instance-20251222-2113 node[959243]: 2026-03-11 19:49:12.457        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:49:12 instance-20251222-2113 node[959243]: 2026-03-11 19:49:12.458        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:49:13 instance-20251222-2113 node[959243]: 2026-03-11 19:49:13.677        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:49:13 instance-20251222-2113 node[959243]: 2026-03-11 19:49:13.678        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:49:13 instance-20251222-2113 node[959243]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:                                                    ^
+Mar 11 19:49:13 instance-20251222-2113 node[959243]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:     at Generator.next (<anonymous>)
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:49:13 instance-20251222-2113 node[959243]:   code: 'TokenInvalid'
+Mar 11 19:49:13 instance-20251222-2113 node[959243]: }
+Mar 11 19:49:13 instance-20251222-2113 node[959243]: Node.js v24.12.0
+Mar 11 19:49:13 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:49:13 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:49:23 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 15.
+Mar 11 19:49:23 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:49:23 instance-20251222-2113 node[978392]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:49:24 instance-20251222-2113 node[978392]: 2026-03-11 19:49:24.203        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:49:24 instance-20251222-2113 node[978392]: 2026-03-11 19:49:24.464        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:49:24 instance-20251222-2113 node[978392]: 2026-03-11 19:49:24.465        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:49:24 instance-20251222-2113 node[978392]: 2026-03-11 19:49:24.466        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:49:25 instance-20251222-2113 node[978392]: 2026-03-11 19:49:25.760        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:49:25 instance-20251222-2113 node[978392]: 2026-03-11 19:49:25.761        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:49:25 instance-20251222-2113 node[978392]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:                                                    ^
+Mar 11 19:49:25 instance-20251222-2113 node[978392]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:     at Generator.next (<anonymous>)
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:49:25 instance-20251222-2113 node[978392]:   code: 'TokenInvalid'
+Mar 11 19:49:25 instance-20251222-2113 node[978392]: }
+Mar 11 19:49:25 instance-20251222-2113 node[978392]: Node.js v24.12.0
+Mar 11 19:49:25 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:49:25 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:49:35 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 16.
+Mar 11 19:49:35 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:49:35 instance-20251222-2113 node[997463]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:49:36 instance-20251222-2113 node[997463]: 2026-03-11 19:49:36.202        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:49:36 instance-20251222-2113 node[997463]: 2026-03-11 19:49:36.465        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:49:36 instance-20251222-2113 node[997463]: 2026-03-11 19:49:36.466        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:49:36 instance-20251222-2113 node[997463]: 2026-03-11 19:49:36.466        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:49:37 instance-20251222-2113 node[997463]: 2026-03-11 19:49:37.659        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:49:37 instance-20251222-2113 node[997463]: 2026-03-11 19:49:37.659        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:49:37 instance-20251222-2113 node[997463]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:                                                    ^
+Mar 11 19:49:37 instance-20251222-2113 node[997463]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:     at Generator.next (<anonymous>)
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:49:37 instance-20251222-2113 node[997463]:   code: 'TokenInvalid'
+Mar 11 19:49:37 instance-20251222-2113 node[997463]: }
+Mar 11 19:49:37 instance-20251222-2113 node[997463]: Node.js v24.12.0
+Mar 11 19:49:37 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:49:37 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:49:47 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 17.
+Mar 11 19:49:47 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:49:47 instance-20251222-2113 node[1016556]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:49:48 instance-20251222-2113 node[1016556]: 2026-03-11 19:49:48.202        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:49:48 instance-20251222-2113 node[1016556]: 2026-03-11 19:49:48.465        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:49:48 instance-20251222-2113 node[1016556]: 2026-03-11 19:49:48.465        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:49:48 instance-20251222-2113 node[1016556]: 2026-03-11 19:49:48.466        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]: 2026-03-11 19:49:49.661        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]: 2026-03-11 19:49:49.662        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:                                                    ^
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:     at Generator.next (<anonymous>)
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]:   code: 'TokenInvalid'
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]: }
+Mar 11 19:49:49 instance-20251222-2113 node[1016556]: Node.js v24.12.0
+Mar 11 19:49:49 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:49:49 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:49:59 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 18.
+Mar 11 19:49:59 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:49:59 instance-20251222-2113 node[1035500]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:50:00 instance-20251222-2113 node[1035500]: 2026-03-11 19:50:00.205        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:50:00 instance-20251222-2113 node[1035500]: 2026-03-11 19:50:00.468        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:50:00 instance-20251222-2113 node[1035500]: 2026-03-11 19:50:00.469        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:50:00 instance-20251222-2113 node[1035500]: 2026-03-11 19:50:00.469        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]: 2026-03-11 19:50:01.107        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]: 2026-03-11 19:50:01.108        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:                                                    ^
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:     at Generator.next (<anonymous>)
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]:   code: 'TokenInvalid'
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]: }
+Mar 11 19:50:01 instance-20251222-2113 node[1035500]: Node.js v24.12.0
+Mar 11 19:50:01 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:50:01 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:50:11 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 19.
+Mar 11 19:50:11 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:50:11 instance-20251222-2113 node[1053745]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:50:11 instance-20251222-2113 node[1053745]: 2026-03-11 19:50:11.703        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:50:11 instance-20251222-2113 node[1053745]: 2026-03-11 19:50:11.965        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:50:11 instance-20251222-2113 node[1053745]: 2026-03-11 19:50:11.965        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:50:11 instance-20251222-2113 node[1053745]: 2026-03-11 19:50:11.966        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]: 2026-03-11 19:50:13.173        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]: 2026-03-11 19:50:13.173        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:                                                    ^
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:     at Generator.next (<anonymous>)
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]:   code: 'TokenInvalid'
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]: }
+Mar 11 19:50:13 instance-20251222-2113 node[1053745]: Node.js v24.12.0
+Mar 11 19:50:13 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:50:13 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:50:23 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 20.
+Mar 11 19:50:23 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:50:23 instance-20251222-2113 node[1073024]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:50:23 instance-20251222-2113 node[1073024]: 2026-03-11 19:50:23.693        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:50:23 instance-20251222-2113 node[1073024]: 2026-03-11 19:50:23.955        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:50:23 instance-20251222-2113 node[1073024]: 2026-03-11 19:50:23.955        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:50:23 instance-20251222-2113 node[1073024]: 2026-03-11 19:50:23.956        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]: 2026-03-11 19:50:25.133        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]: 2026-03-11 19:50:25.133        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:                                                    ^
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:     at Generator.next (<anonymous>)
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]:   code: 'TokenInvalid'
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]: }
+Mar 11 19:50:25 instance-20251222-2113 node[1073024]: Node.js v24.12.0
+Mar 11 19:50:25 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:50:25 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:50:35 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 21.
+Mar 11 19:50:35 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:50:35 instance-20251222-2113 node[1091873]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:50:35 instance-20251222-2113 node[1091873]: 2026-03-11 19:50:35.510        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:50:35 instance-20251222-2113 node[1091873]: 2026-03-11 19:50:35.772        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:50:35 instance-20251222-2113 node[1091873]: 2026-03-11 19:50:35.773        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:50:35 instance-20251222-2113 node[1091873]: 2026-03-11 19:50:35.773        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]: 2026-03-11 19:50:36.763        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]: 2026-03-11 19:50:36.763        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:                                                    ^
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:     at Generator.next (<anonymous>)
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]:   code: 'TokenInvalid'
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]: }
+Mar 11 19:50:36 instance-20251222-2113 node[1091873]: Node.js v24.12.0
+Mar 11 19:50:36 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:50:36 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:50:46 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 22.
+Mar 11 19:50:46 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:50:46 instance-20251222-2113 node[1110533]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:50:47 instance-20251222-2113 node[1110533]: 2026-03-11 19:50:47.199        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:50:47 instance-20251222-2113 node[1110533]: 2026-03-11 19:50:47.461        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:50:47 instance-20251222-2113 node[1110533]: 2026-03-11 19:50:47.462        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:50:47 instance-20251222-2113 node[1110533]: 2026-03-11 19:50:47.462        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]: 2026-03-11 19:50:48.657        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]: 2026-03-11 19:50:48.657        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]: /home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:     if (!token || typeof token !== 'string') throw new DiscordjsError(ErrorCodes.TokenInvalid);
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:                                                    ^
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]: Error [TokenInvalid]: An invalid token was provided.
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:     at Client.login (/home/ubuntu/doto-tracker/node_modules/discord.js/src/client/Client.js:216:52)
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:     at /home/ubuntu/doto-tracker/dist/index.js:26:18
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:     at Generator.next (<anonymous>)
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:     at fulfilled (/home/ubuntu/doto-tracker/dist/index.js:5:58)
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:     at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]:   code: 'TokenInvalid'
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]: }
+Mar 11 19:50:48 instance-20251222-2113 node[1110533]: Node.js v24.12.0
+Mar 11 19:50:48 instance-20251222-2113 systemd[1]: doto-tracker.service: Main process exited, code=exited, status=1/FAILURE
+Mar 11 19:50:48 instance-20251222-2113 systemd[1]: doto-tracker.service: Failed with result 'exit-code'.
+Mar 11 19:50:58 instance-20251222-2113 systemd[1]: doto-tracker.service: Scheduled restart job, restart counter is at 23.
+Mar 11 19:50:58 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:50:58 instance-20251222-2113 node[1129817]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:50:59 instance-20251222-2113 node[1129817]: 2026-03-11 19:50:59.199        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:50:59 instance-20251222-2113 node[1129817]: 2026-03-11 19:50:59.463        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:50:59 instance-20251222-2113 node[1129817]: 2026-03-11 19:50:59.463        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:50:59 instance-20251222-2113 node[1129817]: 2026-03-11 19:50:59.464        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:51:00 instance-20251222-2113 node[1129817]: 2026-03-11 19:51:00.773        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:51:00 instance-20251222-2113 node[1129817]: 2026-03-11 19:51:00.774        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:51:01 instance-20251222-2113 systemd[1]: Stopping doto-tracker.service - Doto Tracker Discord Bot...
+Mar 11 19:51:01 instance-20251222-2113 node[1129817]: 2026-03-11 19:51:01.276        INFO        [/dist/bot.js:40]        Received SIGTERM — shutting down gracefully...
+Mar 11 19:51:01 instance-20251222-2113 systemd[1]: doto-tracker.service: Deactivated successfully.
+Mar 11 19:51:01 instance-20251222-2113 systemd[1]: Stopped doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:51:01 instance-20251222-2113 systemd[1]: Started doto-tracker.service - Doto Tracker Discord Bot.
+Mar 11 19:51:01 instance-20251222-2113 node[1133657]: 🔥 THIS IS THE NEW BUILD - 59 TEST
+Mar 11 19:51:01 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:01.642        INFO        [/dist/services/channelDataService.js:23]        Channel data loaded successfully
+Mar 11 19:51:01 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:01.902        INFO        [/dist/services/userDataService.js:22]        User data loaded successfully
+Mar 11 19:51:01 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:01.902        INFO        [/dist/services/turboStatsService.js:24]        Turbo stats loaded successfully
+Mar 11 19:51:01 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:01.903        INFO        [/dist/services/dotaDataService.js:25]        Initializing DotaDataService — loading hero and item data...
+Mar 11 19:51:03 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:03.111        INFO        [/dist/services/dotaDataService.js:29]        DotaDataService ready: 127 heroes, 516 items loaded.
+Mar 11 19:51:03 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:03.112        INFO        [/dist/services/interactionService.js:76]        Interaction handler registered
+Mar 11 19:51:04 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:04.394        INFO        [/dist/bot.js:29]        Logged in as Doto Tracker#4806!
+Mar 11 19:51:33 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:33.046        INFO        [/dist/services/stratzClient.js:235]        Sending Stratz request with token prefix: eyJhbGciOi...
+Mar 11 19:51:33 instance-20251222-2113 node[1133657]: 2026-03-11 19:51:33.815        ERROR        [/dist/services/stratzClient.js:262]        Stratz fetch match error for 8724752034: You cannot use different IP Addresses when using the API.
+Mar 11 19:51:33 instance-20251222-2113 node[1133657]: [STRATZ RAW HTTP ERROR DUMP]
+Mar 11 19:51:33 instance-20251222-2113 node[1133657]: You cannot use different IP Addresses when using the API.
+Mar 11 19:51:33 instance-20251222-2113 node[1133657]: [END DUMP]

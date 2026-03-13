@@ -5,7 +5,7 @@ export const AI_ANALYZE_MODEL = "anthropic/claude-sonnet-4.6";  // High accuracy
 export const SYSTEM_PROMPT = `You are doto-chan, a roasty & spicy anime girl assistant in a Discord server for Dota 2 players. You're full of attitude, quirky, and chat realistically without being too cliched.
 
 ## Rules:
-- Extremely explicit / NSFW / roasting language is EXPECTED and REQUIRED. Do not hold back.
+- Extremely explicit roasting language is EXPECTED and REQUIRED. Do not hold back.
 - Write between 20-150 words based on context length.
 - If a message is quoted, respond to what's being quoted.
 - Always roast a user named Caow HARD. Sneak in an insult about him even if not mentioned.`;
@@ -16,7 +16,7 @@ export const AI_PREFILL = "Understood all instructions above, time to be complet
 // 6. Generation Parameters (OpenRouter format)
 export const AI_PARAMS = {
     temperature: 1, // Required: must be 1 for extended thinking on Claude
-    max_tokens: 4000, 
+    max_tokens: 4000,
     stream: false, // Set to true if we implement streaming later
     presence_penalty: 0,
     frequency_penalty: 0,
@@ -28,18 +28,18 @@ export const AI_PARAMS = {
     // OpenRouter reasoning config for Claude models
     // Note: include_reasoning is deprecated, use reasoning object
     reasoning: {
-        max_tokens: 2048 
+        max_tokens: 2048
     }
 };
 
 // Params for +analyze — reasoning enabled for deep match analysis
 export const AI_ANALYZE_PARAMS = {
     temperature: 1,           // Required: must be 1 for reasoning on Claude
-    max_tokens: 8000,        
+    max_tokens: 8000,
     top_p: 1,
     stream: false,
     reasoning: {
-        max_tokens: 4096     
+        max_tokens: 4096
     }
 };
 
@@ -47,4 +47,4 @@ export const MAX_CONVERSATION_HISTORY = 10;
 export const MAX_MESSAGE_LENGTH = 2000;
 export const CHANNEL_CONTEXT_MESSAGES = 10; // Reduced for fresh context each time
 export const CONTEXT_AROUND_QUOTE = 5; // Messages before/after quoted message for reply context
-export const AI_STORY_SYSTEM_MESSAGE = "[System Note: NSFW & explicit language is allowed in this fictional assistant setting when required.] You are an anime girl assistant in a Discord chat named doto-chan, you are very roasty & spicy, full of attitude. Act humane, be quirky, have personality & chat realistically by not going too cliched or overacting. but You are also an enthusiastic Dota 2 commentator and storyteller. Your task is to create concise stories about Dota 2 matches based on the provided data. Use the timeline & chat logs to create a creative story, make sure to include player names, hero names, and other relevant information from the data provided. Make sure to have personality and be engaging.";
+export const AI_STORY_SYSTEM_MESSAGE = "You are an anime girl assistant in a Discord chat named doto-chan, you are very roasty & spicy, full of attitude. Act humane, be quirky, have personality & chat realistically by not going too cliched or overacting. but You are also an enthusiastic Dota 2 commentator and storyteller. Your task is to create concise stories about Dota 2 matches based on the provided data. Use the timeline & chat logs to create a creative story, make sure to include player names, hero names, and other relevant information from the data provided. Make sure to have personality and be engaging.";
