@@ -782,15 +782,6 @@ function generateStratzPrompt(matchData: any): string {
     const goldGraph = `\n=== GOLD ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantNetworthLeads?.join(' → ') || 'N/A'}`;
     const xpGraph = `\n=== XP ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantExperienceLeads?.join(' → ') || 'N/A'}`;
 
-    const objectiveParts: string[] = [];
-    if (matchData.roshanEvents?.length) {
-        objectiveParts.push(`Roshan Events: ${matchData.roshanEvents.map((r: any) => `${formatDuration(r.time)} ${r.type} (${r.isRadiant ? 'Radiant' : 'Dire'})`).join(', ')}`);
-    }
-    if (matchData.buildingEvents?.length) {
-        // Just top level building destructions
-        objectiveParts.push(`Building Destructions: ${matchData.buildingEvents.slice(0, 15).map((b: any) => `${formatDuration(b.time)} ${b.type} (${b.isRadiant ? 'Radiant' : 'Dire'})`).join(', ')}`);
-    }
-
     const playerBlock = matchData.players.map((p: any) => {
         const header = [
             `[${p.isRadiant ? 'Radiant' : 'Dire'}] ${p.steamAccount?.name || 'Anonymous'} — ${p.hero?.displayName || `Hero ${p.heroId}`}`,
@@ -805,14 +796,9 @@ function generateStratzPrompt(matchData: any): string {
             p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : ''
         ].filter(Boolean);
 
-        // Purchase timings from stats.itemEvents
-        if (p.stats?.itemEvents?.length) {
-            const majorItems = p.stats.itemEvents
-                .filter((i: any) => i.purchaseTime > 0)
-                .map((i: any) => `ID ${i.itemId} @ ${formatDuration(i.purchaseTime)}`)
-                .slice(-10); // last 10 items for brevity or just major ones
-            if (majorItems.length) lines.push(`  Purchase Timings: ${majorItems.join(', ')}`);
-        }
+        // Items (we only have IDs but can list them if needed, or pass IDs directly)
+        const itemIds = [p.item0Id, p.item1Id, p.item2Id, p.item3Id, p.item4Id, p.item5Id].filter((id: number) => id && id !== 0);
+        if (itemIds.length) lines.push(`  Final item IDs: ${itemIds.join(', ')}`);
 
         // Extra stats if available
         if (p.stats) {
@@ -860,7 +846,6 @@ function generateStratzPrompt(matchData: any): string {
 === MATCH SUMMARY ===
 ${summaryParts.join(' | ')}
 ${draftBlock}
-${objectiveParts.length ? `\n=== OBJECTIVES ===\n${objectiveParts.join('\n')}` : ''}
 ${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
 
 === PLAYERS ===

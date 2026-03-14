@@ -114,18 +114,6 @@ query ($matchId: Long!) {
     radiantExperienceLeads
     winRates
     predictedWinRates
-    roshanEvents {
-      time
-      type
-      isBoost
-      isRadiant
-    }
-    buildingEvents {
-      time
-      type
-      isRadiant
-      npcResId
-    }
     pickBans {
       isPick
       isRadiant
@@ -205,12 +193,6 @@ query ($matchId: Long!) {
         }
         deathEvents {
           time
-        }
-        itemEvents {
-          time
-          itemId
-          purchaseTime
-          isEnchanted
         }
         farmDistributionReport {
           creepType { count gold xp }
