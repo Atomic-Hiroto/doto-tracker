@@ -96,16 +96,34 @@ query ($matchId: Long!) {
     firstBloodTime
     radiantKills
     direKills
-    towerDeaths {
-      time
-      isRadiant
+    towerStatusRadiant
+    towerStatusDire
+    barracksStatusRadiant
+    barracksStatusDire
+    rank
+    bracket
+    playbackData {
+      roshanEvents {
+        time hp maxHp createTime x y totalDamageTaken
+        item0 item1 item2 item3 item4 item5
+      }
+      buildingEvents {
+        time indexId type hp maxHp positionX positionY isRadiant npcId
+      }
     }
-    chatEvents {
-      time
-      type
-      fromHeroId
-      value
-      isRadiant
+    towerDeaths { time isRadiant }
+    chatEvents { time type fromHeroId value isRadiant }
+    laneReport {
+      radiant {
+        midLane { meleeCount rangeCount siegeCount denyCount neutralCount }
+        offLane { meleeCount rangeCount siegeCount denyCount neutralCount }
+        safeLane { meleeCount rangeCount siegeCount denyCount neutralCount }
+      }
+      dire {
+        midLane { meleeCount rangeCount siegeCount denyCount neutralCount }
+        offLane { meleeCount rangeCount siegeCount denyCount neutralCount }
+        safeLane { meleeCount rangeCount siegeCount denyCount neutralCount }
+      }
     }
     topLaneOutcome
     midLaneOutcome
@@ -114,12 +132,7 @@ query ($matchId: Long!) {
     radiantExperienceLeads
     winRates
     predictedWinRates
-    pickBans {
-      isPick
-      isRadiant
-      heroId
-      order
-    }
+    pickBans { isPick isRadiant heroId order }
     players {
       steamAccountId
       playerSlot
@@ -147,14 +160,13 @@ query ($matchId: Long!) {
       invisibleSeconds
       goldPerMinute
       experiencePerMinute
+      gold
+      goldSpent
+      leaverStatus
+      streakPrediction
       item0Id item1Id item2Id item3Id item4Id item5Id
       backpack0Id backpack1Id backpack2Id neutral0Id
-      abilities {
-        abilityId
-        level
-        time
-        isTalent
-      }
+      abilities { abilityId level time isTalent }
       stats {
         actionsPerMinute
         heroDamageReceivedPerMinute
@@ -166,58 +178,30 @@ query ($matchId: Long!) {
         heroDamagePerMinute
         towerDamagePerMinute
         impPerMinute
-        courierKills {
-          time
-        }
+        courierKills { time }
         tripsFountainPerMinute
-        wardDestruction {
-          time
-          gold
-        }
+        wardDestruction { time gold }
         campStack
-        runes {
-          time
-          rune
-          action
-        }
-        wards {
-          time
-          type
-        }
-        killEvents {
-          time
-          target
-          assist
-          isSolo
-          isSmoke
-        }
-        deathEvents {
-          time
-        }
+        runes { time rune action }
+        wards { time type }
+        matchPlayerBuffEvent { time abilityId itemId stackCount }
+        towerDamageReport { npcId damage damageCreeps damageFromAbility }
+        killEvents { time target assist isSolo isSmoke }
+        deathEvents { time }
         farmDistributionReport {
           creepType { count gold xp }
           buildings { count gold xp }
           bountyGold { count gold xp }
           other { count gold xp }
         }
-        abilityCastReport {
-          abilityId
-          count
-        }
+        abilityCastReport { abilityId count }
         heroDamageReport {
           dealtTotal { physicalDamage magicalDamage pureDamage }
           receivedTotal { physicalDamage magicalDamage pureDamage }
         }
       }
-      hero {
-        id
-        displayName
-        shortName
-      }
-      steamAccount {
-        name
-        seasonRank
-      }
+      hero { id displayName shortName }
+      steamAccount { name seasonRank }
     }
   }
 }

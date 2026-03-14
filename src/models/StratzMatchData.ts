@@ -27,25 +27,75 @@ export interface HeroDamageReport {
     receivedTotal?: DamageData;
 }
 
-export interface RoshanEvent {
+export interface PlaybackRoshanEvent {
     time: number;
-    type: string;
-    isBoost?: boolean;
+    hp?: number;
+    maxHp?: number;
+    createTime?: number;
+    x?: number;
+    y?: number;
+    totalDamageTaken?: number;
+    item0?: number;
+    item1?: number;
+    item2?: number;
+    item3?: number;
+    item4?: number;
+    item5?: number;
+}
+
+export interface PlaybackBuildingEvent {
+    time: number;
+    indexId?: number;
+    type?: string;
+    hp?: number;
+    maxHp?: number;
+    positionX?: number;
+    positionY?: number;
     isRadiant?: boolean;
+    npcId?: number;
 }
 
-export interface BuildingEvent {
-    time: number;
-    type: string;
-    isRadiant: boolean;
-    npcResId?: number;
-}
-
-export interface ItemEvent {
+export interface ItemPurchaseEvent {
     time: number;
     itemId: number;
-    purchaseTime?: number;
-    isEnchanted?: boolean;
+}
+
+export interface PlaybackData {
+    roshanEvents?: PlaybackRoshanEvent[];
+    buildingEvents?: PlaybackBuildingEvent[];
+}
+
+export interface LaneReportFactionLane {
+    meleeCount: number;
+    rangeCount: number;
+    siegeCount: number;
+    denyCount: number;
+    neutralCount: number;
+}
+
+export interface LaneReportFaction {
+    midLane?: LaneReportFactionLane;
+    offLane?: LaneReportFactionLane;
+    safeLane?: LaneReportFactionLane;
+}
+
+export interface LaneReport {
+    radiant?: LaneReportFaction;
+    dire?: LaneReportFaction;
+}
+
+export interface BuffEvent {
+    time: number;
+    abilityId?: number;
+    itemId?: number;
+    stackCount?: number;
+}
+
+export interface TowerDamageReport {
+    npcId: number;
+    damage: number;
+    damageCreeps: number;
+    damageFromAbility: number;
 }
 
 export interface PlayerStats {
@@ -69,8 +119,9 @@ export interface PlayerStats {
     deathEvents?: Array<{ time: number }>;
     farmDistributionReport?: FarmDistributionReport;
     abilityCastReport?: AbilityCastReport[];
-    heroDamageReport?: HeroDamageReport;
-    itemEvents?: ItemEvent[];
+    itemPurchases?: ItemPurchaseEvent[];
+    matchPlayerBuffEvent?: BuffEvent[];
+    towerDamageReport?: TowerDamageReport[];
     performance?: {
         behavior?: number;
         intentionalFeeding?: boolean;
@@ -109,10 +160,13 @@ export interface MatchPlayer {
     variant?: number;
     behavior?: number;
     isRandom?: boolean;
-    gold_per_min?: number;
-    xp_per_min?: number;
     goldPerMinute?: number;
     experiencePerMinute?: number;
+    gold?: number;
+    goldSpent?: number;
+    leaverStatus?: number;
+    streakPrediction?: number;
+    invisibleSeconds?: number;
     item0Id?: number;
     item1Id?: number;
     item2Id?: number;
@@ -173,12 +227,18 @@ export interface StratzMatch {
     lobbyType?: number;
     averageRank?: number;
     firstBloodTime?: number;
-    radiantKills?: number[] | number;
-    direKills?: number[] | number;
     towerDeaths?: TowerDeath[];
     chatEvents?: ChatEvent[];
-    roshanEvents?: RoshanEvent[];
-    buildingEvents?: BuildingEvent[];
+    playbackData?: PlaybackData;
+    towerStatusRadiant?: number;
+    towerStatusDire?: number;
+    barracksStatusRadiant?: number;
+    barracksStatusDire?: number;
+    rank?: number;
+    bracket?: number;
+    radiantKills?: number[];
+    direKills?: number[];
+    laneReport?: LaneReport;
     topLaneOutcome?: number;
     midLaneOutcome?: number;
     bottomLaneOutcome?: number;

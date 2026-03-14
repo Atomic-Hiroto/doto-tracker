@@ -67,15 +67,17 @@ async function callAI(
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply based on the latest patch — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
 
 // ── System prompt for deep match analysis ─────────────────────────────────
-const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. You receive rich structured match data and produce data-driven analysis.
+const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. You receive absolute S-tier high-detail match data and produce data-driven analysis.
 
 ## Your Analytical Framework
 Follow this reasoning order to ensure comprehensive analysis:
-1. **Draft context** — Evaluate pick/ban synergies and hero facet choices (skip if Turbo/All Pick where draft matters less)
-2. **Laning phase** — Use lane efficiency %, CS curves, first blood timing, and gold curves to determine lane outcomes
-3. **Economy & itemization** — Cross-reference item timings with gold curves, evaluate choices against enemy damage types
-4. **Teamfights & objectives** — Identify key fights from the teamfight log, correlate with objective kills and gold swings
-5. **Decisive plays** — Pin down the specific moment(s) that decided the game using kill timelines, buyback logs, and gold swings
+1. **Strategic Baseline** — Evaluate Bracket/Rank and regional meta.
+2. **Draft context** — Evaluate pick/ban synergies and hero facet choices. Identify who "won" the draft.
+3. **Laning phase** — Use lane efficiency %, granular creep counts (melee/range/siege), first blood timing, and gold curves to determine lane outcomes.
+4. **Economy & itemization** — Cross-reference item timings with gold curves, evaluate choices against enemy damage types. Look at gold efficiency (Spent vs Total).
+5. **Teamfights & objectives** — Identify key fights from the kill timeline and advantage swings. Correlate with playback events (Roshan/Towers).
+6. **Detailed Dynamics** — Use permanent buff stacks (Silencer/Slark/etc.) and ability cast counts to evaluate individual impact beyond just KDA.
+7. **Decisive moments** — Pin down the specific minute marks from the advantage graph where the game swung irrevocably. Look for "throw" moments in advantage trends.
 
 ## Data Field Guide
 - **heroVariant** = hero facet (1-indexed), the Dota 2 facet system. Mention if a facet choice was suboptimal.
@@ -768,7 +770,7 @@ function generateStratzPrompt(matchData: any): string {
         `Winner: ${winner}`,
         matchData.firstBloodTime != null ? `First Blood: ${formatDuration(matchData.firstBloodTime)}` : '',
         `Game Mode: Mode ${matchData.gameMode || matchData.game_mode}`,
-        `Average Rank: ${matchData.averageRank || 'Unknown'}`,
+        `Average Rank: ${matchData.averageRank || 'Unknown'} (Bracket ${matchData.bracket})`,
         `Lane Outcomes (0=Draw, 1=Rad, 2=Dire): Top ${matchData.topLaneOutcome}, Mid ${matchData.midLaneOutcome}, Bot ${matchData.bottomLaneOutcome}`
     ].filter(Boolean);
 
@@ -781,27 +783,78 @@ function generateStratzPrompt(matchData: any): string {
 
     const goldGraph = `\n=== GOLD ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantNetworthLeads?.join(' → ') || 'N/A'}`;
     const xpGraph = `\n=== XP ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantExperienceLeads?.join(' → ') || 'N/A'}`;
+    const radKillsPerMin = `\n=== RADIANT KILLS (per minute) ===\n${matchData.radiantKills?.join(', ') || 'N/A'}`;
+    const direKillsPerMin = `\n=== DIRE KILLS (per minute) ===\n${matchData.direKills?.join(', ') || 'N/A'}`;
+
+    const objectiveParts: string[] = [];
+    if (matchData.playbackData?.roshanEvents?.length) {
+        objectiveParts.push(`Roshan Events: ${matchData.playbackData.roshanEvents.map((r: any) => `${formatDuration(r.time)} (HP: ${r.hp}/${r.maxHp}, Dmg: ${r.totalDamageTaken})`).join(', ')}`);
+    }
+    if (matchData.playbackData?.buildingEvents?.length) {
+        const structuralEvents = matchData.playbackData.buildingEvents
+            .filter((b: any) => b.hp === 0)
+            .map((b: any) => `${formatDuration(b.time)} ${b.type} (${b.isRadiant ? 'Radiant' : 'Dire'})`);
+        if (structuralEvents.length) {
+            objectiveParts.push(`Key Building Destructions: ${structuralEvents.slice(0, 15).join(', ')}`);
+        }
+    }
+    objectiveParts.push(`Final Structure Status - Rad Towers: ${matchData.towerStatusRadiant}, Dire Towers: ${matchData.towerStatusDire} | Rad Barracks: ${matchData.barracksStatusRadiant}, Dire Barracks: ${matchData.barracksStatusDire}`);
+
+    if (matchData.laneReport) {
+        const lr = matchData.laneReport;
+        const processLane = (l: any) => l ? `(Melee: ${l.meleeCount}, Range: ${l.rangeCount}, Denies: ${l.denyCount})` : 'N/A';
+        objectiveParts.push(`Laning Metrics:
+  Radiant - Safe: ${processLane(lr.radiant?.safeLane)}, Mid: ${processLane(lr.radiant?.midLane)}, Off: ${processLane(lr.radiant?.offLane)}
+  Dire - Safe: ${processLane(lr.dire?.safeLane)}, Mid: ${processLane(lr.dire?.midLane)}, Off: ${processLane(lr.dire?.offLane)}`);
+    }
 
     const playerBlock = matchData.players.map((p: any) => {
         const header = [
             `[${p.isRadiant ? 'Radiant' : 'Dire'}] ${p.steamAccount?.name || 'Anonymous'} — ${p.hero?.displayName || `Hero ${p.heroId}`}`,
-            p.variant ? `(Facet ${p.variant})` : ''
+            p.variant ? `(Facet ${p.variant})` : '',
+            p.isRandom ? `[RANDOMED]` : '',
+            p.leaverStatus ? `[LEAVER_STATUS: ${p.leaverStatus}]` : ''
         ].filter(Boolean).join(' ');
 
         const lines = [
             header,
-            `  KDA: ${p.kills}/${p.deaths}/${p.assists} | Lvl: ${p.level} | NW: ${p.networth} | GPM: ${p.goldPerMinute} | XPM: ${p.experiencePerMinute}`,
-            `  Dmg: ${p.heroDamage} | Tower: ${p.towerDamage} | Heal: ${p.heroHealing} | LH: ${p.numLastHits} | DN: ${p.numDenies}`,
-            `  Pos: ${p.position?.toString().replace('POSITION_', '') ?? 'Unknown'} | IMP: ${p.imp ?? 'N/A'} | Award: ${p.award === 1 ? 'MVP' : (p.award ? 'Standout' : 'None')}`,
-            p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : ''
+            `  KDA: ${p.kills}/${p.deaths}/${p.assists} | Lvl: ${p.level} | NW: ${p.networth} (Gold: ${p.gold}, Spent: ${p.goldSpent})`,
+            `  GPM: ${p.goldPerMinute} | XPM: ${p.experiencePerMinute} | IMP: ${p.imp ?? 'N/A'} (Streak Pred: ${p.streakPrediction})`,
+            `  Dmg Dealt: ${p.heroDamage} | Dmg Received (max/m): ${Math.max(...(p.stats?.heroDamageReceivedPerMinute || [0]))}`,
+            `  Tower Dmg: ${p.towerDamage} | Heal: ${p.heroHealing} | LH: ${p.numLastHits} | DN: ${p.numDenies}`,
+            `  Pos: ${p.position?.toString().replace('POSITION_', '') ?? 'Unknown'} | Award: ${p.award === 1 ? 'MVP' : (p.award ? 'Standout' : 'None')}`,
+            p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : '',
+            p.invisibleSeconds > 60 ? `  Sneakiness: ${p.invisibleSeconds}s invisible` : ''
         ].filter(Boolean);
 
-        // Items (we only have IDs but can list them if needed, or pass IDs directly)
+        // Final Items
         const itemIds = [p.item0Id, p.item1Id, p.item2Id, p.item3Id, p.item4Id, p.item5Id].filter((id: number) => id && id !== 0);
         if (itemIds.length) lines.push(`  Final item IDs: ${itemIds.join(', ')}`);
 
         // Extra stats if available
         if (p.stats) {
+            if (p.stats.itemPurchases?.length) {
+                const majorPurchases = p.stats.itemPurchases
+                    .map((i: any) => `ID ${i.itemId} @ ${formatDuration(i.time)}`)
+                    .slice(-10);
+                lines.push(`  Purchase Timings: ${majorPurchases.join(', ')}`);
+            }
+
+            if (p.stats.matchPlayerBuffEvent?.length) {
+                const buffs = p.stats.matchPlayerBuffEvent
+                    .filter((b: any) => (b.stackCount || 0) > 0)
+                    .map((b: any) => `${b.abilityId ? `Ability ${b.abilityId}` : `Item ${b.itemId}`}: ${b.stackCount} stacks @ ${formatDuration(b.time)}`)
+                    .slice(-5);
+                if (buffs.length) lines.push(`  Permanent Buffs: ${buffs.join(', ')}`);
+            }
+
+            if (p.stats.towerDamageReport?.length) {
+                const towerHits = p.stats.towerDamageReport
+                    .map((t: any) => `NPC ${t.npcId}: ${t.damage} dmg`)
+                    .slice(0, 5);
+                lines.push(`  Tower Impact: ${towerHits.join(', ')}`);
+            }
+
             lines.push(`  APM (max per min): ${Math.max(...(p.stats.actionsPerMinute || [0]))}`);
             if (p.stats.wardDestruction?.length || p.stats.wards?.length) {
                 lines.push(`  Vision: ${p.stats.wards?.length || 0} wards placed | ${p.stats.wardDestruction?.length || 0} destroyed`);
@@ -813,16 +866,8 @@ function generateStratzPrompt(matchData: any): string {
                 lines.push(`  Camps Stacked: ${p.stats.campStack.length}`);
             }
             if (p.stats.killEvents?.length) {
-                const kills = p.stats.killEvents.map((k: any) => `${formatDuration(k.time)}`).join(', ');
-                lines.push(`  Kill Times: ${kills}`);
-            }
-            if (p.stats.deathEvents?.length) {
-                const deaths = p.stats.deathEvents.map((d: any) => `${formatDuration(d.time)}`).join(', ');
-                lines.push(`  Death Times: ${deaths}`);
-            }
-            if (p.stats.heroDamageReport?.dealtTotal) {
-                const dt = p.stats.heroDamageReport.dealtTotal;
-                lines.push(`  Damage Output - Phys: ${dt.physicalDamage}, Mag: ${dt.magicalDamage}, Pure: ${dt.pureDamage}`);
+                const kills = p.stats.killEvents.map((k: any) => `${formatDuration(k.time)} (Solo: ${k.isSolo})`).slice(-10).join(', ');
+                lines.push(`  Significant Kills: ${kills}`);
             }
         }
 
@@ -846,6 +891,7 @@ function generateStratzPrompt(matchData: any): string {
 === MATCH SUMMARY ===
 ${summaryParts.join(' | ')}
 ${draftBlock}
+${objectiveParts.length ? `\n=== OBJECTIVES ===\n${objectiveParts.join('\n')}` : ''}
 ${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
 
 === PLAYERS ===
