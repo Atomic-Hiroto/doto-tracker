@@ -4,13 +4,6 @@ export interface CreepTypeData {
     xp: number;
 }
 
-export interface CreepLocationData {
-    creepLocation?: string | number;
-    count: number;
-    gold: number;
-    xp: number;
-}
-
 export interface FarmDistributionReport {
     creepType?: CreepTypeData[];
     buildings?: CreepTypeData[];
@@ -32,6 +25,27 @@ export interface DamageData {
 export interface HeroDamageReport {
     dealtTotal?: DamageData;
     receivedTotal?: DamageData;
+}
+
+export interface RoshanEvent {
+    time: number;
+    type: string;
+    isBoost?: boolean;
+    isRadiant?: boolean;
+}
+
+export interface BuildingEvent {
+    time: number;
+    type: string;
+    isRadiant: boolean;
+    npcResId?: number;
+}
+
+export interface ItemEvent {
+    time: number;
+    itemId: number;
+    purchaseTime?: number;
+    isEnchanted?: boolean;
 }
 
 export interface PlayerStats {
@@ -56,6 +70,11 @@ export interface PlayerStats {
     farmDistributionReport?: FarmDistributionReport;
     abilityCastReport?: AbilityCastReport[];
     heroDamageReport?: HeroDamageReport;
+    itemEvents?: ItemEvent[];
+    performance?: {
+        behavior?: number;
+        intentionalFeeding?: boolean;
+    };
 }
 
 export interface PlayerAbility {
@@ -66,7 +85,7 @@ export interface PlayerAbility {
 }
 
 export interface MatchPlayer {
-    steamAccountId?: number; // In template as account_id
+    steamAccountId?: number;
     account_id?: number;
     playerSlot?: number;
     isRadiant: boolean;
@@ -81,7 +100,7 @@ export interface MatchPlayer {
     towerDamage?: number;
     heroHealing?: number;
     numLastHits?: number;
-    last_hits?: number; // From user template
+    last_hits?: number;
     numDenies?: number;
     role?: number;
     lane?: number;
@@ -111,12 +130,12 @@ export interface MatchPlayer {
         displayName: string;
         shortName: string;
     };
-    hero_id?: number; // From user template
+    hero_id?: number;
     steamAccount?: {
         name: string;
         seasonRank: number;
     };
-    personaname?: string; // From user template
+    personaname?: string;
 }
 
 export interface TowerDeath {
@@ -126,9 +145,9 @@ export interface TowerDeath {
 
 export interface ChatEvent {
     time: number;
-    type: string; // ChatType: e.g. "ALL", "TEAM", "CHAT_WHEEL", "HERO_CHAT_WHEEL"
+    type: string;
     fromHeroId: number;
-    value: string; // the actual message text or raw chat wheel
+    value: string;
     isRadiant: boolean;
 }
 
@@ -141,15 +160,15 @@ export interface PickBan {
 
 export interface StratzMatch {
     id?: number;
-    match_id: number; // mapped from id
+    match_id: number;
     parsedDateTime?: number;
     didRadiantWin?: boolean;
-    radiant_win: boolean; // mapped from didRadiantWin
+    radiant_win: boolean;
     durationSeconds?: number;
-    duration: number; // mapped from durationSeconds
+    duration: number;
     startDateTime?: number;
-    start_time: number; // mapped from startDateTime
-    gameMode?: number; // Also game_mode
+    start_time: number;
+    gameMode?: number;
     game_mode?: number;
     lobbyType?: number;
     averageRank?: number;
@@ -158,7 +177,9 @@ export interface StratzMatch {
     direKills?: number[] | number;
     towerDeaths?: TowerDeath[];
     chatEvents?: ChatEvent[];
-    topLaneOutcome?: number; // 0=draw, 1=radiant, 2=dire ?
+    roshanEvents?: RoshanEvent[];
+    buildingEvents?: BuildingEvent[];
+    topLaneOutcome?: number;
     midLaneOutcome?: number;
     bottomLaneOutcome?: number;
     radiantNetworthLeads?: number[];
@@ -168,3 +189,4 @@ export interface StratzMatch {
     pickBans?: PickBan[];
     players: MatchPlayer[];
 }
+
