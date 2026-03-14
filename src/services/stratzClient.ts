@@ -7,17 +7,17 @@ const STRATZ_GQL = 'https://api.stratz.com/graphql';
 // Dota 2 game mode IDs used by Stratz
 // 1 = All Pick, 2 = Captains Mode, 22 = Ranked All Pick, 23 = Turbo
 const STRATZ_GAME_MODES = {
-    RANKED: 22,
-    TURBO: 23,
-    ALL_PICK: 1,
+  RANKED: 22,
+  TURBO: 23,
+  ALL_PICK: 1,
 } as const;
 
 export interface StratzHeroLaneStat {
-    heroId: number;
-    lane: number;       // 1=Safe, 2=Mid, 3=Off, 4=Jungle/Roam
-    matchCount: number;
-    winCount: number;
-    winRate: number;    // computed from winCount/matchCount
+  heroId: number;
+  lane: number;       // 1=Safe, 2=Mid, 3=Off, 4=Jungle/Roam
+  matchCount: number;
+  winCount: number;
+  winRate: number;    // computed from winCount/matchCount
 }
 
 /**
@@ -28,15 +28,15 @@ export interface StratzHeroLaneStat {
  * @param minMatches  minimum matches to filter noise
  */
 export async function fetchStratzHeroLaneStats(
-    gameModeId: number,
-    minMatches = 500
+  gameModeId: number,
+  minMatches = 500
 ): Promise<StratzHeroLaneStat[]> {
-    if (!STRATZ_API_KEY) {
-        logger.warn('STRATZ_API_KEY not set — skipping Stratz meta fetch');
-        return [];
-    }
+  if (!STRATZ_API_KEY) {
+    logger.warn('STRATZ_API_KEY not set — skipping Stratz meta fetch');
+    return [];
+  }
 
-    const query = `{
+  const query = `{
   heroStats {
     winWeek(gameModeIds: [${gameModeId}]) {
       heroId
@@ -47,37 +47,37 @@ export async function fetchStratzHeroLaneStats(
   }
 }`;
 
-    try {
-        const response = await axios.post(
-            STRATZ_GQL,
-            { query },
-            {
-                headers: {
-                    Authorization: `Bearer ${STRATZ_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'STRATZ_API',
-                    'Accept': 'application/json',
-                },
-                timeout: 15000,
-            }
-        );
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      { query },
+      {
+        headers: {
+          Authorization: `Bearer ${STRATZ_API_KEY}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'STRATZ_API',
+          'Accept': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
 
-        const rows: any[] = response.data?.data?.heroStats?.winWeek ?? [];
-        logger.debug(`Stratz winWeek returned ${rows.length} rows for gameMode ${gameModeId}`);
+    const rows: any[] = response.data?.data?.heroStats?.winWeek ?? [];
+    logger.debug(`Stratz winWeek returned ${rows.length} rows for gameMode ${gameModeId}`);
 
-        return rows
-            .filter((r: any) => (r.matchCount || 0) >= minMatches)
-            .map((r: any) => ({
-                heroId: r.heroId,
-                lane: r.lane,
-                matchCount: r.matchCount,
-                winCount: r.winCount,
-                winRate: r.matchCount > 0 ? r.winCount / r.matchCount : 0,
-            }));
-    } catch (error: any) {
-        logger.error('Stratz API error:', error?.response?.data ?? error?.message ?? error);
-        return [];
-    }
+    return rows
+      .filter((r: any) => (r.matchCount || 0) >= minMatches)
+      .map((r: any) => ({
+        heroId: r.heroId,
+        lane: r.lane,
+        matchCount: r.matchCount,
+        winCount: r.winCount,
+        winRate: r.matchCount > 0 ? r.winCount / r.matchCount : 0,
+      }));
+  } catch (error: any) {
+    logger.error('Stratz API error:', error?.response?.data ?? error?.message ?? error);
+    return [];
+  }
 }
 
 export const StratzGameModes = STRATZ_GAME_MODES;
@@ -114,6 +114,18 @@ query ($matchId: Long!) {
     radiantExperienceLeads
     winRates
     predictedWinRates
+    roshanEvents {
+      time
+      type
+      isBoost
+      isRadiant
+    }
+    buildingEvents {
+      time
+      type
+      isRadiant
+      npcResId
+    }
     pickBans {
       isPick
       isRadiant
@@ -194,6 +206,12 @@ query ($matchId: Long!) {
         deathEvents {
           time
         }
+        itemEvents {
+          time
+          itemId
+          purchaseTime
+          isEnchanted
+        }
         farmDistributionReport {
           creepType { count gold xp }
           buildings { count gold xp }
@@ -231,54 +249,80 @@ import { StratzMatch } from '../models/StratzMatchData';
  * @param matchId  The ID of the match to fetch
  */
 export async function fetchStratzMatch(matchId: number): Promise<StratzMatch | null> {
-    if (!STRATZ_API_KEY) {
-        logger.warn('STRATZ_API_KEY not set — cannot fetch Stratz match data');
-        return null;
+  if (!STRATZ_API_KEY) {
+    logger.warn('STRATZ_API_KEY not set — cannot fetch Stratz match data');
+    return null;
+  }
+
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: MATCH_QUERY,
+        variables: { matchId }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${STRATZ_API_KEY}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'STRATZ_API',
+          'Accept': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
+
+    if (response.data?.errors) {
+      logger.error(`Stratz API GraphQL Errors for match ${matchId}:`, response.data.errors);
+      return null;
     }
 
-    try {
-        logger.info(`Sending Stratz request with token prefix: ${STRATZ_API_KEY.substring(0, 10)}...`);
+    const match: StratzMatch | undefined = response.data?.data?.match;
 
-        const response = await axios.post(
-            STRATZ_GQL,
-            {
-                query: MATCH_QUERY,
-                variables: { matchId } 
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${STRATZ_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'STRATZ_API',
-                    'Accept': 'application/json',
-                },
-                timeout: 15000,
-            }
-        );
-
-        if (response.data?.errors) {
-            logger.error(`Stratz API GraphQL Errors for match ${matchId}:`, response.data.errors);
-            return null;
-        }
-
-        const match: StratzMatch | undefined = response.data?.data?.match;
-        
-        if (!match) {
-            logger.warn(`Stratz API returned no match data for ${matchId}`);
-            return null;
-        }
-
-        logger.info(`Stratz match ${matchId} fetched successfully.`);
-        return match;
-    } catch (error: any) {
-        const errorData = error?.response?.data;
-        logger.error(`Stratz fetch match error for ${matchId}:`, errorData ?? error?.message ?? error);
-        
-        // Let's dump the HTML/Text to console to see what the server actually says
-        if (typeof errorData === 'string') {
-           console.error(`\n[STRATZ RAW HTTP ERROR DUMP]\n${errorData.substring(0, 1000)}\n[END DUMP]\n`);
-        }
-        
-        return null;
+    if (!match) {
+      logger.warn(`Stratz API returned no match data for ${matchId}`);
+      return null;
     }
+
+    // Map fields for backward compatibility if needed
+    match.match_id = match.id || matchId;
+    match.radiant_win = !!match.didRadiantWin;
+    match.duration = match.durationSeconds || 0;
+    match.start_time = match.startDateTime || 0;
+
+    return match;
+  } catch (error: any) {
+    logger.error(`Stratz fetch match error for ${matchId}:`, error?.response?.data ?? error?.message ?? error);
+    return null;
+  }
 }
+
+/**
+ * Polls the Stratz API until the match is parsed.
+ */
+export async function waitForStratzParse(
+  matchId: number,
+  opts: {
+    maxAttempts?: number;
+    intervalMs?: number;
+    onTick?: (attempt: number, max: number) => void;
+  } = {}
+): Promise<boolean> {
+  const { maxAttempts = 15, intervalMs = 20000, onTick } = opts;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    onTick?.(attempt, maxAttempts);
+
+    const match = await fetchStratzMatch(matchId);
+    if (match && match.parsedDateTime) {
+      return true;
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  return false;
+}
+

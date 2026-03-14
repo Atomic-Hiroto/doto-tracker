@@ -4,7 +4,7 @@ import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
 import { getDetailedMatchData, requestMatchParse, waitForMatchParse } from '../services/dotaService';
-import { fetchStratzMatch } from '../services/stratzClient';
+import { fetchStratzMatch, waitForStratzParse } from '../services/stratzClient';
 import { fetchDotabuffTurboMeta } from '../services/dotabuffScraper';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping, safeSend } from '../utils/channelHelpers';
@@ -190,11 +190,19 @@ export async function analyze(message: Message, args: string[]) {
             } else {
                 return message.reply('❌ Model override is restricted to the bot owner.');
             }
+        } else if (args[i] === '-od' || args[i] === '-opendota') {
+            useStratz = false; // explicitly disable stratz
         } else if (args[i] === '-stratz') {
             useStratz = true;
         } else {
             cleanArgs.push(args[i]);
         }
+    }
+
+    // Default to Stratz if not explicitly disabled or if -stratz is present
+    // We only use OD if -od is passed or if Stratz fetch fails later
+    if (!args.includes('-od') && !args.includes('-opendota')) {
+        useStratz = true;
     }
 
     const matchId = parseInt(cleanArgs[0], 10);
@@ -204,91 +212,77 @@ export async function analyze(message: Message, args: string[]) {
 
     try {
         safeTyping(message.channel);
-        
+
         // ── Determine which data source to use ───────────────────────────────
         let prompt = '';
         if (useStratz) {
-            const stratzMatch = await fetchStratzMatch(matchId);
-            if (!stratzMatch) {
-                return message.reply(`❌ Could not fetch data from Stratz for match **${matchId}**.`);
-            }
-            prompt = generateStratzPrompt(stratzMatch);
-        } else {
-            let matchData = await getDetailedMatchData(matchId);
+            let stratzMatch = await fetchStratzMatch(matchId);
 
-            // ── Auto-parse wait: if not parsed, request parse and poll ────────
-            if (!matchData) {
-                await requestMatchParse(matchId);
-
-            const waitEmbed = new EmbedBuilder()
-                .setColor('#f59e0b')
-                .setTitle('⏳ Parsing Match...')
-                .setDescription(
-                    `Match **#${matchId}** isn't parsed yet.\n` +
-                    `I've requested OpenDota to parse it — hang tight, I'll update this message automatically when it's ready.\n\n` +
-                    `⏳ Waiting for parse... (this usually takes 30s–2min)`
-                )
-                .setFooter({ text: 'Polling every 20s • Timeout: 5 min' });
-
-            const waitMsg = await message.reply({ embeds: [waitEmbed] });
-
-            // Add a hourglass reaction to the user's original message
-            try { await message.react('⏳'); } catch { /* ignore missing perms */ }
-
-            const parsed = await waitForMatchParse(matchId, {
-                onTick: (attempt, max) => {
-                    const elapsed = attempt * 20;
-                    const mins = Math.floor(elapsed / 60);
-                    const secs = elapsed % 60;
-                    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-                    waitEmbed.setDescription(
-                        `Match **#${matchId}** isn't parsed yet.\n` +
-                        `I've requested OpenDota to parse it — hang tight, I'll update this message automatically when it's ready.\n\n` +
-                        `⏳ Still waiting... (${timeStr} elapsed, attempt ${attempt}/${max})`
-                    );
-                    waitMsg.edit({ embeds: [waitEmbed] }).catch(() => { });
-                },
-            });
-
-            // Swap reaction
-            try {
-                await message.reactions.cache.get('⏳')?.users.remove(message.client.user!);
-            } catch { /* ignore */ }
-
-            if (!parsed) {
-                try { await message.react('❌'); } catch { /* ignore */ }
-                waitEmbed
-                    .setColor('#ef4444')
-                    .setTitle('❌ Parse Timeout')
+            // ── Stratz Polling: if not parsed, poll ─────────────────────────
+            if (!stratzMatch || !stratzMatch.parsedDateTime) {
+                const waitEmbed = new EmbedBuilder()
+                    .setColor('#0ea5e9')
+                    .setTitle('⏳ Stratz: Parsing Match...')
                     .setDescription(
-                        `Match **#${matchId}** still isn't parsed after 5 minutes.\n` +
-                        `OpenDota might be slow or the replay isn't available.\n` +
-                        `Try \`+analyze ${matchId}\` again later, or use \`+analyze ${matchId} -stratz\` for an instant (but slightly different) analysis. 🔍`
+                        `Match **#${matchId}** isn't parsed on Stratz yet.\n` +
+                        `I'm waiting for Stratz to finish processing the replay — I'll update this automatically.\n\n` +
+                        `⏳ Waiting for parse... (this usually takes 30s–2min)`
                     )
-                    .setFooter(null);
-                return waitMsg.edit({ embeds: [waitEmbed] });
+                    .setFooter({ text: 'Polling Stratz every 20s • Max 5 min' });
+
+                const waitMsg = await message.reply({ embeds: [waitEmbed] });
+                try { await message.react('⏳'); } catch { /* ignore */ }
+
+                const parsed = await waitForStratzParse(matchId, {
+                    onTick: (attempt, max) => {
+                        const elapsed = attempt * 20;
+                        waitEmbed.setDescription(
+                            `Match **#${matchId}** isn't parsed on Stratz yet.\n` +
+                            `Still waiting... (${elapsed}s elapsed, attempt ${attempt}/${max})`
+                        );
+                        waitMsg.edit({ embeds: [waitEmbed] }).catch(() => { });
+                    }
+                });
+
+                try {
+                    await message.reactions.cache.get('⏳')?.users.remove(message.client.user!);
+                } catch { /* ignore */ }
+
+                if (!parsed) {
+                    try { await message.react('❌'); } catch { /* ignore */ }
+                    waitEmbed
+                        .setColor('#ef4444')
+                        .setTitle('❌ Stratz Parse Timeout')
+                        .setDescription(
+                            `Stratz is taking too long to parse **#${matchId}**.\n` +
+                            `Falling back to OpenDota analysis...`
+                        );
+                    await waitMsg.edit({ embeds: [waitEmbed] });
+                    useStratz = false; // Fallback to OD logic below
+                } else {
+                    try { await message.react('✅'); } catch { /* ignore */ }
+                    waitEmbed
+                        .setColor('#22c55e')
+                        .setTitle('✅ Stratz Parsed!')
+                        .setDescription(`Match **#${matchId}** is ready on Stratz — analyzing...`);
+                    await waitMsg.edit({ embeds: [waitEmbed] });
+                    
+                    safeTyping(message.channel);
+                    stratzMatch = await fetchStratzMatch(matchId);
+                }
             }
 
-            // Parsed! Update the wait message and fetch full data
-            try { await message.react('✅'); } catch { /* ignore */ }
-            waitEmbed
-                .setColor('#22c55e')
-                .setTitle('✅ Match Parsed!')
-                .setDescription(`Match **#${matchId}** is ready — generating analysis now...`)
-                .setFooter(null);
-            await waitMsg.edit({ embeds: [waitEmbed] });
-
-            safeTyping(message.channel);
-            matchData = await getDetailedMatchData(matchId);
-
-            if (!matchData) {
-                waitEmbed
-                    .setColor('#ef4444')
-                    .setTitle('❌ Data Error')
-                    .setDescription(`Match parsed but couldn't load detailed data. Try \`+analyze ${matchId}\` again.`);
-                return waitMsg.edit({ embeds: [waitEmbed] });
+            if (useStratz && stratzMatch) {
+                prompt = generateStratzPrompt(stratzMatch);
             }
         }
+
+        // ── Fallback or Explicit OpenDota Logic ─────────────────────────────
+        if (!useStratz) {
+            const matchData = await getDetailedMatchData(matchId);
+            if (!matchData) {
+                return message.reply(`❌ Could not fetch data from OpenDota for match **${matchId}**.`);
+            }
 
             // ── Build structured prompt with clear sections ─────────────────────
 
@@ -788,6 +782,15 @@ function generateStratzPrompt(matchData: any): string {
     const goldGraph = `\n=== GOLD ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantNetworthLeads?.join(' → ') || 'N/A'}`;
     const xpGraph = `\n=== XP ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantExperienceLeads?.join(' → ') || 'N/A'}`;
 
+    const objectiveParts: string[] = [];
+    if (matchData.roshanEvents?.length) {
+        objectiveParts.push(`Roshan Events: ${matchData.roshanEvents.map((r: any) => `${formatDuration(r.time)} ${r.type} (${r.isRadiant ? 'Radiant' : 'Dire'})`).join(', ')}`);
+    }
+    if (matchData.buildingEvents?.length) {
+        // Just top level building destructions
+        objectiveParts.push(`Building Destructions: ${matchData.buildingEvents.slice(0, 15).map((b: any) => `${formatDuration(b.time)} ${b.type} (${b.isRadiant ? 'Radiant' : 'Dire'})`).join(', ')}`);
+    }
+
     const playerBlock = matchData.players.map((p: any) => {
         const header = [
             `[${p.isRadiant ? 'Radiant' : 'Dire'}] ${p.steamAccount?.name || 'Anonymous'} — ${p.hero?.displayName || `Hero ${p.heroId}`}`,
@@ -802,9 +805,14 @@ function generateStratzPrompt(matchData: any): string {
             p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : ''
         ].filter(Boolean);
 
-        // Items (we only have IDs but can list them if needed, or pass IDs directly)
-        const itemIds = [p.item0Id, p.item1Id, p.item2Id, p.item3Id, p.item4Id, p.item5Id].filter((id: number) => id && id !== 0);
-        if (itemIds.length) lines.push(`  Final item IDs: ${itemIds.join(', ')}`);
+        // Purchase timings from stats.itemEvents
+        if (p.stats?.itemEvents?.length) {
+            const majorItems = p.stats.itemEvents
+                .filter((i: any) => i.purchaseTime > 0)
+                .map((i: any) => `ID ${i.itemId} @ ${formatDuration(i.purchaseTime)}`)
+                .slice(-10); // last 10 items for brevity or just major ones
+            if (majorItems.length) lines.push(`  Purchase Timings: ${majorItems.join(', ')}`);
+        }
 
         // Extra stats if available
         if (p.stats) {
@@ -826,16 +834,9 @@ function generateStratzPrompt(matchData: any): string {
                 const deaths = p.stats.deathEvents.map((d: any) => `${formatDuration(d.time)}`).join(', ');
                 lines.push(`  Death Times: ${deaths}`);
             }
-            if (p.stats.courierKills?.length) {
-                lines.push(`  Courier Kills: ${p.stats.courierKills.length}`);
-            }
             if (p.stats.heroDamageReport?.dealtTotal) {
                 const dt = p.stats.heroDamageReport.dealtTotal;
                 lines.push(`  Damage Output - Phys: ${dt.physicalDamage}, Mag: ${dt.magicalDamage}, Pure: ${dt.pureDamage}`);
-            }
-            if (p.stats.heroDamageReport?.receivedTotal) {
-                const rt = p.stats.heroDamageReport.receivedTotal;
-                lines.push(`  Damage Taken - Phys: ${rt.physicalDamage}, Mag: ${rt.magicalDamage}, Pure: ${rt.pureDamage}`);
             }
         }
 
@@ -859,6 +860,7 @@ function generateStratzPrompt(matchData: any): string {
 === MATCH SUMMARY ===
 ${summaryParts.join(' | ')}
 ${draftBlock}
+${objectiveParts.length ? `\n=== OBJECTIVES ===\n${objectiveParts.join('\n')}` : ''}
 ${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
 
 === PLAYERS ===
