@@ -269,13 +269,13 @@ export async function fetchStratzMatch(matchId: number): Promise<StratzMatch | n
           'User-Agent': 'STRATZ_API',
           'Accept': 'application/json',
         },
-        timeout: 15000,
+        timeout: 30000,
       }
     );
 
     if (response.data?.errors) {
-      logger.error(`Stratz API GraphQL Errors for match ${matchId}:`, response.data.errors);
-      return null;
+      logger.warn(`Stratz API GraphQL Errors for match ${matchId} (some fields may be missing):`, JSON.stringify(response.data.errors));
+      // We don't return null here because data might still contain the match
     }
 
     const match: StratzMatch | undefined = response.data?.data?.match;

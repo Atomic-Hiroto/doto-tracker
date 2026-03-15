@@ -219,13 +219,17 @@ export async function analyze(message: Message, args: string[]) {
 
             // ── Stratz Polling: if not parsed, poll ─────────────────────────
             if (!stratzMatch || !stratzMatch.parsedDateTime) {
+                const isError = !stratzMatch;
                 const waitEmbed = new EmbedBuilder()
-                    .setColor('#0ea5e9')
-                    .setTitle('⏳ Stratz: Parsing Match...')
+                    .setColor(isError ? '#f59e0b' : '#0ea5e9')
+                    .setTitle(isError ? '⚠️ Stratz API Issue' : '⏳ Stratz: Parsing Match...')
                     .setDescription(
-                        `Match **#${matchId}** isn't parsed on Stratz yet.\n` +
-                        `I'm waiting for Stratz to finish processing the replay — I'll update this automatically.\n\n` +
-                        `⏳ Waiting for parse... (this usually takes 30s–2min)`
+                        isError 
+                            ? `I'm having trouble reaching Stratz or the query is too heavy. I'll keep trying...\n` +
+                              `Match **#${matchId}** status unknown.`
+                            : `Match **#${matchId}** isn't parsed on Stratz yet.\n` +
+                              `I'm waiting for Stratz to finish processing the replay — I'll update this automatically.\n\n` +
+                              `⏳ Waiting for parse... (this usually takes 30s–2min)`
                     )
                     .setFooter({ text: 'Polling Stratz every 20s • Max 5 min' });
 
@@ -236,7 +240,7 @@ export async function analyze(message: Message, args: string[]) {
                     onTick: (attempt, max) => {
                         const elapsed = attempt * 20;
                         waitEmbed.setDescription(
-                            `Match **#${matchId}** isn't parsed on Stratz yet.\n` +
+                            `Match **#${matchId}** isn't fully ready yet.\n` +
                             `Still waiting... (${elapsed}s elapsed, attempt ${attempt}/${max})`
                         );
                         waitMsg.edit({ embeds: [waitEmbed] }).catch(() => { });
@@ -262,8 +266,8 @@ export async function analyze(message: Message, args: string[]) {
                     try { await message.react('✅'); } catch { /* ignore */ }
                     waitEmbed
                         .setColor('#22c55e')
-                        .setTitle('✅ Stratz Parsed!')
-                        .setDescription(`Match **#${matchId}** is ready on Stratz — analyzing...`);
+                        .setTitle('✅ Stratz Ready!')
+                        .setDescription(`Match **#${matchId}** data is now available on Stratz — analyzing...`);
                     await waitMsg.edit({ embeds: [waitEmbed] });
                     
                     safeTyping(message.channel);
