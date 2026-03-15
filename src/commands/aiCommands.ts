@@ -154,7 +154,7 @@ const ANALYZE_RESPONSE_FORMAT = {
 };
 
 // ── Format structured analysis into a single Discord embed ────────────────────
-function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder {
+function formatAnalysis(data: any, matchId: number, model: string, source: string): EmbedBuilder {
     const sections = [
         `**📖 GAME NARRATIVE**\n${data.gameNarrative}`,
         `**🏗️ DRAFT & LANING**\n${data.draftAndLaning}`,
@@ -170,7 +170,7 @@ function formatAnalysis(data: any, matchId: number, model: string): EmbedBuilder
         .setTitle(`🔍 Match Analysis — #${matchId}`)
         .setDescription(trunc(sections.join('\n\n'), 4096))
         .setURL(`https://www.opendota.com/matches/${matchId}`)
-        .setFooter({ text: `doto-chan coaching • ${model}` })
+        .setFooter({ text: `doto-chan coaching • ${source} • ${model}` })
         .setTimestamp();
 }
 
@@ -511,7 +511,8 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             return message.reply({ embeds: [fallbackEmbed] });
         }
 
-        const embed = formatAnalysis(analysisData, matchId, useModel);
+        const source = useStratz ? 'Stratz' : 'OpenDota';
+        const embed = formatAnalysis(analysisData, matchId, useModel, source);
         await message.reply({ embeds: [embed] });
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
