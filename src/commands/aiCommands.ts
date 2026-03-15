@@ -785,6 +785,8 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
 
     const goldGraph = `\n=== GOLD ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantNetworthLeads?.join(' → ') || 'N/A'}`;
     const xpGraph = `\n=== XP ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantExperienceLeads?.join(' → ') || 'N/A'}`;
+    const winRateGraph = `\n=== WIN PROBABILITY (Radiant perspective, per minute) ===\n${matchData.winRates?.map((w: number) => (w * 100).toFixed(0) + '%').join(' → ') || 'N/A'}`;
+    const predictedWinRateGraph = `\n=== PREDICTED WIN RATE (Radiant perspective, per minute) ===\n${matchData.predictedWinRates?.map((w: number) => (w * 100).toFixed(0) + '%').join(' → ') || 'N/A'}`;
     
     const objectiveParts: string[] = [];
     if (matchData.playbackData?.roshanEvents?.length) {
@@ -922,15 +924,25 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
             }
 
             // Vision & Utility
-            if (p.stats.wards?.length || p.stats.wardDestruction?.length || p.stats.runes?.length || p.stats.campStack?.length) {
+            if (p.stats.wards?.length || p.stats.wardDestruction?.length || p.stats.runes?.length || p.stats.campStack?.length || p.stats.courierKills?.length) {
                 const stackCount = Array.isArray(p.stats.campStack) ? p.stats.campStack.reduce((a: number, b: number) => a + b, 0) : 0;
                 const utils = [
                     p.stats.wards?.length ? `Wards: ${p.stats.wards.length}` : '',
                     p.stats.wardDestruction?.length ? `De-ward: ${p.stats.wardDestruction.length}` : '',
                     p.stats.runes?.length ? `Runes: ${p.stats.runes.length}` : '',
-                    stackCount ? `Stacks: ${stackCount}` : ''
+                    stackCount ? `Stacks: ${stackCount}` : '',
+                    p.stats.courierKills?.length ? `Courier Kills: ${p.stats.courierKills.length}` : ''
                 ].filter(Boolean).join(' | ');
                 if (utils) lines.push(`  Utility: ${utils}`);
+            }
+
+            // Item Usage (Actives)
+            if (p.stats.itemUsed?.length) {
+                const activeUses = await Promise.all(p.stats.itemUsed.map(async (iu: any) => {
+                    const name = await dotaDataService.getItemName(iu.itemId);
+                    return `${name}(x${iu.count})`;
+                }));
+                if (activeUses.length) lines.push(`  Actives Used: ${activeUses.join(', ')}`);
             }
 
             // Benchmarking vs Hero Averages
@@ -1011,7 +1023,9 @@ ${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
 ${playerBlock.join('\n\n')}
 ${goldGraph}
 ${xpGraph}
+${winRateGraph}
+${predictedWinRateGraph}
 
-Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Reference specific numbers like IMP scores, Lane Outcomes, and specific minute marks from the advantage graph. Use Discord markdown (**bold** for names). Be direct and spicy. STRICT LIMIT: 250 words total across all fields. Each field 2-4 sentences max.`;
+Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Reference specific numbers like IMP scores, Lane Outcomes, Win Probability swings, and specific minute marks from the advantage graph. Use Discord markdown (**bold** for names). Be direct and spicy. STRICT LIMIT: 250 words total across all fields. Each field 2-4 sentences max.`;
 }
 
