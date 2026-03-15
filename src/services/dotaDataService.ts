@@ -12,20 +12,26 @@ interface ItemData {
     dname: string;
 }
 
+interface AbilityData {
+    id: number;
+    dname: string;
+}
+
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 class DotaDataService {
     private heroes: Map<number, HeroData> = new Map();
     private items: Map<number, ItemData> = new Map();
+    private abilities: Map<number, AbilityData> = new Map();
     private lastRefresh: number = 0;
     private initialized = false;
 
     async initialize(): Promise<void> {
-        logger.info('Initializing DotaDataService — loading hero and item data...');
-        await Promise.all([this.fetchHeroes(), this.fetchItems()]);
+        logger.info('Initializing DotaDataService — loading hero, item and ability data...');
+        await Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
         this.lastRefresh = Date.now();
         this.initialized = true;
-        logger.info(`DotaDataService ready: ${this.heroes.size} heroes, ${this.items.size} items loaded.`);
+        logger.info(`DotaDataService ready: ${this.heroes.size} heroes, ${this.items.size} items, ${this.abilities.size} abilities loaded.`);
     }
 
     private async fetchHeroes(): Promise<void> {
@@ -54,10 +60,27 @@ class DotaDataService {
         }
     }
 
+    private async fetchAbilities(): Promise<void> {
+        try {
+            const response = await opendotaClient.get<Record<string, any>>('/constants/abilities');
+            this.abilities.clear();
+            for (const ability of Object.values(response.data)) {
+                if (ability.id !== undefined) {
+                    this.abilities.set(ability.id, {
+                        id: ability.id,
+                        dname: ability.dname || ability.name || 'Unknown Ability'
+                    });
+                }
+            }
+        } catch (error) {
+            logger.error('Failed to fetch ability data:', error);
+        }
+    }
+
     private async refreshIfStale(): Promise<void> {
         if (Date.now() - this.lastRefresh > REFRESH_INTERVAL_MS) {
-            logger.info('DotaDataService: refreshing stale hero/item cache...');
-            await Promise.all([this.fetchHeroes(), this.fetchItems()]);
+            logger.info('DotaDataService: refreshing stale hero/item/ability cache...');
+            await Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
             this.lastRefresh = Date.now();
         }
     }
@@ -73,6 +96,12 @@ class DotaDataService {
         if (itemId === 0) return 'Empty Slot';
         const item = this.items.get(itemId);
         return item ? item.dname : 'Unknown Item';
+    }
+
+    async getAbilityName(abilityId: number): Promise<string> {
+        await this.refreshIfStale();
+        const ability = this.abilities.get(abilityId);
+        return ability ? ability.dname : `Ability ${abilityId}`;
     }
 
     getHeroById(heroId: number): HeroData | undefined {

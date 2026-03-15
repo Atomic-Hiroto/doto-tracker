@@ -16,6 +16,105 @@ export interface AbilityCastReport {
     count: number;
 }
 
+export interface AssistEvent {
+    time: number;
+    target?: number;
+    gold?: number;
+    xp?: number;
+    positionX?: number;
+    positionY?: number;
+}
+
+export interface ItemUsedEvent {
+    itemId: number;
+    count: number;
+}
+
+export interface ChatMessage {
+    time: number;
+    message: string;
+    pausedTick: number;
+}
+
+export interface ChatWheelEvent {
+    time: number;
+    chatWheelId: number;
+    pauseTick?: number;
+}
+
+export interface ActionReport {
+    moveToPosition: number;
+    moveToTarget: number;
+    attackPosition: number;
+    attackTarget: number;
+    castPosition: number;
+    castTarget: number;
+    castNoTarget: number;
+    heldPosition: number;
+    glyphCast: number;
+    scanUsed: number;
+    pingUsed: number;
+}
+
+export interface LocationReport {
+    positionX: number;
+    positionY: number;
+}
+
+export interface InventoryItem {
+    itemId: number;
+    charges?: number;
+    secondaryCharges?: number;
+}
+
+export interface InventoryReport {
+    item0?: InventoryItem;
+    item1?: InventoryItem;
+    item2?: InventoryItem;
+    item3?: InventoryItem;
+    item4?: InventoryItem;
+    item5?: InventoryItem;
+    backPack0?: InventoryItem;
+    backPack1?: InventoryItem;
+    backPack2?: InventoryItem;
+    neutral0?: InventoryItem;
+}
+
+export interface HeroAverage {
+    heroId: number;
+    apm?: number;
+    casts?: number;
+    abilityCasts?: number;
+    kills?: number;
+    deaths?: number;
+    assists?: number;
+    networth?: number;
+    xp?: number;
+    cs?: number;
+    dn?: number;
+    neutrals?: number;
+    heroDamage?: number;
+    towerDamage?: number;
+    physicalDamage?: number;
+    magicalDamage?: number;
+    physicalDamageReceived?: number;
+    magicalDamageReceived?: number;
+    tripleKill?: number;
+    ultraKill?: number;
+    rampage?: number;
+    godLike?: number;
+    goldPerMinute?: number;
+    disableCount?: number;
+    disableDuration?: number;
+    stunCount?: number;
+    stunDuration?: number;
+    slowCount?: number;
+    slowDuration?: number;
+    healingSelf?: number;
+    healingAllies?: number;
+    invisibleCount?: number;
+}
+
 export interface DamageData {
     physicalDamage: number;
     magicalDamage: number;
@@ -117,11 +216,21 @@ export interface PlayerStats {
     wards?: Array<{ time: number; type: number }>;
     killEvents?: Array<{ time: number; target: number; assist: number[]; isSolo: boolean; isSmoke: boolean }>;
     deathEvents?: Array<{ time: number }>;
+    assistEvents?: AssistEvent[];
+    itemPurchases?: ItemPurchaseEvent[];
+    itemUsed?: ItemUsedEvent[];
+    allTalks?: ChatMessage[];
+    chatWheels?: ChatWheelEvent[];
+    actionReport?: ActionReport;
+    locationReport?: LocationReport[];
     farmDistributionReport?: FarmDistributionReport;
     abilityCastReport?: AbilityCastReport[];
-    itemPurchases?: ItemPurchaseEvent[];
+    inventoryReport?: InventoryReport[];
     matchPlayerBuffEvent?: BuffEvent[];
     towerDamageReport?: TowerDamageReport[];
+    heroDamageReport?: HeroDamageReport;
+    deniesPerMinute?: number[];
+    spiritBearInventoryReport?: any[];
     performance?: {
         behavior?: number;
         intentionalFeeding?: boolean;
@@ -179,6 +288,7 @@ export interface MatchPlayer {
     neutral0Id?: number;
     abilities?: PlayerAbility[];
     stats?: PlayerStats;
+    heroAverage?: HeroAverage[];
     hero?: {
         id: number;
         displayName: string;
@@ -227,6 +337,11 @@ export interface StratzMatch {
     lobbyType?: number;
     averageRank?: number;
     firstBloodTime?: number;
+    endDateTime?: number;
+    averageImp?: number;
+    gameVersionId?: number;
+    regionId?: number;
+    numHumanPlayers?: number;
     towerDeaths?: TowerDeath[];
     chatEvents?: ChatEvent[];
     playbackData?: PlaybackData;

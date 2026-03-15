@@ -90,9 +90,12 @@ query ($matchId: Long!) {
     didRadiantWin
     durationSeconds
     startDateTime
+    endDateTime
     gameMode
     lobbyType
     averageRank
+    actualRank
+    averageImp
     firstBloodTime
     radiantKills
     direKills
@@ -102,6 +105,11 @@ query ($matchId: Long!) {
     barracksStatusDire
     rank
     bracket
+    gameVersionId
+    regionId
+    numHumanPlayers
+    league { id name displayName }
+    series { id type lastMatchDateTime }
     playbackData {
       roshanEvents {
         time hp maxHp createTime x y totalDamageTaken
@@ -164,6 +172,9 @@ query ($matchId: Long!) {
       goldSpent
       leaverStatus
       streakPrediction
+      heroAverage {
+        apm casts abilityCasts kills deaths assists networth xp cs dn neutrals heroDamage towerDamage physicalDamage magicalDamage tripleKill ultraKill rampage godLike goldPerMinute disableCount disableDuration stunCount stunDuration slowCount slowDuration healingSelf healingAllies invisibleCount
+      }
       item0Id item1Id item2Id item3Id item4Id item5Id
       backpack0Id backpack1Id backpack2Id neutral0Id
       abilities { abilityId level time isTalent }
@@ -188,6 +199,25 @@ query ($matchId: Long!) {
         towerDamageReport { npcId damage damageCreeps damageFromAbility }
         killEvents { time target assist isSolo isSmoke }
         deathEvents { time }
+        assistEvents { time target gold xp positionX positionY }
+        itemPurchases { time itemId }
+        itemUsed { itemId count }
+        allTalks { time message pausedTick }
+        chatWheels { time chatWheelId pauseTick }
+        actionReport { moveToPosition moveToTarget attackPosition attackTarget castPosition castTarget castNoTarget heldPosition glyphCast scanUsed pingUsed }
+        locationReport { positionX positionY }
+        inventoryReport {
+          item0 { itemId charges secondaryCharges }
+          item1 { itemId charges secondaryCharges }
+          item2 { itemId charges secondaryCharges }
+          item3 { itemId charges secondaryCharges }
+          item4 { itemId charges secondaryCharges }
+          item5 { itemId charges secondaryCharges }
+          backPack0 { itemId charges secondaryCharges }
+          backPack1 { itemId charges secondaryCharges }
+          backPack2 { itemId charges secondaryCharges }
+          neutral0 { itemId charges secondaryCharges }
+        }
         farmDistributionReport {
           creepType { count gold xp }
           buildings { count gold xp }
@@ -198,6 +228,11 @@ query ($matchId: Long!) {
         heroDamageReport {
           dealtTotal { physicalDamage magicalDamage pureDamage }
           receivedTotal { physicalDamage magicalDamage pureDamage }
+        }
+        deniesPerMinute
+        spiritBearInventoryReport {
+          item0Id item1Id item2Id item3Id item4Id item5Id
+          backPack0Id backPack1Id backPack2Id neutral0Id
         }
       }
       hero { id displayName shortName }

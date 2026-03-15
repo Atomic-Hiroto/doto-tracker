@@ -1,0 +1,391 @@
+[
+  {
+    "name": "matchId",
+    "type": {
+      "name": "Long",
+      "kind": "SCALAR",
+      "ofType": null
+    }
+  },
+  {
+    "name": "steamAccountId",
+    "type": {
+      "name": "Long",
+      "kind": "SCALAR",
+      "ofType": null
+    }
+  },
+  {
+    "name": "gameVersionId",
+    "type": {
+      "name": "Short",
+      "kind": "SCALAR",
+      "ofType": null
+    }
+  },
+  {
+    "name": "level",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "killEvents",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsKillEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "deathEvents",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsDeathEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "assistEvents",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsAssistEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "lastHitsPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "goldPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "experiencePerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "healPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "heroDamagePerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "towerDamagePerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "towerDamageReport",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsTowerDamageReportType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "courierKills",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsCourierKillEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "wards",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsWardEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "itemPurchases",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerItemPurchaseEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "itemUsed",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsItemUsedEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "allTalks",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsAllTalkEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "chatWheels",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsChatWheelEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "actionsPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "actionReport",
+    "type": {
+      "name": "MatchPlayerStatsActionReportType",
+      "kind": "OBJECT",
+      "ofType": null
+    }
+  },
+  {
+    "name": "locationReport",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsLocationReportType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "farmDistributionReport",
+    "type": {
+      "name": "MatchPlayerStatsFarmDistributionReportType",
+      "kind": "OBJECT",
+      "ofType": null
+    }
+  },
+  {
+    "name": "runes",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsRuneEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "abilityCastReport",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsAbilityCastReportType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "heroDamageReport",
+    "type": {
+      "name": "MatchPlayerStatsHeroDamageReportType",
+      "kind": "OBJECT",
+      "ofType": null
+    }
+  },
+  {
+    "name": "inventoryReport",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerInventoryType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "networthPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "campStack",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "matchPlayerBuffEvent",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerStatsBuffEventType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "deniesPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "impPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "tripsFountainPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "spiritBearInventoryReport",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerSpiritBearInventoryType",
+        "kind": "OBJECT"
+      }
+    }
+  },
+  {
+    "name": "heroDamageReceivedPerMinute",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "Int",
+        "kind": "SCALAR"
+      }
+    }
+  },
+  {
+    "name": "wardDestruction",
+    "type": {
+      "name": null,
+      "kind": "LIST",
+      "ofType": {
+        "name": "MatchPlayerWardDestuctionObjectType",
+        "kind": "OBJECT"
+      }
+    }
+  }
+]
