@@ -158,64 +158,183 @@ async function main() {
 
         const hasDraftStratz = (stratzMatch.pickBans?.length ?? 0) > 0;
         const draftBlockStratz = hasDraftStratz
-            ? `\n=== DRAFT ORDER ===\n${stratzMatch.pickBans!.map((d: any) =>
-                `${d.order + 1}. ${d.isRadiant ? 'Radiant' : 'Dire'} ${d.isPick ? 'PICK' : 'BAN'}: HeroId ${d.heroId}`
-            ).join('\n')}`
+            ? `\n=== DRAFT ORDER ===\n${await Promise.all(stratzMatch.pickBans!.map(async (d: any) => {
+                const heroName = await dotaDataService.getHeroName(d.heroId);
+                return `${d.order + 1}. ${d.isRadiant ? 'Radiant' : 'Dire'} ${d.isPick ? 'PICK' : 'BAN'}: ${heroName}`;
+            })).then(lines => lines.join('\n'))}`
             : '';
 
         const goldGraphStratz = `\n=== GOLD ADVANTAGE (Radiant perspective, per minute) ===\n${stratzMatch.radiantNetworthLeads?.join(' → ') || 'N/A'}`;
         const xpGraphStratz = `\n=== XP ADVANTAGE (Radiant perspective, per minute) ===\n${stratzMatch.radiantExperienceLeads?.join(' → ') || 'N/A'}`;
 
-        const playerBlockStratz = stratzMatch.players.map((p: any) => {
+        const playerBlockStratz = await Promise.all(stratzMatch.players.map(async (p: any) => {
             const header = [
                 `[${p.isRadiant ? 'Radiant' : 'Dire'}] ${p.steamAccount?.name || 'Anonymous'} — ${p.hero?.displayName || `Hero ${p.heroId}`}`,
-                p.variant ? `(Facet ${p.variant})` : ''
+                p.variant ? `(Facet ${p.variant})` : '',
+                p.isRandom ? `[RANDOMED]` : '',
+                p.leaverStatus ? `[LEAVER_STATUS: ${p.leaverStatus}]` : ''
             ].filter(Boolean).join(' ');
 
             const lines = [
                 header,
-                `  KDA: ${p.kills}/${p.deaths}/${p.assists} | Lvl: ${p.level} | NW: ${p.networth} | GPM: ${p.goldPerMinute} | XPM: ${p.experiencePerMinute}`,
-                `  Dmg: ${p.heroDamage} | Tower: ${p.towerDamage} | Heal: ${p.heroHealing} | LH: ${p.numLastHits} | DN: ${p.numDenies}`,
-                `  Pos: ${p.position?.toString().replace('POSITION_', '') ?? 'Unknown'} | IMP: ${p.imp ?? 'N/A'} | Award: ${p.award === 1 ? 'MVP' : (p.award ? 'Standout' : 'None')}`,
-                p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : ''
+                `  KDA: ${p.kills}/${p.deaths}/${p.assists} | Lvl: ${p.level} | NW: ${p.networth} (Spent: ${p.goldSpent})`,
+                `  GPM: ${p.goldPerMinute} | XPM: ${p.experiencePerMinute} | IMP: ${p.imp ?? 'N/A'} (Streak Pred: ${p.streakPrediction})`,
+                `  Dmg Dealt: ${p.heroDamage} | Tower: ${p.towerDamage} | Heal: ${p.heroHealing} | LH: ${p.numLastHits} | DN: ${p.numDenies}`,
+                `  Pos: ${p.position?.toString().replace('POSITION_', '') ?? 'Unknown'} | Award: ${p.award === 1 ? 'MVP' : (p.award ? 'Standout' : 'None')}`,
+                p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : '',
+                p.invisibleSeconds > 60 ? `  Sneakiness: ${p.invisibleSeconds}s invisible` : ''
             ].filter(Boolean);
 
-            const itemIds = [p.item0Id, p.item1Id, p.item2Id, p.item3Id, p.item4Id, p.item5Id].filter((id: number) => id && id !== 0);
-            if (itemIds.length) lines.push(`  Final item IDs: ${itemIds.join(', ')}`);
-
             if (p.stats) {
-                lines.push(`  APM (max per min): ${Math.max(...(p.stats.actionsPerMinute || [0]))}`);
-                if (p.stats.wardDestruction?.length || p.stats.wards?.length) {
-                    lines.push(`  Vision: ${p.stats.wards?.length || 0} wards placed | ${p.stats.wardDestruction?.length || 0} destroyed`);
+                // Final Inventory Report (Last item in log is final state)
+                const ir = Array.isArray(p.stats.inventoryReport) ? p.stats.inventoryReport.slice(-1)[0] : p.stats.inventoryReport;
+                if (ir) {
+                    const resolveInv = async (item: any) => item?.itemId ? await dotaDataService.getItemName(item.itemId) : null;
+                    
+                    const mainItems = (await Promise.all([
+                        resolveInv(ir.item0), resolveInv(ir.item1), resolveInv(ir.item2),
+                        resolveInv(ir.item3), resolveInv(ir.item4), resolveInv(ir.item5)
+                    ])).filter(Boolean);
+                    
+                    const backpack = (await Promise.all([
+                        resolveInv(ir.backPack0), resolveInv(ir.backPack1), resolveInv(ir.backPack2)
+                    ])).filter(Boolean);
+                    
+                    const neutral = await resolveInv(ir.neutral0);
+
+                    if (mainItems.length) lines.push(`  Inventory: ${mainItems.join(', ')}`);
+                    if (backpack.length) lines.push(`  Backpack: ${backpack.join(', ')}`);
+                    if (neutral) lines.push(`  Neutral: ${neutral}`);
                 }
-                if (p.stats.runes?.length) {
-                    lines.push(`  Runes: ${p.stats.runes.length} pickups`);
+
+                // Permanent Buffs (Aghs, Shard, Moonshard, etc.)
+                if (p.stats.matchPlayerBuffEvent?.length) {
+                    const buffs = await Promise.all(p.stats.matchPlayerBuffEvent.map(async (b: any) => {
+                        const name = b.itemId ? await dotaDataService.getItemName(b.itemId) : (b.abilityId ? `Ability ${b.abilityId}` : null);
+                        return name;
+                    }));
+                    const uniqueBuffs = [...new Set(buffs.filter(Boolean))];
+                    if (uniqueBuffs.length) lines.push(`  Perm Buffs: ${uniqueBuffs.join(', ')}`);
                 }
-                if (p.stats.campStack?.length) {
-                    lines.push(`  Camps Stacked: ${p.stats.campStack.length}`);
+
+                // Spirit Bear Inventory (for Lone Druid)
+                const sbi = Array.isArray(p.stats.spiritBearInventoryReport) ? p.stats.spiritBearInventoryReport.slice(-1)[0] : p.stats.spiritBearInventoryReport;
+                if (sbi) {
+                    const resolveId = async (id: number | null) => id ? await dotaDataService.getItemName(id) : null;
+                    
+                    const bearItems = (await Promise.all([
+                        resolveId(sbi.item0Id), resolveId(sbi.item1Id), resolveId(sbi.item2Id),
+                        resolveId(sbi.item3Id), resolveId(sbi.item4Id), resolveId(sbi.item5Id)
+                    ])).filter(Boolean);
+
+                    const bearBackpack = (await Promise.all([
+                        resolveId(sbi.backPack0Id), resolveId(sbi.backPack1Id), resolveId(sbi.backPack2Id)
+                    ])).filter(Boolean);
+
+                    const bearNeutral = await resolveId(sbi.neutral0Id);
+
+                    if (bearItems.length || bearBackpack.length || bearNeutral) {
+                        lines.push(`  --- Spirit Bear ---`);
+                        if (bearItems.length) lines.push(`  Bear Inventory: ${bearItems.join(', ')}`);
+                        if (bearBackpack.length) lines.push(`  Bear Backpack: ${bearBackpack.join(', ')}`);
+                        if (bearNeutral) lines.push(`  Bear Neutral: ${bearNeutral}`);
+                    }
                 }
-                if (p.stats.killEvents?.length) {
-                    const kills = p.stats.killEvents.map((k: any) => `${formatDuration(k.time)}`).join(', ');
-                    lines.push(`  Kill Times: ${kills}`);
+
+                // Action Report (APM)
+                if (p.stats.actionReport) {
+                    const ar = p.stats.actionReport;
+                    lines.push(`  Actions: Casts(${ar.castPosition + ar.castTarget + ar.castNoTarget}), Attacks(${ar.attackPosition + ar.attackTarget}), Move(${ar.moveToPosition + ar.moveToTarget}), Pings(${ar.pingUsed}), Scan(${ar.scanUsed})`);
                 }
-                if (p.stats.deathEvents?.length) {
-                    const deaths = p.stats.deathEvents.map((d: any) => `${formatDuration(d.time)}`).join(', ');
-                    lines.push(`  Death Times: ${deaths}`);
+
+                // Farm Distribution
+                if (p.stats.farmDistributionReport) {
+                    const fd = p.stats.farmDistributionReport;
+                    const creepGold = fd.creepType?.reduce((sum: number, c: any) => sum + (c.gold || 0), 0) || 0;
+                    const bldgGold = (Array.isArray(fd.buildings) ? fd.buildings.reduce((sum: number, b: any) => sum + (b.gold || 0), 0) : fd.buildings?.gold) || 0;
+                    const farm = [
+                        creepGold ? `Creeps: ${creepGold}g` : '',
+                        bldgGold ? `Buildings: ${bldgGold}g` : ''
+                    ].filter(Boolean).join(', ');
+                    if (farm) lines.push(`  Farm Distribution: ${farm}`);
                 }
-                if (p.stats.courierKills?.length) {
-                    lines.push(`  Courier Kills: ${p.stats.courierKills.length}`);
+
+                // Damage Breakdown
+                if (p.stats.heroDamageReport) {
+                    const hdr = p.stats.heroDamageReport;
+                    if (hdr.dealtTotal) lines.push(`  Damage Dealt: Phys(${hdr.dealtTotal.physicalDamage}), Mag(${hdr.dealtTotal.magicalDamage}), Pure(${hdr.dealtTotal.pureDamage})`);
+                    if (hdr.receivedTotal) lines.push(`  Damage Taken: Phys(${hdr.receivedTotal.physicalDamage}), Mag(${hdr.receivedTotal.magicalDamage}), Pure(${hdr.receivedTotal.pureDamage})`);
                 }
-                if (p.stats.heroDamageReport?.dealtTotal) {
-                    const dt = p.stats.heroDamageReport.dealtTotal;
-                    lines.push(`  Damage Output - Phys: ${dt.physicalDamage}, Mag: ${dt.magicalDamage}, Pure: ${dt.pureDamage}`);
+
+                // Full Item Timeline (Significant Items)
+                if (p.stats.itemPurchases?.length) {
+                    const purchaseHistory = await Promise.all(p.stats.itemPurchases.map(async (i: any) => {
+                        const name = await dotaDataService.getItemName(i.itemId);
+                        return `${name} (${formatDuration(i.time)})`;
+                    }));
+                    lines.push(`  Item Timeline: ${purchaseHistory.join(' → ')}`);
                 }
-                if (p.stats.heroDamageReport?.receivedTotal) {
-                    const rt = p.stats.heroDamageReport.receivedTotal;
-                    lines.push(`  Damage Taken - Phys: ${rt.physicalDamage}, Mag: ${rt.magicalDamage}, Pure: ${rt.pureDamage}`);
+
+                // Vision & Utility
+                if (p.stats.wards?.length || p.stats.wardDestruction?.length || p.stats.runes?.length || p.stats.campStack?.length) {
+                    const stackCount = Array.isArray(p.stats.campStack) ? p.stats.campStack.reduce((a: number, b: number) => a + b, 0) : 0;
+                    const utils = [
+                        p.stats.wards?.length ? `Wards: ${p.stats.wards.length}` : '',
+                        p.stats.wardDestruction?.length ? `De-ward: ${p.stats.wardDestruction.length}` : '',
+                        p.stats.runes?.length ? `Runes: ${p.stats.runes.length}` : '',
+                        stackCount ? `Stacks: ${stackCount}` : ''
+                    ].filter(Boolean).join(' | ');
+                    if (utils) lines.push(`  Utility: ${utils}`);
+                }
+
+                // Benchmarking vs Hero Averages
+                if (p.heroAverage) {
+                    const avg = p.heroAverage;
+                    const compare = (val: number, ref: number) => {
+                        if (!ref) return 'N/A';
+                        const diff = ((val - ref) / ref) * 100;
+                        return `${diff > 0 ? '+' : ''}${diff.toFixed(1)}%`;
+                    };
+                    lines.push(`  Benchmarks (vs Bracket Avg): GPM: ${compare(p.goldPerMinute, avg.goldPerMinute)}, XPM: ${compare(p.experiencePerMinute, avg.goldPerMinute)}, LH: ${compare(p.numLastHits, avg.cs)}, DN: ${compare(p.numDenies, avg.dn)}, Dmg: ${compare(p.heroDamage, avg.heroDamage)}`);
+                }
+
+                // Ability Build (First 12 levels)
+                if (p.abilities?.length) {
+                    const build = await Promise.all(p.abilities.slice(0, 12).map(async (a: any) => {
+                        const name = await dotaDataService.getAbilityName(a.abilityId);
+                        return name;
+                    }));
+                    lines.push(`  Ability Build (Lvl 1-12): ${build.join(' → ')}`);
+                }
+
+                // Ability Cast Report (Top 5)
+                if (p.stats.abilityCastReport?.length) {
+                    const topCasts = await Promise.all(p.stats.abilityCastReport
+                        .sort((a: any, b: any) => b.count - a.count)
+                        .slice(0, 5)
+                        .map(async (c: any) => {
+                            const name = await dotaDataService.getAbilityName(c.abilityId);
+                            return `${name}(${c.count})`;
+                        }));
+                    lines.push(`  Top Casts: ${topCasts.join(', ')}`);
+                }
+
+                // Kill/Death Matrix
+                if (p.stats.killEvents?.length || p.stats.deathEvents?.length) {
+                    const killCounts: Record<number, number> = {};
+                    p.stats.killEvents?.forEach((k: any) => { if (k.target) killCounts[k.target] = (killCounts[k.target] || 0) + 1; });
+                    const mostKilled = await Promise.all(Object.entries(killCounts)
+                        .sort(([, a], [, b]) => b - a)
+                        .slice(0, 2)
+                        .map(async ([id, count]) => {
+                            const name = await dotaDataService.getHeroName(parseInt(id));
+                            return `${name}(x${count})`;
+                        }));
+                    if (mostKilled.length) lines.push(`  Nemesis Targets: ${mostKilled.join(', ')}`);
                 }
             }
             return lines.join('\n');
-        }).join('\n\n');
+        }));
 
         const parties = new Map<number, string[]>();
         for (const p of stratzMatch.players) {
@@ -229,15 +348,43 @@ async function main() {
             .map(members => `Party: ${members.join(' + ')}`)
             .join('\n');
 
+        const objectivePartsStratz: string[] = [];
+        if (stratzMatch.playbackData?.roshanEvents?.length) {
+            const kills = stratzMatch.playbackData.roshanEvents.filter((r: any) => r.hp === 0);
+            if (kills.length) {
+                objectivePartsStratz.push(`Roshan Kills: ${kills.map((r: any) => formatDuration(r.time)).join(', ')}`);
+            }
+        }
+        if (stratzMatch.playbackData?.buildingEvents?.length) {
+            const structuralEvents = stratzMatch.playbackData.buildingEvents
+                .filter((b: any) => b.hp === 0)
+                .map((b: any) => `${formatDuration(b.time)} ${b.type || 'Building'} (${b.isRadiant ? 'Radiant' : 'Dire'})`);
+            if (structuralEvents.length) {
+                objectivePartsStratz.push(`Key Building Destructions: ${structuralEvents.join(', ')}`);
+            }
+        }
+        if (stratzMatch.towerDeaths?.length) {
+            const radTowers = stratzMatch.towerDeaths.filter((t: any) => t.isRadiant).length;
+            const direTowers = stratzMatch.towerDeaths.filter((t: any) => !t.isRadiant).length;
+            objectivePartsStratz.push(`Tower Deaths: Radiant lost ${radTowers}, Dire lost ${direTowers} (Details: ${stratzMatch.towerDeaths.map((t: any) => `${formatDuration(t.time)} ${t.isRadiant ? 'Rad' : 'Dire'}`).join(', ')})`);
+        }
+        if (stratzMatch.chatEvents?.length) {
+            const chat = stratzMatch.chatEvents.slice(0, 10).map((c: any) => `${formatDuration(c.time)} ${c.isRadiant ? '[Rad]' : '[Dire]'} Hero ${c.fromHeroId}: ${c.value}`);
+            if (chat.length) objectivePartsStratz.push(`Chat Log (Sample): ${chat.join(' | ')}`);
+        }
+        objectivePartsStratz.push(`Final Structure Status - Rad Towers: ${stratzMatch.towerStatusRadiant}, Dire Towers: ${stratzMatch.towerStatusDire} | Rad Barracks: ${stratzMatch.barracksStatusRadiant}, Dire Barracks: ${stratzMatch.barracksStatusDire}`);
+
+
         prompt = `Analyze this Dota 2 match (from Stratz high-detail API):
 
 === MATCH SUMMARY ===
 ${stratzSummaryParts.join(' | ')}
 ${draftBlockStratz}
+${objectivePartsStratz.length ? `\n=== OBJECTIVES ===\n${objectivePartsStratz.join('\n')}` : ''}
 ${partyBlockStratz ? `\n=== PARTIES ===\n${partyBlockStratz}` : ''}
 
 === PLAYERS ===
-${playerBlockStratz}
+${playerBlockStratz.join('\n\n')}
 ${goldGraphStratz}
 ${xpGraphStratz}
 

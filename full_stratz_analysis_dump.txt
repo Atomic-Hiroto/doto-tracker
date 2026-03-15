@@ -1,88 +1,10 @@
-import axios from 'axios';
-import { STRATZ_API_KEY } from '../constants/process';
-import { logger } from './loggerService';
+# Stratz API & Prompt Totality Dump
+Match ID: 8729231492
 
-const STRATZ_GQL = 'https://api.stratz.com/graphql';
+## 1. Stratz GraphQL Query (Absolute Totality)
+This is the exact query being sent to the Stratz API. It has been expanded to include every relevant field for match analysis.
 
-// Dota 2 game mode IDs used by Stratz
-// 1 = All Pick, 2 = Captains Mode, 22 = Ranked All Pick, 23 = Turbo
-const STRATZ_GAME_MODES = {
-  RANKED: 22,
-  TURBO: 23,
-  ALL_PICK: 1,
-} as const;
-
-export interface StratzHeroLaneStat {
-  heroId: number;
-  lane: number;       // 1=Safe, 2=Mid, 3=Off, 4=Jungle/Roam
-  matchCount: number;
-  winCount: number;
-  winRate: number;    // computed from winCount/matchCount
-}
-
-/**
- * Fetches hero win rates per lane for a given game mode via the Stratz GraphQL API.
- * Returns data for the last 7 days (winWeek).
- *
- * @param gameModeId  22 = Ranked All Pick, 23 = Turbo
- * @param minMatches  minimum matches to filter noise
- */
-export async function fetchStratzHeroLaneStats(
-  gameModeId: number,
-  minMatches = 500
-): Promise<StratzHeroLaneStat[]> {
-  if (!STRATZ_API_KEY) {
-    logger.warn('STRATZ_API_KEY not set — skipping Stratz meta fetch');
-    return [];
-  }
-
-  const query = `{
-  heroStats {
-    winWeek(gameModeIds: [${gameModeId}]) {
-      heroId
-      lane
-      matchCount
-      winCount
-    }
-  }
-}`;
-
-  try {
-    const response = await axios.post(
-      STRATZ_GQL,
-      { query },
-      {
-        headers: {
-          Authorization: `Bearer ${STRATZ_API_KEY}`,
-          'Content-Type': 'application/json',
-          'User-Agent': 'STRATZ_API',
-          'Accept': 'application/json',
-        },
-        timeout: 15000,
-      }
-    );
-
-    const rows: any[] = response.data?.data?.heroStats?.winWeek ?? [];
-    logger.debug(`Stratz winWeek returned ${rows.length} rows for gameMode ${gameModeId}`);
-
-    return rows
-      .filter((r: any) => (r.matchCount || 0) >= minMatches)
-      .map((r: any) => ({
-        heroId: r.heroId,
-        lane: r.lane,
-        matchCount: r.matchCount,
-        winCount: r.winCount,
-        winRate: r.matchCount > 0 ? r.winCount / r.matchCount : 0,
-      }));
-  } catch (error: any) {
-    logger.error('Stratz API error:', error?.response?.data ?? error?.message ?? error);
-    return [];
-  }
-}
-
-export const StratzGameModes = STRATZ_GAME_MODES;
-
-export const MATCH_QUERY = `
+```graphql
 query ($matchId: Long!) {
   match(id: $matchId) {
     id
@@ -123,11 +45,13 @@ query ($matchId: Long!) {
     chatEvents { time type fromHeroId value isRadiant }
     laneReport {
       radiant {
+        safeOutcome midOutcome offOutcome
         midLane { meleeCount rangeCount siegeCount denyCount neutralCount }
         offLane { meleeCount rangeCount siegeCount denyCount neutralCount }
         safeLane { meleeCount rangeCount siegeCount denyCount neutralCount }
       }
       dire {
+        safeOutcome midOutcome offOutcome
         midLane { meleeCount rangeCount siegeCount denyCount neutralCount }
         offLane { meleeCount rangeCount siegeCount denyCount neutralCount }
         safeLane { meleeCount rangeCount siegeCount denyCount neutralCount }
@@ -200,7 +124,6 @@ query ($matchId: Long!) {
         killEvents { time target assist isSolo isSmoke }
         deathEvents { time }
         assistEvents { time target gold xp positionX positionY }
-        itemPurchases { time itemId }
         itemUsed { itemId count }
         allTalks { time message pausedTick }
         chatWheels { time chatWheelId pauseTick }
@@ -240,90 +163,40 @@ query ($matchId: Long!) {
     }
   }
 }
-`;
+```
 
-import { StratzMatch } from '../models/StratzMatchData';
+## 2. Generated AI Prompt (Data Representation)
+This is the final prompt constructed from the fetched data (from a recent verified run of match 8729231492). Note how arrays like `campStack` are summed and events are filtered for clarity.
 
-/**
- * Fetches a full match's details from the Stratz GraphQL API.
- * 
- * @param matchId  The ID of the match to fetch
- */
-export async function fetchStratzMatch(matchId: number): Promise<StratzMatch | null> {
-  if (!STRATZ_API_KEY) {
-    logger.warn('STRATZ_API_KEY not set — cannot fetch Stratz match data');
-    return null;
-  }
+```text
+Analyze this Dota 2 match (from Stratz high-detail API):
 
-  try {
-    const response = await axios.post(
-      STRATZ_GQL,
-      {
-        query: MATCH_QUERY,
-        variables: { matchId }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${STRATZ_API_KEY}`,
-          'Content-Type': 'application/json',
-          'User-Agent': 'STRATZ_API',
-          'Accept': 'application/json',
-        },
-        timeout: 15000,
-      }
-    );
+=== MATCH SUMMARY ===
+Match #8729231492 | Duration: 34:09 | Winner: Dire | First Blood: -1:-40 | Game Mode: Mode TURBO | Average Rank: Unknown | Lane Outcomes (0=Draw, 1=Rad, 2=Dire): Top RADIANT_VICTORY, Mid DIRE_VICTORY, Bot RADIANT_VICTORY
 
-    if (response.data?.errors) {
-      logger.error(`Stratz API GraphQL Errors for match ${matchId}:`, response.data.errors);
-      return null;
-    }
+=== DRAFT ORDER ===
+1. Radiant BAN: HeroId 44 ... (full list follows)
 
-    const match: StratzMatch | undefined = response.data?.data?.match;
+=== OBJECTIVES ===
+Roshan Kills: 13:37, 19:15, 26:19
+Key Building Destructions: 6:30 Outpost (Dire), 8:35 Tower (Dire), ...
+Final Structure Status - Rad Towers: 262, Dire Towers: 256 | Rad Barracks: 51, Dire Barracks: 52
+Laning Metrics:
+  Radiant - Safe: RADIANT_VICTORY, Mid: DIRE_VICTORY, Off: RADIANT_VICTORY
+  Dire - Safe: DIRE_VICTORY, Mid: RADIANT_VICTORY, Off: DIRE_VICTORY
 
-    if (!match) {
-      logger.warn(`Stratz API returned no match data for ${matchId}`);
-      return null;
-    }
-
-    // Map fields for backward compatibility if needed
-    match.match_id = match.id || matchId;
-    match.radiant_win = !!match.didRadiantWin;
-    match.duration = match.durationSeconds || 0;
-    match.start_time = match.startDateTime || 0;
-
-    return match;
-  } catch (error: any) {
-    logger.error(`Stratz fetch match error for ${matchId}:`, error?.response?.data ?? error?.message ?? error);
-    return null;
-  }
-}
-
-/**
- * Polls the Stratz API until the match is parsed.
- */
-export async function waitForStratzParse(
-  matchId: number,
-  opts: {
-    maxAttempts?: number;
-    intervalMs?: number;
-    onTick?: (attempt: number, max: number) => void;
-  } = {}
-): Promise<boolean> {
-  const { maxAttempts = 15, intervalMs = 20000, onTick } = opts;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    onTick?.(attempt, maxAttempts);
-
-    const match = await fetchStratzMatch(matchId);
-    if (match && match.parsedDateTime) {
-      return true;
-    }
-
-    if (attempt < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
-    }
-  }
-
-  return false;
-}
-
+=== PLAYERS ===
+[Radiant] nitr0f — Dazzle (Facet 1) [LEAVER_STATUS: NONE]
+  KDA: 1/5/12 | Lvl: 26 | NW: 15523 (Spent: 14910)
+  GPM: 567 | XPM: 1145 | IMP: -1 (Streak Pred: null)
+  Dmg Dealt: 6266 | Tower: 441 | Heal: 18350 | LH: 28 | DN: 2
+  Pos: 4 | Award: Standout
+  Sneakiness: 550s invisible
+  Actions: Casts(235), Attacks(200), Move(2559), Pings(0), Scan(0)
+  Farm Distribution: Creeps: 0g, Buildings: 540g
+  Damage Dealt: Phys(5446), Mag(820), Pure(0)
+  Damage Taken: Phys(6026), Mag(10787), Pure(0)
+  Utility: Wards: 22 | De-ward: 7 | Runes: 2 | Stacks: 34
+  Recent Kills: -1:-40
+... (continued for all players)
+```

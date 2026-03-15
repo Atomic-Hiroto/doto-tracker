@@ -1,0 +1,1051 @@
+{
+  "MatchPlayerStatsAssistEventType": [
+    {
+      "name": "time",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "target",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "gold",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "xp",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "positionX",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "positionY",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    }
+  ],
+  "MatchPlayerStatsItemUsedEventType": [
+    {
+      "name": "itemId",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "count",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    }
+  ],
+  "MatchPlayerStatsAllTalkEventType": [
+    {
+      "name": "time",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "message",
+      "type": {
+        "name": "String",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "pausedTick",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    }
+  ],
+  "MatchPlayerStatsChatWheelEventType": [
+    {
+      "name": "time",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "chatWheelId",
+      "type": {
+        "name": "Short",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "pauseTick",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    }
+  ],
+  "MatchPlayerStatsActionReportType": [
+    {
+      "name": "moveToPosition",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "moveToTarget",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "attackPosition",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "attackTarget",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "castPosition",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "castTarget",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "castNoTarget",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "heldPosition",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "glyphCast",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "scanUsed",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "pingUsed",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    }
+  ],
+  "MatchPlayerStatsLocationReportType": [
+    {
+      "name": "positionX",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "positionY",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    }
+  ],
+  "MatchPlayerInventoryType": [
+    {
+      "name": "item0",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item1",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item2",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item3",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item4",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item5",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "backPack0",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "backPack1",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "backPack2",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    },
+    {
+      "name": "neutral0",
+      "type": {
+        "name": "MatchPlayerInventoryObjectType",
+        "kind": "OBJECT",
+        "ofType": null
+      }
+    }
+  ],
+  "MatchPlayerSpiritBearInventoryType": [
+    {
+      "name": "item0Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item1Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item2Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item3Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item4Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "item5Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "backPack0Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "backPack1Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "backPack2Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "neutral0Id",
+      "type": {
+        "name": "Int",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    }
+  ],
+  "HeroPositionTimeDetailType": [
+    {
+      "name": "heroId",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Short",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "week",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "time",
+      "type": {
+        "name": null,
+        "kind": "NON_NULL",
+        "ofType": {
+          "name": "Int",
+          "kind": "SCALAR"
+        }
+      }
+    },
+    {
+      "name": "position",
+      "type": {
+        "name": "MatchPlayerPositionType",
+        "kind": "ENUM",
+        "ofType": null
+      }
+    },
+    {
+      "name": "bracketBasicIds",
+      "type": {
+        "name": "RankBracketBasicEnum",
+        "kind": "ENUM",
+        "ofType": null
+      }
+    },
+    {
+      "name": "matchCount",
+      "type": {
+        "name": "Long",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "remainingMatchCount",
+      "type": {
+        "name": "Long",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "winCount",
+      "type": {
+        "name": "Long",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "mvp",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "topCore",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "topSupport",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "courierKills",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "apm",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "casts",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "abilityCasts",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "kills",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "deaths",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "assists",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "networth",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "xp",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "cs",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "dn",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "neutrals",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "heroDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "towerDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "physicalDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "magicalDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "physicalDamageReceived",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "magicalDamageReceived",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "tripleKill",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "ultraKill",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "rampage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "godLike",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "goldPerMinute",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "disableCount",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "disableDuration",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "stunCount",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "stunDuration",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "slowCount",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "slowDuration",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "healingSelf",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "healingAllies",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "invisibleCount",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "runePower",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "runeBounty",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "level",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "campsStacked",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "supportGold",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "purgeModifiers",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "ancients",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "teamKills",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "goldLost",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "goldFed",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "buybackCount",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "weakenCount",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "weakenDuration",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "physicalItemDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "magicalItemDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "healingItemSelf",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "healingItemAllies",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "xpFed",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "pureDamageReceived",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "attackDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "attackCount",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "castDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "damageReceived",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "damage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "pureDamage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "kDAAverage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "killContributionAverage",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "stompWon",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "stompLost",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "comeBackWon",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    },
+    {
+      "name": "comeBackLost",
+      "type": {
+        "name": "Decimal",
+        "kind": "SCALAR",
+        "ofType": null
+      }
+    }
+  ]
+}
