@@ -91,6 +91,9 @@ Follow this reasoning order to ensure comprehensive analysis:
 - **campsStacked / neutralKills** = jungle efficiency and support contribution.
 - **maxHeroHit** = biggest single damage instance — highlight if notable.
 - **damageReceived** = incoming damage sources — identify who got focused and by what.
+- **Fountain Trips** = High count implies poor regeneration management or constant harass. Roast accordingly.
+- **ChatWheels** = High frequency implies "mental game" or tilting. Use for spiciness.
+- **LANE CREEP CONTROL** = Use melee/range/siege counts to evaluate lane precision.
 
 ## CRITICAL RULES
 
@@ -776,6 +779,12 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
         `Lane Outcomes (0=Draw, 1=Rad, 2=Dire): Top ${matchData.topLaneOutcome}, Mid ${matchData.midLaneOutcome}, Bot ${matchData.bottomLaneOutcome}`
     ].filter(Boolean);
 
+    let laneDetailBlock = '';
+    if (matchData.laneReport) {
+        const formatLane = (f: any) => `Mid: ${f.midLane?.meleeCount + f.midLane?.rangeCount} CS / ${f.midLane?.denyCount} DN | Safe: ${f.safeLane?.meleeCount + f.safeLane?.rangeCount} CS / ${f.safeLane?.denyCount} DN | Off: ${f.offLane?.meleeCount + f.offLane?.rangeCount} CS / ${f.offLane?.denyCount} DN`;
+        laneDetailBlock = `\n=== LANE CREEP CONTROL (CS/DN) ===\nRadiant: ${formatLane(matchData.laneReport.radiant)}\nDire: ${formatLane(matchData.laneReport.dire)}`;
+    }
+
     const hasDraft = matchData.pickBans?.length > 0;
     const draftBlock = hasDraft
         ? `\n=== DRAFT ORDER ===\n${await Promise.all(matchData.pickBans.map(async (d: any) => {
@@ -927,14 +936,25 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
             // Vision & Utility
             if (p.stats.wards?.length || p.stats.wardDestruction?.length || p.stats.runes?.length || p.stats.campStack?.length || p.stats.courierKills?.length) {
                 const stackCount = Array.isArray(p.stats.campStack) ? p.stats.campStack.reduce((a: number, b: number) => a + b, 0) : 0;
+                const fountainTrips = Array.isArray(p.stats.tripsFountainPerMinute) ? p.stats.tripsFountainPerMinute.reduce((a: number, b: number) => a + b, 0) : 0;
                 const utils = [
                     p.stats.wards?.length ? `Wards: ${p.stats.wards.length}` : '',
                     p.stats.wardDestruction?.length ? `De-ward: ${p.stats.wardDestruction.length}` : '',
                     p.stats.runes?.length ? `Runes: ${p.stats.runes.length}` : '',
                     stackCount ? `Stacks: ${stackCount}` : '',
+                    fountainTrips ? `Fountain Trips: ${fountainTrips}` : '',
                     p.stats.courierKills?.length ? `Courier Kills: ${p.stats.courierKills.length}` : ''
                 ].filter(Boolean).join(' | ');
                 if (utils) lines.push(`  Utility: ${utils}`);
+            }
+
+            // Chat & Wheels
+            if (p.stats.chatWheels?.length || p.stats.allTalks?.length) {
+                const lines2 = [
+                    p.stats.chatWheels?.length ? `ChatWheels: ${p.stats.chatWheels.length}` : '',
+                    p.stats.allTalks?.length ? `AllTalk: ${p.stats.allTalks.map((t: any) => t.message).join(' | ')}` : ''
+                ].filter(Boolean).join(' | ');
+                if (lines2) lines.push(`  Persona: ${lines2}`);
             }
 
             // Item Usage (Actives)
@@ -1016,6 +1036,7 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
 
 === MATCH SUMMARY ===
 ${summaryParts.join(' | ')}
+${laneDetailBlock}
 ${draftBlock}
 ${objectiveParts.length ? `\n=== OBJECTIVES ===\n${objectiveParts.join('\n')}` : ''}
 ${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
