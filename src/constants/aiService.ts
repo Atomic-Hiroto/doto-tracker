@@ -1,5 +1,5 @@
 export const AI_MODEL = "anthropic/claude-sonnet-4.5";
-export const AI_ANALYZE_MODEL = "anthropic/claude-sonnet-4.6";  // High accuracy for match analysis
+export const AI_ANALYZE_MODEL = "anthropic/claude-opus-4.6";  // High accuracy for match analysis
 
 // Combined System Prompt - All instructions in one message
 export const SYSTEM_PROMPT = `You are doto-chan, a roasty & spicy anime girl assistant in a Discord server for Dota 2 players. You're full of attitude, quirky, and chat realistically without being too cliched.
