@@ -80,6 +80,12 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Do not mention a player, hero, item, objective, timing, draft event, or stat unless it appears in MATCH_FACTS.
 - If data is absent or marked unavailable, say it is unavailable instead of guessing.
 
+## Reasoning Style
+- Write like an analyst, not a stat dump: every section should explain what the facts meant for how the game played out.
+- You may infer strategic conclusions such as "damage profile problem", "map collapse", "timing window", or "failed initiation", but tie each conclusion to concrete evidence.
+- Exact numbers, counts, timings, structure totals, and damage splits must be copied from facts. Do not calculate new totals, approximate durations, or combine categories unless a fact already did it.
+- If you use a qualitative label like "physical-heavy", "magic burst", "vision control", or "tower cascade", cite the team damage, utility, or objective-cluster fact that justifies it.
+
 ## Analysis Order
 1. Match arc: winner, duration, game mode, decisive economy or win-probability swings.
 2. Composition and lanes: use DRAFT_ORDER only when present; otherwise discuss picked team compositions and lane outcomes only.
@@ -90,6 +96,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 ## Hard Rules
 - For Turbo/All Pick, never discuss bans unless MATCH_FACTS.draft.reliableDraft is true and DRAFT_ORDER facts exist.
 - Do not convert raw API counters into seconds, counts, or confirmed events unless MATCH_FACTS already did that conversion.
+- Do not invent structure language like "all structures" or "24 structures"; use the exact tower/barracks wording from MATCH_FACTS.
 - Do not use web/meta knowledge for match facts. Patch context may explain broad strategic context only if MATCH_FACTS.patchContext is present.
 - Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
 - Keep the spicy style, but every roast needs a real stat behind it.
@@ -111,11 +118,11 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 draftAndLaning: {
                     type: 'string',
-                    description: 'Combined composition/draft + laning analysis in 2-3 sentences. If reliableDraft is false, never discuss bans; use picked heroes and lane facts only. Include evidence ids.',
+                    description: 'Combined composition/draft + laning analysis in 2-3 sentences. If reliableDraft is false, never discuss bans; use picked heroes and lane facts only. Qualitative lineup claims must cite team damage/profile facts. Include evidence ids.',
                 },
                 itemizationAndDamage: {
                     type: 'string',
-                    description: 'Analyze item choices, item timings, final inventories, and damage profile in 2-3 sentences. Only mention items/timings present in facts. Include evidence ids.',
+                    description: 'Analyze item choices, item timings, final inventories, and exact damage profile in 2-3 sentences. Only mention items/timings/damage numbers present in facts. Include evidence ids.',
                 },
                 keyMistakes: {
                     type: 'string',
@@ -127,7 +134,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 mapControl: {
                     type: 'string',
-                    description: 'Analyze vision, dewards, rune control, Roshan/Aegis, and tower/barracks control. 2-3 sentences max. Include evidence ids.',
+                    description: 'Analyze vision, dewards, rune control, Roshan/Aegis, and exact tower/barracks/objective-cluster facts. Do not combine structure categories unless a fact does it. 2-3 sentences max. Include evidence ids.',
                 },
                 whatToImprove: {
                     type: 'string',
@@ -801,6 +808,29 @@ type AnalyzeFact = {
     data?: Record<string, any>;
 };
 
+type DamageTotals = {
+    physical: number;
+    magical: number;
+    pure: number;
+    total: number;
+    playersWithBreakdown: number;
+};
+
+type TowerDeathEvent = {
+    teamLost: 'Radiant' | 'Dire';
+    time: number;
+};
+
+function finiteNumber(value: any): number | null {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatNumber(value: any): string {
+    const numeric = finiteNumber(value);
+    return numeric == null ? 'N/A' : Math.round(numeric).toLocaleString();
+}
+
 function formatEnumLabel(value: any): string {
     if (value == null) return 'Unknown';
     return String(value)
@@ -818,6 +848,11 @@ function formatFactTime(seconds: any): string {
 
 function formatSignedNumber(value: number): string {
     return `${value > 0 ? '+' : ''}${Math.round(value).toLocaleString()}`;
+}
+
+function formatPercent(part: number, total: number): string {
+    if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) return '0%';
+    return `${Math.round((part / total) * 100)}%`;
 }
 
 function sampleNumberSeries(values: any[], maxPoints = 8): Array<{ minute: number; value: number }> {
@@ -883,6 +918,92 @@ function summarizeWinProbability(values: any[]): { text: string; data: Record<st
 
 function isImportantItemName(name: string): boolean {
     return /Divine Rapier|Black King Bar|Aghanim|Refresher|Butterfly|Daedalus|Satanic|Eye of Skadi|Heart of Tarrasque|Assault Cuirass|Mjollnir|Manta Style|Radiance|Bloodthorn|Nullifier|Silver Edge|Monkey King Bar|Abyssal Blade|Hurricane Pike|Shiva|Pipe of Insight|Crimson Guard|Lotus Orb|Aeon Disk|Gleipnir|Orchid|Scythe of Vyse|Ethereal Blade|Blink Dagger|Overwhelming Blink|Swift Blink|Arcane Blink|Boots of Travel|Desolator|Diffusal Blade|Mage Slayer|Sange|Yasha|Kaya|Hand of Midas|Helm of the Overlord|Solar Crest/i.test(name);
+}
+
+function emptyDamageTotals(): DamageTotals {
+    return { physical: 0, magical: 0, pure: 0, total: 0, playersWithBreakdown: 0 };
+}
+
+function getPlayerDamageTotals(player: any): DamageTotals | null {
+    const dealt = player.stats?.heroDamageReport?.dealtTotal;
+    if (!dealt) return null;
+
+    const physical = Math.max(0, finiteNumber(dealt.physicalDamage) ?? 0);
+    const magical = Math.max(0, finiteNumber(dealt.magicalDamage) ?? 0);
+    const pure = Math.max(0, finiteNumber(dealt.pureDamage) ?? 0);
+    const total = physical + magical + pure;
+    if (total <= 0) return null;
+
+    return { physical, magical, pure, total, playersWithBreakdown: 1 };
+}
+
+function addDamageTotals(target: DamageTotals, source: DamageTotals | null): void {
+    if (!source) return;
+    target.physical += source.physical;
+    target.magical += source.magical;
+    target.pure += source.pure;
+    target.total += source.total;
+    target.playersWithBreakdown += source.playersWithBreakdown;
+}
+
+function formatDamageTotals(totals: DamageTotals): string {
+    return [
+        `physical ${formatNumber(totals.physical)} (${formatPercent(totals.physical, totals.total)})`,
+        `magical ${formatNumber(totals.magical)} (${formatPercent(totals.magical, totals.total)})`,
+        `pure ${formatNumber(totals.pure)} (${formatPercent(totals.pure, totals.total)})`,
+        `total ${formatNumber(totals.total)}`,
+    ].join(', ');
+}
+
+function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
+    if (!Array.isArray(matchData.towerDeaths)) return [];
+    return matchData.towerDeaths
+        .map((tower: any) => {
+            const time = finiteNumber(tower.time);
+            if (time == null) return null;
+            return {
+                teamLost: tower.isRadiant ? 'Radiant' as const : 'Dire' as const,
+                time,
+            };
+        })
+        .filter((event: TowerDeathEvent | null): event is TowerDeathEvent => !!event)
+        .sort((a: TowerDeathEvent, b: TowerDeathEvent) => a.time - b.time);
+}
+
+function summarizeTowerClusters(events: TowerDeathEvent[], minCount = 3, maxGapSeconds = 90): Array<Record<string, any>> {
+    const clusters: Array<Record<string, any>> = [];
+    for (const teamLost of ['Radiant', 'Dire'] as const) {
+        const teamEvents = events.filter((event) => event.teamLost === teamLost);
+        let current: TowerDeathEvent[] = [];
+        const flush = () => {
+            if (current.length >= minCount) {
+                const start = current[0].time;
+                const end = current[current.length - 1].time;
+                clusters.push({
+                    teamLost,
+                    count: current.length,
+                    start,
+                    end,
+                    durationSeconds: end - start,
+                    times: current.map((event) => event.time),
+                });
+            }
+            current = [];
+        };
+
+        for (const event of teamEvents) {
+            const last = current[current.length - 1];
+            if (!last || event.time - last.time <= maxGapSeconds) {
+                current.push(event);
+            } else {
+                flush();
+                current.push(event);
+            }
+        }
+        flush();
+    }
+
+    return clusters.sort((a, b) => Number(a.start) - Number(b.start));
 }
 
 async function resolveFinalInventory(player: any): Promise<string[]> {
@@ -959,6 +1080,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<st
     const durationSeconds = Number(matchData.durationSeconds || matchData.duration || 0);
     const winner = matchData.didRadiantWin ? 'Radiant' : 'Dire';
     const matchId = matchData.id || matchData.match_id;
+    const players = Array.isArray(matchData.players) ? matchData.players : [];
 
     addFact('match', `Match #${matchId}: ${gameModeLabel}, duration ${formatDuration(durationSeconds)}, winner ${winner}.`, {
         matchId,
@@ -972,7 +1094,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<st
     }
 
     const teamLine = async (isRadiant: boolean) => (await Promise.all(
-        (matchData.players || [])
+        players
             .filter((p: any) => p.isRadiant === isRadiant)
             .map(async (p: any) => {
                 const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
@@ -1017,26 +1139,69 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<st
     const winProbSummary = summarizeWinProbability(matchData.winRates || matchData.predictedWinRates || []);
     if (winProbSummary) addFact('economy', winProbSummary.text, winProbSummary.data);
 
+    const radiantDamage = emptyDamageTotals();
+    const direDamage = emptyDamageTotals();
+    for (const p of players) {
+        addDamageTotals(p.isRadiant ? radiantDamage : direDamage, getPlayerDamageTotals(p));
+    }
+    if (radiantDamage.playersWithBreakdown || direDamage.playersWithBreakdown) {
+        addFact('damage', `Team hero damage by type from Stratz damage report: Radiant ${formatDamageTotals(radiantDamage)}; Dire ${formatDamageTotals(direDamage)}. Use this fact for damage-mix labels such as physical-heavy or magic burst.`, {
+            radiant: radiantDamage,
+            dire: direDamage,
+        });
+    }
+
+    const topHeroDamage = (await Promise.all(players.map(async (p: any) => {
+        const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
+        const total = finiteNumber(p.heroDamage);
+        return {
+            team: p.isRadiant ? 'Radiant' : 'Dire',
+            playerName: p.steamAccount?.name || 'Anonymous',
+            heroName,
+            total: total ?? 0,
+        };
+    })))
+        .filter((row) => row.total > 0)
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 5);
+    if (topHeroDamage.length) {
+        addFact('damage', `Top hero damage totals: ${topHeroDamage.map((row) => `${row.playerName} - ${row.heroName} (${row.team}) ${formatNumber(row.total)}`).join('; ')}.`, {
+            topHeroDamage,
+        });
+    }
+
     if (Array.isArray(matchData.playbackData?.roshanEvents)) {
         const roshKills = matchData.playbackData.roshanEvents
             .filter((event: any) => event.hp === 0)
             .map((event: any) => formatFactTime(event.time));
         if (roshKills.length > 0) addFact('objectives', `Roshan kills at ${roshKills.join(', ')}.`);
     }
-    if (Array.isArray(matchData.towerDeaths) && matchData.towerDeaths.length > 0) {
-        const radiantLost = matchData.towerDeaths.filter((tower: any) => tower.isRadiant).map((tower: any) => formatFactTime(tower.time));
-        const direLost = matchData.towerDeaths.filter((tower: any) => !tower.isRadiant).map((tower: any) => formatFactTime(tower.time));
+    const towerEvents = collectTowerDeathEvents(matchData);
+    if (towerEvents.length > 0) {
+        const radiantLost = towerEvents.filter((tower) => tower.teamLost === 'Radiant').map((tower) => formatFactTime(tower.time));
+        const direLost = towerEvents.filter((tower) => tower.teamLost === 'Dire').map((tower) => formatFactTime(tower.time));
         addFact('objectives', `Tower deaths: Radiant lost ${radiantLost.length}${radiantLost.length ? ` at ${radiantLost.join(', ')}` : ''}; Dire lost ${direLost.length}${direLost.length ? ` at ${direLost.join(', ')}` : ''}.`);
+        const towerClusters = summarizeTowerClusters(towerEvents);
+        for (const cluster of towerClusters) {
+            addFact('objectiveCluster', `${cluster.teamLost} lost ${cluster.count} towers from ${formatFactTime(cluster.start)} to ${formatFactTime(cluster.end)} (${formatDuration(cluster.durationSeconds)} window): exact tower death times ${cluster.times.map((time: number) => formatFactTime(time)).join(', ')}.`, cluster);
+        }
     }
     const radiantTowersStanding = countStatusBits(matchData.towerStatusRadiant);
     const direTowersStanding = countStatusBits(matchData.towerStatusDire);
     const radiantBarracksStanding = countStatusBits(matchData.barracksStatusRadiant);
     const direBarracksStanding = countStatusBits(matchData.barracksStatusDire);
     if (radiantTowersStanding != null && direTowersStanding != null) {
-        addFact('objectives', `Final structures: Radiant ${radiantTowersStanding}/11 towers and ${radiantBarracksStanding ?? 'unknown'}/6 barracks standing; Dire ${direTowersStanding}/11 towers and ${direBarracksStanding ?? 'unknown'}/6 barracks standing.`);
+        const radiantTowersDestroyed = 11 - radiantTowersStanding;
+        const direTowersDestroyed = 11 - direTowersStanding;
+        const radiantBarracksDestroyed = radiantBarracksStanding == null ? null : 6 - radiantBarracksStanding;
+        const direBarracksDestroyed = direBarracksStanding == null ? null : 6 - direBarracksStanding;
+        addFact('objectives', `Final tracked structures (towers/barracks only): Radiant had ${radiantTowersStanding}/11 towers standing (${radiantTowersDestroyed} destroyed) and ${radiantBarracksStanding ?? 'unknown'}/6 barracks standing${radiantBarracksDestroyed == null ? '' : ` (${radiantBarracksDestroyed} destroyed)`}; Dire had ${direTowersStanding}/11 towers standing (${direTowersDestroyed} destroyed) and ${direBarracksStanding ?? 'unknown'}/6 barracks standing${direBarracksDestroyed == null ? '' : ` (${direBarracksDestroyed} destroyed)`}. Do not describe this as "all structures".`, {
+            radiant: { towersStanding: radiantTowersStanding, towersDestroyed: radiantTowersDestroyed, barracksStanding: radiantBarracksStanding, barracksDestroyed: radiantBarracksDestroyed },
+            dire: { towersStanding: direTowersStanding, towersDestroyed: direTowersDestroyed, barracksStanding: direBarracksStanding, barracksDestroyed: direBarracksDestroyed },
+        });
     }
 
-    for (const p of (matchData.players || [])) {
+    for (const p of players) {
         const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
         const playerName = p.steamAccount?.name || 'Anonymous';
         const team = p.isRadiant ? 'Radiant' : 'Dire';
@@ -1082,7 +1247,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<st
         if (p.stats?.heroDamageReport?.dealtTotal || p.stats?.heroDamageReport?.receivedTotal) {
             const dealt = p.stats.heroDamageReport.dealtTotal;
             const received = p.stats.heroDamageReport.receivedTotal;
-            addFact('damage', `${playerLabel} damage profile: dealt physical/magical/pure ${dealt?.physicalDamage ?? 'N/A'}/${dealt?.magicalDamage ?? 'N/A'}/${dealt?.pureDamage ?? 'N/A'}; received physical/magical/pure ${received?.physicalDamage ?? 'N/A'}/${received?.magicalDamage ?? 'N/A'}/${received?.pureDamage ?? 'N/A'}.`);
+            addFact('damage', `${playerLabel} damage profile: dealt physical/magical/pure ${formatNumber(dealt?.physicalDamage)}/${formatNumber(dealt?.magicalDamage)}/${formatNumber(dealt?.pureDamage)}; received physical/magical/pure ${formatNumber(received?.physicalDamage)}/${formatNumber(received?.magicalDamage)}/${formatNumber(received?.pureDamage)}.`);
         }
 
         if (Array.isArray(p.stats?.abilityCastReport) && p.stats.abilityCastReport.length) {
@@ -1132,6 +1297,8 @@ Rules for this response:
 - If a fact is not present, do not mention it.
 - Do not discuss bans unless MATCH_FACTS.draft.reliableDraft is true.
 - Do not use web/meta knowledge for match facts.
+- You may reason about why the game played out that way, but exact numbers/timings/counts must be copied from facts.
+- Do not calculate new structure totals, damage totals, or approximate objective windows. Use the provided damage and objective-cluster facts.
 - Prefer concrete player, item, timing, objective, and economy facts over generic advice.
 
 MATCH_FACTS:
