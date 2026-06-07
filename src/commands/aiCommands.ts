@@ -85,6 +85,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - You may infer strategic conclusions such as "damage profile problem", "map collapse", "timing window", or "failed initiation", but tie each conclusion to concrete evidence.
 - Exact numbers, counts, timings, structure totals, and damage splits must be copied from facts. Do not calculate new totals, approximate durations, or combine categories unless a fact already did it.
 - If you use a qualitative label like "physical-heavy", "magic burst", "vision control", or "tower cascade", cite the team damage, utility, or objective-cluster fact that justifies it.
+- Do not add player damage values together. Combined damage claims are allowed only when MATCH_FACTS has an explicit combined-damage fact.
 
 ## Analysis Order
 1. Match arc: winner, duration, game mode, decisive economy or win-probability swings.
@@ -97,6 +98,8 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - For Turbo/All Pick, never discuss bans unless MATCH_FACTS.draft.reliableDraft is true and DRAFT_ORDER facts exist.
 - Do not convert raw API counters into seconds, counts, or confirmed events unless MATCH_FACTS already did that conversion.
 - Do not invent structure language like "all structures" or "24 structures"; use the exact tower/barracks wording from MATCH_FACTS.
+- Do not mix tower clusters with barracks or Ancient damage. Objective-cluster facts are towers only unless they explicitly say otherwise.
+- Do not say "Ancient fell" or name a final building unless MATCH_FACTS explicitly contains that building event.
 - Do not use web/meta knowledge for match facts. Patch context may explain broad strategic context only if MATCH_FACTS.patchContext is present.
 - Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
 - Keep the spicy style, but every roast needs a real stat behind it.
@@ -114,7 +117,7 @@ const ANALYZE_RESPONSE_FORMAT = {
             properties: {
                 gameNarrative: {
                     type: 'string',
-                    description: 'The story of this match in 2-4 concise sentences. Use concrete economy/objective/timing facts and include evidence ids like [F12]. Use **bold** for player and hero names.',
+                    description: 'The story of this match in 2-4 concise sentences. Use concrete economy/objective/timing facts and include evidence ids like [F12]. Do not mention Ancient/final buildings unless a fact explicitly says so. Use **bold** for player and hero names.',
                 },
                 draftAndLaning: {
                     type: 'string',
@@ -122,7 +125,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 itemizationAndDamage: {
                     type: 'string',
-                    description: 'Analyze item choices, item timings, final inventories, and exact damage profile in 2-3 sentences. Only mention items/timings/damage numbers present in facts. Include evidence ids.',
+                    description: 'Analyze item choices, item timings, final inventories, and exact damage profile in 2-3 sentences. Only mention items/timings/damage numbers present in facts. Combined damage claims require an explicit combined-damage fact. Include evidence ids.',
                 },
                 keyMistakes: {
                     type: 'string',
@@ -134,7 +137,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 mapControl: {
                     type: 'string',
-                    description: 'Analyze vision, dewards, rune control, Roshan/Aegis, and exact tower/barracks/objective-cluster facts. Do not combine structure categories unless a fact does it. 2-3 sentences max. Include evidence ids.',
+                    description: 'Analyze vision, dewards, rune control, Roshan/Aegis, and exact tower/barracks/objective-cluster facts. Objective clusters are towers only unless a fact says otherwise. Do not infer barracks timings from final structure totals. 2-3 sentences max. Include evidence ids.',
                 },
                 whatToImprove: {
                     type: 'string',
@@ -884,15 +887,29 @@ function summarizeAdvantageSeries(label: string, values: any[]): { text: string;
         const delta = point.value - prev.value;
         return Math.abs(delta) > Math.abs(best.delta) ? { from: prev.minute, to: point.minute, delta } : best;
     }, { from: 0, to: 0, delta: 0 });
+    const radiantPositive = nums.filter((point) => point.value > 0);
+    const direPositive = nums.filter((point) => point.value < 0);
+    const lastRadiantPositive = radiantPositive[radiantPositive.length - 1] || null;
+    const firstDirePositive = direPositive[0] || null;
     const samples = sampleNumberSeries(values).map((point) => `${point.minute}m ${formatSignedNumber(point.value)}`);
+    const leadSignText = [
+        radiantPositive.length ? `Radiant-positive samples ${radiantPositive.length}, last at ${lastRadiantPositive?.minute}m` : 'no Radiant-positive samples',
+        direPositive.length ? `Dire-positive samples ${direPositive.length}, first at ${firstDirePositive?.minute}m` : 'no Dire-positive samples',
+    ].join('; ');
 
     return {
-        text: `${label} Radiant perspective: final ${formatSignedNumber(final.value)} at ${final.minute}m; max Radiant lead ${formatSignedNumber(maxRadiant.value)} at ${maxRadiant.minute}m; max Dire lead ${formatSignedNumber(maxDire.value)} at ${maxDire.minute}m; largest 1-min swing ${formatSignedNumber(largestSwing.delta)} from ${largestSwing.from}m-${largestSwing.to}m.`,
+        text: `${label} Radiant perspective: final ${formatSignedNumber(final.value)} at ${final.minute}m; max Radiant lead ${formatSignedNumber(maxRadiant.value)} at ${maxRadiant.minute}m; max Dire lead ${formatSignedNumber(maxDire.value)} at ${maxDire.minute}m; largest 1-min swing ${formatSignedNumber(largestSwing.delta)} from ${largestSwing.from}m-${largestSwing.to}m; lead signs: ${leadSignText}.`,
         data: {
             final,
             maxRadiant,
             maxDire,
             largestSwing,
+            leadSigns: {
+                radiantPositiveSamples: radiantPositive.length,
+                direPositiveSamples: direPositive.length,
+                lastRadiantPositive,
+                firstDirePositive,
+            },
             samples,
         },
     };
@@ -1168,6 +1185,14 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<st
         addFact('damage', `Top hero damage totals: ${topHeroDamage.map((row) => `${row.playerName} - ${row.heroName} (${row.team}) ${formatNumber(row.total)}`).join('; ')}.`, {
             topHeroDamage,
         });
+        if (topHeroDamage.length >= 2) {
+            const topPair = topHeroDamage.slice(0, 2);
+            const combinedTotal = topPair.reduce((sum, row) => sum + row.total, 0);
+            addFact('damage', `Top two hero damage dealers combined for exactly ${formatNumber(combinedTotal)} hero damage: ${topPair.map((row) => `${row.playerName} - ${row.heroName} ${formatNumber(row.total)}`).join(' + ')}. Use this fact for combined damage claims.`, {
+                players: topPair,
+                combinedTotal,
+            });
+        }
     }
 
     if (Array.isArray(matchData.playbackData?.roshanEvents)) {
@@ -1178,12 +1203,18 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<st
     }
     const towerEvents = collectTowerDeathEvents(matchData);
     if (towerEvents.length > 0) {
-        const radiantLost = towerEvents.filter((tower) => tower.teamLost === 'Radiant').map((tower) => formatFactTime(tower.time));
-        const direLost = towerEvents.filter((tower) => tower.teamLost === 'Dire').map((tower) => formatFactTime(tower.time));
-        addFact('objectives', `Tower deaths: Radiant lost ${radiantLost.length}${radiantLost.length ? ` at ${radiantLost.join(', ')}` : ''}; Dire lost ${direLost.length}${direLost.length ? ` at ${direLost.join(', ')}` : ''}.`);
+        const radiantLost = towerEvents.filter((tower) => tower.teamLost === 'Radiant');
+        const direLost = towerEvents.filter((tower) => tower.teamLost === 'Dire');
+        addFact('objectives', `Tower death totals only: Radiant lost ${radiantLost.length} towers; Dire lost ${direLost.length} towers. Use objectiveCluster facts for tower timing windows; do not create timing windows from this totals fact.`, {
+            radiantTowerDeaths: radiantLost.length,
+            direTowerDeaths: direLost.length,
+        });
         const towerClusters = summarizeTowerClusters(towerEvents);
         for (const cluster of towerClusters) {
-            addFact('objectiveCluster', `${cluster.teamLost} lost ${cluster.count} towers from ${formatFactTime(cluster.start)} to ${formatFactTime(cluster.end)} (${formatDuration(cluster.durationSeconds)} window): exact tower death times ${cluster.times.map((time: number) => formatFactTime(time)).join(', ')}.`, cluster);
+            addFact('objectiveCluster', `Tower cluster only, no barracks or Ancient: ${cluster.teamLost} lost ${cluster.count} towers from ${formatFactTime(cluster.start)} to ${formatFactTime(cluster.end)} (${formatDuration(cluster.durationSeconds)} window): exact tower death times ${cluster.times.map((time: number) => formatFactTime(time)).join(', ')}.`, {
+                ...cluster,
+                structureType: 'tower',
+            });
         }
     }
     const radiantTowersStanding = countStatusBits(matchData.towerStatusRadiant);
@@ -1195,7 +1226,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<st
         const direTowersDestroyed = 11 - direTowersStanding;
         const radiantBarracksDestroyed = radiantBarracksStanding == null ? null : 6 - radiantBarracksStanding;
         const direBarracksDestroyed = direBarracksStanding == null ? null : 6 - direBarracksStanding;
-        addFact('objectives', `Final tracked structures (towers/barracks only): Radiant had ${radiantTowersStanding}/11 towers standing (${radiantTowersDestroyed} destroyed) and ${radiantBarracksStanding ?? 'unknown'}/6 barracks standing${radiantBarracksDestroyed == null ? '' : ` (${radiantBarracksDestroyed} destroyed)`}; Dire had ${direTowersStanding}/11 towers standing (${direTowersDestroyed} destroyed) and ${direBarracksStanding ?? 'unknown'}/6 barracks standing${direBarracksDestroyed == null ? '' : ` (${direBarracksDestroyed} destroyed)`}. Do not describe this as "all structures".`, {
+        addFact('objectives', `Final tracked structure totals, not a timing window (towers/barracks only): Radiant had ${radiantTowersStanding}/11 towers standing (${radiantTowersDestroyed} destroyed) and ${radiantBarracksStanding ?? 'unknown'}/6 barracks standing${radiantBarracksDestroyed == null ? '' : ` (${radiantBarracksDestroyed} destroyed)`}; Dire had ${direTowersStanding}/11 towers standing (${direTowersDestroyed} destroyed) and ${direBarracksStanding ?? 'unknown'}/6 barracks standing${direBarracksDestroyed == null ? '' : ` (${direBarracksDestroyed} destroyed)`}. Do not describe this as "all structures" and do not infer when barracks fell from this fact.`, {
             radiant: { towersStanding: radiantTowersStanding, towersDestroyed: radiantTowersDestroyed, barracksStanding: radiantBarracksStanding, barracksDestroyed: radiantBarracksDestroyed },
             dire: { towersStanding: direTowersStanding, towersDestroyed: direTowersDestroyed, barracksStanding: direBarracksStanding, barracksDestroyed: direBarracksDestroyed },
         });
