@@ -16,10 +16,11 @@ const trunc = (s: string, max = 1024) => s.length > max ? s.slice(0, max - 1) + 
 async function callAI(
     systemPrompt: string,
     userPrompt: string,
-    opts?: { model?: string; params?: Record<string, any>; response_format?: any }
+    opts?: { model?: string; params?: Record<string, any>; response_format?: any; useWeb?: boolean }
 ): Promise<string> {
     const model = opts?.model ?? AIConstants.AI_MODEL;
     const params = opts?.params ?? AIConstants.AI_PARAMS;
+    const useWeb = opts?.useWeb ?? true;
 
     const body: Record<string, any> = {
         model,
@@ -27,14 +28,18 @@ async function callAI(
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
         ],
-        // Web search gives the LLM access to latest patch notes, item changes, meta info
-        plugins: [{ id: 'web', max_results: 3 }],
         ...params
     };
+    if (useWeb) {
+        // Web search is useful for meta commands, but +analyze disables it so match facts stay isolated.
+        body.plugins = [{ id: 'web', max_results: 3 }];
+    }
     if (opts?.response_format) {
         body.response_format = opts.response_format;
-        // For structured output: use response-healing to auto-fix malformed JSON + web for latest info
-        body.plugins = [{ id: 'web', max_results: 3 }, { id: 'response-healing' }];
+        // For structured output: use response-healing to auto-fix malformed JSON.
+        body.plugins = useWeb
+            ? [{ id: 'web', max_results: 3 }, { id: 'response-healing' }]
+            : [{ id: 'response-healing' }];
     }
 
     try {
@@ -66,51 +71,30 @@ async function callAI(
 
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply based on the latest patch — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;
 
-// ── System prompt for deep match analysis ─────────────────────────────────
-const ANALYZE_SYSTEM = `You are a Dota 2 match analyst-chan. You receive absolute S-tier high-detail match data and produce data-driven analysis.
+// ── System prompt for fact-grounded match analysis ────────────────────────────
+const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a MATCH_FACTS JSON object produced by deterministic code. Your job is to explain those facts, not to invent new ones.
 
-## Your Analytical Framework
-Follow this reasoning order to ensure comprehensive analysis:
-1. **Strategic Baseline** — Evaluate Bracket/Rank and regional meta. Use **gameVersionId** to ground analysis in the current patch meta.
-2. **Draft context** — Evaluate pick/ban synergies and hero facet choices (**variant**). Contrast player performance against **heroAverage** benchmarks for that bracket.
-3. **Laning phase** — Use **laneReport** (granular melee/range/siege counts), first blood timing, and gold curves to determine lane outcomes.
-4. **Economy & itemization** — Use **inventoryReport** (item timeline) to see exactly when items were bought/sold. Evaluate choices against enemy damage types. Compare **goldSpent** vs total gold.
-5. **Teamfights & objectives** — Combine **killEvents** with **assistEvents** (including gold/XP/position) to visualize fight dynamics. Correlate with playback events (Roshan/Towers).
-6. **Detailed Dynamics** — Use **matchPlayerBuffEvent** (permanent stacks like Silencer/Slark), **abilityCastReport**, and **actionReport** (APM breakdown: Move, Attack, Cast, heldPosition, Scan/Ping use) to evaluate mechanical execution and efficiency.
-7. **Spatial Awareness** — Use **locationReport** (positional heatmap data) to analyze warding, farming patterns, and grouping. Look for "out of position" deaths in **deathEvents**.
-8. **Decisive moments** — Pin down the specific minute marks from the advantage graph where the game swung. Look for "throw" moments in advantage trends.
+## Source Of Truth
+- Use ONLY facts from MATCH_FACTS.
+- Major claims must include at least one evidence id like [F12].
+- Do not mention a player, hero, item, objective, timing, draft event, or stat unless it appears in MATCH_FACTS.
+- If data is absent or marked unavailable, say it is unavailable instead of guessing.
 
-## Data Field Guide
-- **heroVariant / variant** = hero facet (1-indexed). Mention if a facet choice was suboptimal for the matchup.
-- **averageImp / imp** = performance metric. Compare individual **imp** to the match **averageImp**.
-- **actionReport** = Total player mechanical activity (Clicks, Casts, Pings).
-- **locationReport** = Hero coordinates over time.
-- **inventoryReport** = Snapshot-by-snapshot item states.
-- **assistEvents** = Detailed assist data including spatial and economic value.
-- **multiKills / killStreaks** = highlight spectacular individual plays.
-- **campsStacked / neutralKills** = jungle efficiency and support contribution.
-- **maxHeroHit** = biggest single damage instance — highlight if notable.
-- **damageReceived** = incoming damage sources — identify who got focused and by what.
-- **Fountain Trips** = High count implies poor regeneration management or constant harass. Roast accordingly.
-- **ChatWheels** = High frequency implies "mental game" or tilting. Use for spiciness.
-- **LANE CREEP CONTROL** = Use melee/range/siege counts to evaluate lane precision.
+## Analysis Order
+1. Match arc: winner, duration, game mode, decisive economy or win-probability swings.
+2. Composition and lanes: use DRAFT_ORDER only when present; otherwise discuss picked team compositions and lane outcomes only.
+3. Items and damage: use item timing/final inventory facts; never claim an item timing unless a fact states it.
+4. Objectives and map control: towers, barracks, Roshan, wards, dewards, rune pressure.
+5. Player accountability: explain MVP/LVP using concrete stats and timings.
 
-## CRITICAL RULES
+## Hard Rules
+- For Turbo/All Pick, never discuss bans unless MATCH_FACTS.draft.reliableDraft is true and DRAFT_ORDER facts exist.
+- Do not convert raw API counters into seconds, counts, or confirmed events unless MATCH_FACTS already did that conversion.
+- Do not use web/meta knowledge for match facts. Patch context may explain broad strategic context only if MATCH_FACTS.patchContext is present.
+- Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
+- Keep the spicy style, but every roast needs a real stat behind it.
 
-Zero Hallucination Policy:
-- ONLY mention figures that actually exist in the provided MATCH DATA block.
-- Verify WHICH player in THIS match bought an item using the **inventoryReport**.
-
-Game Mode Context:
-- If the Game Mode says "Turbo" (ID 23), remember that timings are 2x accelerated. A 15 min item in Turbo is like a 30 min item in regular Dota.
-
-Ability name accuracy:
-- Dmg Sources use internal names. Translate to display names (e.g. dawnbreaker fire wreath = Starbreaker). "null" or "Right Click" = auto-attack damage.
-
-Player coverage:
-- Every player on the LOSING team must get at least a brief mention — don't skip anyone.
-
-Be direct, spicy, and concise. Use Discord markdown (**bold** for names). Base everything on the provided data, not assumptions.`;
+Use Discord markdown. Keep each schema field concise, but prioritize correctness over jokes.`;
 
 // ── Structured output schema for +analyze ────────────────────────────────────
 const ANALYZE_RESPONSE_FORMAT = {
@@ -123,31 +107,31 @@ const ANALYZE_RESPONSE_FORMAT = {
             properties: {
                 gameNarrative: {
                     type: 'string',
-                    description: 'The story of this match in 2-4 sentences. Reference specific timings, gold leads from the advantage graph, and the decisive moment that ended the game. Include comeback/throw values if dramatic. Use **bold** for player and hero names.',
+                    description: 'The story of this match in 2-4 concise sentences. Use concrete economy/objective/timing facts and include evidence ids like [F12]. Use **bold** for player and hero names.',
                 },
                 draftAndLaning: {
                     type: 'string',
-                    description: 'Combined draft + laning analysis in 2-3 sentences. Comment on draft synergies/weaknesses, facet choices, and lane outcomes using lane efficiency and CS data. Name lane winners/losers. Use **bold** for hero names.',
+                    description: 'Combined composition/draft + laning analysis in 2-3 sentences. If reliableDraft is false, never discuss bans; use picked heroes and lane facts only. Include evidence ids.',
                 },
                 itemizationAndDamage: {
                     type: 'string',
-                    description: 'Analyze item choices and timings against enemy damage types. Reference specific item timing data. Note damage type mismatches. 2-3 sentences. Use **bold** for items and heroes.',
+                    description: 'Analyze item choices, item timings, final inventories, and damage profile in 2-3 sentences. Only mention items/timings present in facts. Include evidence ids.',
                 },
                 keyMistakes: {
                     type: 'string',
-                    description: 'The 2-3 biggest mistakes by the losing team. Each mistake should reference specific data: buyback timings, kill timeline events, fights lost, or objectives conceded. One sentence each. Use **bold** for player names.',
+                    description: 'The 2-3 biggest mistakes, preferably by the losing team. Each mistake must reference specific facts: deaths, objectives, economy swings, item choices, or utility gaps. Include evidence ids.',
                 },
                 mvpAndStandouts: {
                     type: 'string',
-                    description: 'Format EXACTLY like this with NEWLINES:\\n**MVP: Player — Hero** - 1 sentence on why.\\n**LVP: Player — Hero** - 1 sentence on why.\\n**Honorable Mention: Player — Hero** - 1 sentence on why.',
+                    description: 'Format EXACTLY like this with NEWLINES and evidence ids:\\n**MVP: Player — Hero** - 1 sentence on why.\\n**LVP: Player — Hero** - 1 sentence on why.\\n**Honorable Mention: Player — Hero** - 1 sentence on why.',
                 },
                 mapControl: {
                     type: 'string',
-                    description: 'Analyze vision (wards placed/destroyed), rune control, and Roshan/Aegis secures. 2-3 sentences max. Use **bold** for items and heroes.',
+                    description: 'Analyze vision, dewards, rune control, Roshan/Aegis, and tower/barracks control. 2-3 sentences max. Include evidence ids.',
                 },
                 whatToImprove: {
                     type: 'string',
-                    description: 'One single, direct, concise sentence on what the losing team should have done differently to win.',
+                    description: 'One direct sentence on what the losing team should have done differently, grounded in one or more evidence ids.',
                 },
             },
             required: ['gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'mapControl', 'whatToImprove'],
@@ -279,7 +263,13 @@ export async function analyze(message: Message, args: string[]) {
             }
 
             if (useStratz && stratzMatch) {
-                prompt = await generateRichStratzPrompt(stratzMatch);
+                const openDotaMatch = await opendotaClient.get(`/matches/${matchId}`)
+                    .then((res) => res.data)
+                    .catch((error) => {
+                        logger.warn(`[+analyze] OpenDota merge unavailable for ${matchId}:`, error?.message || error);
+                        return null;
+                    });
+                prompt = await buildAnalyzeFactPrompt(stratzMatch, openDotaMatch);
             }
         }
 
@@ -493,6 +483,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             model: useModel,
             params: modelOverride ? { max_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
             response_format: ANALYZE_RESPONSE_FORMAT,
+            useWeb: false,
         });
 
         // Parse structured JSON response
@@ -520,7 +511,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
-            ? 'Insufficient OpenRouter credits for Sonnet 4.6. Top up at <https://openrouter.ai/credits>'
+            ? 'Insufficient OpenRouter credits for Opus 4.6. Top up at <https://openrouter.ai/credits>'
             : error?.message || 'Unknown error';
         await message.reply(`❌ Analysis failed: ${reason}`);
     }
@@ -766,15 +757,400 @@ Keep it spicy and punchy.`;
     }
 }
 
+function formatStratzGameMode(mode: any): string {
+    if (typeof mode === 'number') {
+        const modes: Record<number, string> = {
+            1: 'All Pick',
+            2: "Captain's Mode",
+            3: 'Random Draft',
+            4: 'Single Draft',
+            16: "Captain's Draft",
+            22: 'Ranked All Pick',
+            23: 'Turbo',
+        };
+        return modes[mode] || `Mode ${mode}`;
+    }
+
+    if (typeof mode === 'string' && mode.trim()) {
+        return mode
+            .replace(/_/g, ' ')
+            .toLowerCase()
+            .replace(/\b[a-z]/g, (char) => char.toUpperCase());
+    }
+
+    return 'Unknown';
+}
+
+function isReliableDraftMode(mode: any): boolean {
+    if (typeof mode === 'number') return mode === 2 || mode === 16;
+    if (typeof mode !== 'string') return false;
+    const normalized = mode.replace(/[_\s-]/g, '').toUpperCase();
+    return normalized.includes('CAPTAINSMODE') || normalized.includes('CAPTAINSDRAFT');
+}
+
+function countStatusBits(value: any): number | null {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) return null;
+    return numeric.toString(2).split('').filter((bit) => bit === '1').length;
+}
+
+type AnalyzeFact = {
+    id: string;
+    topic: string;
+    text: string;
+    data?: Record<string, any>;
+};
+
+function formatEnumLabel(value: any): string {
+    if (value == null) return 'Unknown';
+    return String(value)
+        .replace(/_/g, ' ')
+        .toLowerCase()
+        .replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
+function formatFactTime(seconds: any): string {
+    const value = Number(seconds);
+    if (!Number.isFinite(value)) return 'unknown time';
+    if (value < 0) return `pre-game ${formatDuration(Math.abs(value))}`;
+    return formatDuration(value);
+}
+
+function formatSignedNumber(value: number): string {
+    return `${value > 0 ? '+' : ''}${Math.round(value).toLocaleString()}`;
+}
+
+function sampleNumberSeries(values: any[], maxPoints = 8): Array<{ minute: number; value: number }> {
+    const nums = (values || [])
+        .map((value, minute) => ({ minute, value: Number(value) }))
+        .filter((point) => Number.isFinite(point.value));
+    if (nums.length <= maxPoints) return nums;
+
+    const selected = new Map<number, { minute: number; value: number }>();
+    const step = Math.max(1, Math.floor((nums.length - 1) / (maxPoints - 1)));
+    for (let i = 0; i < nums.length; i += step) {
+        selected.set(nums[i].minute, nums[i]);
+    }
+    selected.set(nums[nums.length - 1].minute, nums[nums.length - 1]);
+    return [...selected.values()].sort((a, b) => a.minute - b.minute);
+}
+
+function summarizeAdvantageSeries(label: string, values: any[]): { text: string; data: Record<string, any> } | null {
+    const nums = (values || [])
+        .map((value, minute) => ({ minute, value: Number(value) }))
+        .filter((point) => Number.isFinite(point.value));
+    if (nums.length === 0) return null;
+
+    const final = nums[nums.length - 1];
+    const maxRadiant = nums.reduce((best, point) => point.value > best.value ? point : best, nums[0]);
+    const maxDire = nums.reduce((best, point) => point.value < best.value ? point : best, nums[0]);
+    const largestSwing = nums.slice(1).reduce((best, point, idx) => {
+        const prev = nums[idx];
+        const delta = point.value - prev.value;
+        return Math.abs(delta) > Math.abs(best.delta) ? { from: prev.minute, to: point.minute, delta } : best;
+    }, { from: 0, to: 0, delta: 0 });
+    const samples = sampleNumberSeries(values).map((point) => `${point.minute}m ${formatSignedNumber(point.value)}`);
+
+    return {
+        text: `${label} Radiant perspective: final ${formatSignedNumber(final.value)} at ${final.minute}m; max Radiant lead ${formatSignedNumber(maxRadiant.value)} at ${maxRadiant.minute}m; max Dire lead ${formatSignedNumber(maxDire.value)} at ${maxDire.minute}m; largest 1-min swing ${formatSignedNumber(largestSwing.delta)} from ${largestSwing.from}m-${largestSwing.to}m.`,
+        data: {
+            final,
+            maxRadiant,
+            maxDire,
+            largestSwing,
+            samples,
+        },
+    };
+}
+
+function summarizeWinProbability(values: any[]): { text: string; data: Record<string, any> } | null {
+    const nums = (values || [])
+        .map((value, minute) => ({ minute, value: Number(value) }))
+        .filter((point) => Number.isFinite(point.value));
+    if (nums.length === 0) return null;
+
+    const asPct = (value: number) => `${Math.round(value * 100)}%`;
+    const final = nums[nums.length - 1];
+    const maxRadiant = nums.reduce((best, point) => point.value > best.value ? point : best, nums[0]);
+    const minRadiant = nums.reduce((best, point) => point.value < best.value ? point : best, nums[0]);
+    const samples = sampleNumberSeries(values).map((point) => `${point.minute}m ${asPct(point.value)}`);
+
+    return {
+        text: `Radiant win probability: final ${asPct(final.value)} at ${final.minute}m; peak ${asPct(maxRadiant.value)} at ${maxRadiant.minute}m; floor ${asPct(minRadiant.value)} at ${minRadiant.minute}m.`,
+        data: { final, maxRadiant, minRadiant, samples },
+    };
+}
+
+function isImportantItemName(name: string): boolean {
+    return /Divine Rapier|Black King Bar|Aghanim|Refresher|Butterfly|Daedalus|Satanic|Eye of Skadi|Heart of Tarrasque|Assault Cuirass|Mjollnir|Manta Style|Radiance|Bloodthorn|Nullifier|Silver Edge|Monkey King Bar|Abyssal Blade|Hurricane Pike|Shiva|Pipe of Insight|Crimson Guard|Lotus Orb|Aeon Disk|Gleipnir|Orchid|Scythe of Vyse|Ethereal Blade|Blink Dagger|Overwhelming Blink|Swift Blink|Arcane Blink|Boots of Travel|Desolator|Diffusal Blade|Mage Slayer|Sange|Yasha|Kaya|Hand of Midas|Helm of the Overlord|Solar Crest/i.test(name);
+}
+
+async function resolveFinalInventory(player: any): Promise<string[]> {
+    const finalReport = Array.isArray(player.stats?.inventoryReport)
+        ? player.stats.inventoryReport.slice(-1)[0]
+        : player.stats?.inventoryReport;
+
+    const ids: Array<number | null | undefined> = finalReport
+        ? [
+            finalReport.item0?.itemId, finalReport.item1?.itemId, finalReport.item2?.itemId,
+            finalReport.item3?.itemId, finalReport.item4?.itemId, finalReport.item5?.itemId,
+            finalReport.neutral0?.itemId,
+        ]
+        : [
+            player.item0Id, player.item1Id, player.item2Id,
+            player.item3Id, player.item4Id, player.item5Id,
+            player.neutral0Id,
+        ];
+
+    const names = await Promise.all(ids.map((id) => id ? dotaDataService.getItemName(id) : null));
+    return names.filter((name): name is string => !!name && name !== 'Unknown Item' && name !== 'Empty Slot');
+}
+
+async function resolveImportantPurchases(player: any): Promise<Array<{ time: number; item: string }>> {
+    const purchases = Array.isArray(player.stats?.itemPurchases) ? player.stats.itemPurchases : [];
+    const resolved = await Promise.all(
+        purchases
+            .filter((purchase: any) => Number.isFinite(Number(purchase.time)) && Number(purchase.time) >= 0 && purchase.itemId)
+            .map(async (purchase: any) => ({
+                time: Number(purchase.time),
+                item: await dotaDataService.getItemName(purchase.itemId),
+            }))
+    );
+
+    return resolved
+        .filter((purchase) => purchase.item && purchase.item !== 'Unknown Item' && isImportantItemName(purchase.item))
+        .sort((a, b) => a.time - b.time)
+        .slice(0, 12);
+}
+
+function findOpenDotaPlayer(odMatch: any, stratzPlayer: any): any | null {
+    const players = odMatch?.players;
+    if (!Array.isArray(players)) return null;
+
+    const steamAccountId = Number(stratzPlayer.steamAccountId);
+    if (Number.isFinite(steamAccountId)) {
+        const bySteam = players.find((p: any) => Number(p.account_id) === steamAccountId);
+        if (bySteam) return bySteam;
+    }
+
+    if (stratzPlayer.playerSlot != null) {
+        const bySlot = players.find((p: any) => p.player_slot === stratzPlayer.playerSlot);
+        if (bySlot) return bySlot;
+    }
+
+    return players.find((p: any) =>
+        p.hero_id === stratzPlayer.heroId &&
+        (p.player_slot < 128) === !!stratzPlayer.isRadiant
+    ) || null;
+}
+
+async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any): Promise<string> {
+    const facts: AnalyzeFact[] = [];
+    const warnings: string[] = [];
+    const addFact = (topic: string, text: string, data?: Record<string, any>) => {
+        const fact = { id: `F${facts.length + 1}`, topic, text, data };
+        facts.push(fact);
+        return fact;
+    };
+
+    const gameModeValue = matchData.gameMode ?? matchData.game_mode;
+    const gameModeLabel = formatStratzGameMode(gameModeValue);
+    const reliableDraft = isReliableDraftMode(gameModeValue);
+    const durationSeconds = Number(matchData.durationSeconds || matchData.duration || 0);
+    const winner = matchData.didRadiantWin ? 'Radiant' : 'Dire';
+    const matchId = matchData.id || matchData.match_id;
+
+    addFact('match', `Match #${matchId}: ${gameModeLabel}, duration ${formatDuration(durationSeconds)}, winner ${winner}.`, {
+        matchId,
+        gameMode: gameModeLabel,
+        durationSeconds,
+        winner,
+    });
+    addFact('match', `Context: gameVersionId ${matchData.gameVersionId ?? 'unknown'}, region ${matchData.regionId ?? 'unknown'}, averageRank ${matchData.averageRank ?? 'unknown'}, bracket ${matchData.bracket ?? 'unknown'}, averageImp ${matchData.averageImp ?? 'unknown'}.`);
+    if (Number.isFinite(Number(matchData.firstBloodTime))) {
+        addFact('match', `First blood occurred at ${formatFactTime(matchData.firstBloodTime)}.`);
+    }
+
+    const teamLine = async (isRadiant: boolean) => (await Promise.all(
+        (matchData.players || [])
+            .filter((p: any) => p.isRadiant === isRadiant)
+            .map(async (p: any) => {
+                const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
+                return `${p.steamAccount?.name || 'Anonymous'} (${heroName}${p.variant ? ` facet ${p.variant}` : ''})`;
+            })
+    )).join(', ');
+    addFact('composition', `Radiant picked: ${await teamLine(true)}.`);
+    addFact('composition', `Dire picked: ${await teamLine(false)}.`);
+
+    const orderedDraftEvents = Array.isArray(matchData.pickBans)
+        ? matchData.pickBans
+            .filter((d: any) => d.order != null)
+            .sort((a: any, b: any) => Number(a.order) - Number(b.order))
+        : [];
+    if (reliableDraft && orderedDraftEvents.length > 0) {
+        const draftLines = await Promise.all(orderedDraftEvents.map(async (event: any) => {
+            const heroName = await dotaDataService.getHeroName(event.heroId);
+            return `${Number(event.order) + 1}. ${event.isRadiant ? 'Radiant' : 'Dire'} ${event.isPick ? 'pick' : 'ban'} ${heroName}`;
+        }));
+        addFact('draft', `Reliable draft order: ${draftLines.join('; ')}.`, { reliableDraft: true });
+    } else {
+        addFact('draft', `${gameModeLabel} has no reliable ordered pick/ban draft in this fact sheet. Non-pick Stratz rows were intentionally omitted because they are not confirmed bans.`, { reliableDraft: false });
+        warnings.push('Do not analyze bans for this match unless a reliable draft fact exists.');
+    }
+
+    addFact('lanes', `Lane outcomes: top ${formatEnumLabel(matchData.topLaneOutcome)}, mid ${formatEnumLabel(matchData.midLaneOutcome)}, bottom ${formatEnumLabel(matchData.bottomLaneOutcome)}.`);
+    if (matchData.laneReport) {
+        const laneSummary = (team: any) => {
+            const lane = (name: 'safeLane' | 'midLane' | 'offLane') => {
+                const row = team?.[name] || {};
+                return `${name.replace('Lane', '')}: ${Number(row.meleeCount || 0) + Number(row.rangeCount || 0) + Number(row.siegeCount || 0)} CS/${Number(row.denyCount || 0)} denies`;
+            };
+            return `${lane('safeLane')}, ${lane('midLane')}, ${lane('offLane')}`;
+        };
+        addFact('lanes', `Lane creep report - Radiant ${laneSummary(matchData.laneReport.radiant)}; Dire ${laneSummary(matchData.laneReport.dire)}.`);
+    }
+
+    const goldSummary = summarizeAdvantageSeries('Net worth lead', matchData.radiantNetworthLeads || []);
+    if (goldSummary) addFact('economy', goldSummary.text, goldSummary.data);
+    const xpSummary = summarizeAdvantageSeries('XP lead', matchData.radiantExperienceLeads || []);
+    if (xpSummary) addFact('economy', xpSummary.text, xpSummary.data);
+    const winProbSummary = summarizeWinProbability(matchData.winRates || matchData.predictedWinRates || []);
+    if (winProbSummary) addFact('economy', winProbSummary.text, winProbSummary.data);
+
+    if (Array.isArray(matchData.playbackData?.roshanEvents)) {
+        const roshKills = matchData.playbackData.roshanEvents
+            .filter((event: any) => event.hp === 0)
+            .map((event: any) => formatFactTime(event.time));
+        if (roshKills.length > 0) addFact('objectives', `Roshan kills at ${roshKills.join(', ')}.`);
+    }
+    if (Array.isArray(matchData.towerDeaths) && matchData.towerDeaths.length > 0) {
+        const radiantLost = matchData.towerDeaths.filter((tower: any) => tower.isRadiant).map((tower: any) => formatFactTime(tower.time));
+        const direLost = matchData.towerDeaths.filter((tower: any) => !tower.isRadiant).map((tower: any) => formatFactTime(tower.time));
+        addFact('objectives', `Tower deaths: Radiant lost ${radiantLost.length}${radiantLost.length ? ` at ${radiantLost.join(', ')}` : ''}; Dire lost ${direLost.length}${direLost.length ? ` at ${direLost.join(', ')}` : ''}.`);
+    }
+    const radiantTowersStanding = countStatusBits(matchData.towerStatusRadiant);
+    const direTowersStanding = countStatusBits(matchData.towerStatusDire);
+    const radiantBarracksStanding = countStatusBits(matchData.barracksStatusRadiant);
+    const direBarracksStanding = countStatusBits(matchData.barracksStatusDire);
+    if (radiantTowersStanding != null && direTowersStanding != null) {
+        addFact('objectives', `Final structures: Radiant ${radiantTowersStanding}/11 towers and ${radiantBarracksStanding ?? 'unknown'}/6 barracks standing; Dire ${direTowersStanding}/11 towers and ${direBarracksStanding ?? 'unknown'}/6 barracks standing.`);
+    }
+
+    for (const p of (matchData.players || [])) {
+        const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
+        const playerName = p.steamAccount?.name || 'Anonymous';
+        const team = p.isRadiant ? 'Radiant' : 'Dire';
+        const odPlayer = findOpenDotaPlayer(odMatch, p);
+        const playerLabel = `${playerName} - ${heroName}`;
+        addFact('player', `${team} ${playerLabel}: ${p.kills}/${p.deaths}/${p.assists}, level ${p.level}, net worth ${Number(p.networth || 0).toLocaleString()}, GPM/XPM ${p.goldPerMinute}/${p.experiencePerMinute}, IMP ${p.imp ?? 'N/A'}, LH/DN ${p.numLastHits}/${p.numDenies}, hero/tower/healing damage ${Number(p.heroDamage || 0).toLocaleString()}/${Number(p.towerDamage || 0).toLocaleString()}/${Number(p.heroHealing || 0).toLocaleString()}.`, {
+            team,
+            playerName,
+            heroName,
+            slot: p.playerSlot,
+        });
+
+        const inventory = await resolveFinalInventory(p);
+        if (inventory.length) addFact('items', `${playerLabel} final inventory: ${inventory.join(', ')}.`);
+        const importantPurchases = await resolveImportantPurchases(p);
+        if (importantPurchases.length) {
+            addFact('items', `${playerLabel} important item timings: ${importantPurchases.map((item) => `${item.item} at ${formatFactTime(item.time)}`).join('; ')}.`, {
+                playerName,
+                heroName,
+                purchases: importantPurchases,
+            });
+        }
+
+        const buybacks = Number(odPlayer?.buyback_count || 0);
+        if (buybacks > 0) {
+            const buybackTimes = Array.isArray(odPlayer?.buyback_log)
+                ? odPlayer.buyback_log.map((entry: any) => formatFactTime(entry.time)).join(', ')
+                : '';
+            addFact('player', `${playerLabel} used ${buybacks} buyback${buybacks === 1 ? '' : 's'}${buybackTimes ? ` at ${buybackTimes}` : ''}.`);
+        }
+
+        const utilityParts = [
+            Array.isArray(p.stats?.wards) && p.stats.wards.length ? `${p.stats.wards.length} wards placed` : '',
+            Array.isArray(p.stats?.wardDestruction) && p.stats.wardDestruction.length ? `${p.stats.wardDestruction.length} wards destroyed` : '',
+            Array.isArray(p.stats?.runes) && p.stats.runes.length ? `${p.stats.runes.length} rune events` : '',
+            Array.isArray(p.stats?.courierKills) && p.stats.courierKills.length ? `${p.stats.courierKills.length} courier kills` : '',
+            odPlayer?.stuns ? `${Number(odPlayer.stuns).toFixed(1)}s stun duration` : '',
+            odPlayer?.obs_placed ? `${odPlayer.obs_placed} OpenDota obs placed` : '',
+            odPlayer?.sen_placed ? `${odPlayer.sen_placed} OpenDota sentries placed` : '',
+        ].filter(Boolean);
+        if (utilityParts.length) addFact('utility', `${playerLabel} utility: ${utilityParts.join(', ')}.`);
+
+        if (p.stats?.heroDamageReport?.dealtTotal || p.stats?.heroDamageReport?.receivedTotal) {
+            const dealt = p.stats.heroDamageReport.dealtTotal;
+            const received = p.stats.heroDamageReport.receivedTotal;
+            addFact('damage', `${playerLabel} damage profile: dealt physical/magical/pure ${dealt?.physicalDamage ?? 'N/A'}/${dealt?.magicalDamage ?? 'N/A'}/${dealt?.pureDamage ?? 'N/A'}; received physical/magical/pure ${received?.physicalDamage ?? 'N/A'}/${received?.magicalDamage ?? 'N/A'}/${received?.pureDamage ?? 'N/A'}.`);
+        }
+
+        if (Array.isArray(p.stats?.abilityCastReport) && p.stats.abilityCastReport.length) {
+            const topCasts = await Promise.all(
+                [...p.stats.abilityCastReport]
+                    .sort((a: any, b: any) => Number(b.count || 0) - Number(a.count || 0))
+                    .slice(0, 5)
+                    .map(async (cast: any) => `${await dotaDataService.getAbilityName(cast.abilityId)} x${cast.count}`)
+            );
+            addFact('mechanics', `${playerLabel} top ability casts: ${topCasts.join(', ')}.`);
+        }
+
+        const kills = Array.isArray(p.stats?.killEvents) ? p.stats.killEvents : [];
+        const deaths = Array.isArray(p.stats?.deathEvents) ? p.stats.deathEvents : [];
+        if (kills.length || deaths.length) {
+            const killTimes = kills.slice(0, 8).map((event: any) => formatFactTime(event.time));
+            const deathTimes = deaths.slice(0, 8).map((event: any) => formatFactTime(event.time));
+            addFact('combatTimeline', `${playerLabel} combat timeline: ${kills.length} kill events${killTimes.length ? ` (${killTimes.join(', ')})` : ''}; ${deaths.length} death events${deathTimes.length ? ` (${deathTimes.join(', ')})` : ''}.`);
+        }
+    }
+
+    const factSheet = {
+        source: 'Stratz + OpenDota merge',
+        generatedAt: new Date().toISOString(),
+        match: {
+            matchId,
+            gameMode: gameModeLabel,
+            durationSeconds,
+            winner,
+            gameVersionId: matchData.gameVersionId ?? null,
+            regionId: matchData.regionId ?? null,
+        },
+        draft: {
+            reliableDraft,
+            note: reliableDraft
+                ? 'Draft facts may be analyzed.'
+                : 'No reliable draft order. Do not discuss bans or self-bans.',
+        },
+        warnings,
+        facts,
+    };
+
+    return `Analyze this Dota 2 match using only MATCH_FACTS.
+
+Rules for this response:
+- Major claims need evidence ids like [F12].
+- If a fact is not present, do not mention it.
+- Do not discuss bans unless MATCH_FACTS.draft.reliableDraft is true.
+- Do not use web/meta knowledge for match facts.
+- Prefer concrete player, item, timing, objective, and economy facts over generic advice.
+
+MATCH_FACTS:
+${JSON.stringify(factSheet, null, 2)}`;
+}
+
 // ── Helper to generate Rich Stratz prompt ────────────────────────────────────
-async function generateRichStratzPrompt(matchData: any): Promise<string> {
+async function generateRichStratzPrompt(matchData: any, odMatch?: any): Promise<string> {
+    const gameModeValue = matchData.gameMode ?? matchData.game_mode;
+    const gameModeLabel = formatStratzGameMode(gameModeValue);
+    const hasReliableDraft = isReliableDraftMode(gameModeValue);
+    const matchDurationSeconds = Number(matchData.durationSeconds || matchData.duration || 0);
     const winner = matchData.didRadiantWin ? 'Radiant' : 'Dire';
     const summaryParts = [
         `Match #${matchData.id || matchData.match_id}`,
-        `Duration: ${formatDuration(matchData.durationSeconds || matchData.duration)}`,
+        `Duration: ${formatDuration(matchDurationSeconds)}`,
         `Winner: ${winner}`,
         matchData.firstBloodTime != null ? `First Blood: ${formatDuration(matchData.firstBloodTime)}` : '',
-        `Game Mode: Mode ${matchData.gameMode || matchData.game_mode}`,
+        `Game Mode: ${gameModeLabel}`,
         `Average Rank: ${matchData.averageRank || 'Unknown'} (Bracket ${matchData.bracket})`,
         `Lane Outcomes (0=Draw, 1=Rad, 2=Dire): Top ${matchData.topLaneOutcome}, Mid ${matchData.midLaneOutcome}, Bot ${matchData.bottomLaneOutcome}`
     ].filter(Boolean);
@@ -785,13 +1161,31 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
         laneDetailBlock = `\n=== LANE CREEP CONTROL (CS/DN) ===\nRadiant: ${formatLane(matchData.laneReport.radiant)}\nDire: ${formatLane(matchData.laneReport.dire)}`;
     }
 
-    const hasDraft = matchData.pickBans?.length > 0;
-    const draftBlock = hasDraft
-        ? `\n=== DRAFT ORDER ===\n${await Promise.all(matchData.pickBans.map(async (d: any) => {
+    const pickedHeroLine = async (isRadiant: boolean) => (await Promise.all(
+        (matchData.players || [])
+            .filter((p: any) => p.isRadiant === isRadiant)
+            .map(async (p: any) => {
+                const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
+                return `${p.steamAccount?.name || 'Anonymous'} on ${heroName}`;
+            })
+    )).join(', ') || 'N/A';
+
+    const teamCompositionBlock =
+        `\n=== TEAM COMPOSITIONS (picked heroes) ===\n` +
+        `Radiant: ${await pickedHeroLine(true)}\n` +
+        `Dire: ${await pickedHeroLine(false)}`;
+
+    const orderedDraftEvents = Array.isArray(matchData.pickBans)
+        ? matchData.pickBans
+            .filter((d: any) => d.order != null)
+            .sort((a: any, b: any) => Number(a.order) - Number(b.order))
+        : [];
+    const draftBlock = hasReliableDraft && orderedDraftEvents.length > 0
+        ? `\n=== DRAFT ORDER ===\n${await Promise.all(orderedDraftEvents.map(async (d: any) => {
             const heroName = await dotaDataService.getHeroName(d.heroId);
             return `${d.order + 1}. ${d.isRadiant ? 'Radiant' : 'Dire'} ${d.isPick ? 'PICK' : 'BAN'}: ${heroName}`;
         })).then(lines => lines.join('\n'))}`
-        : '';
+        : `\n=== DRAFT NOTE ===\n${gameModeLabel}: no reliable ordered pick/ban draft is available. Ignore Stratz non-pick rows for this mode; they are not confirmed bans. Analyze team composition from picked heroes only.`;
 
     const goldGraph = `\n=== GOLD ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantNetworthLeads?.join(' → ') || 'N/A'}`;
     const xpGraph = `\n=== XP ADVANTAGE (Radiant perspective, per minute) ===\n${matchData.radiantExperienceLeads?.join(' → ') || 'N/A'}`;
@@ -822,7 +1216,21 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
         const chat = matchData.chatEvents.slice(0, 10).map((c: any) => `${formatDuration(c.time)} ${c.isRadiant ? '[Rad]' : '[Dire]'} Hero ${c.fromHeroId}: ${c.value}`);
         if (chat.length) objectiveParts.push(`Chat Log (Sample): ${chat.join(' | ')}`);
     }
-    objectiveParts.push(`Final Structure Status - Rad Towers: ${matchData.towerStatusRadiant}, Dire Towers: ${matchData.towerStatusDire} | Rad Barracks: ${matchData.barracksStatusRadiant}, Dire Barracks: ${matchData.barracksStatusDire}`);
+    const radiantTowersStanding = countStatusBits(matchData.towerStatusRadiant);
+    const direTowersStanding = countStatusBits(matchData.towerStatusDire);
+    const radiantBarracksStanding = countStatusBits(matchData.barracksStatusRadiant);
+    const direBarracksStanding = countStatusBits(matchData.barracksStatusDire);
+    const structureParts = [
+        radiantTowersStanding != null && direTowersStanding != null
+            ? `Towers standing: Radiant ${radiantTowersStanding}/11, Dire ${direTowersStanding}/11`
+            : '',
+        radiantBarracksStanding != null && direBarracksStanding != null
+            ? `Barracks standing: Radiant ${radiantBarracksStanding}/6, Dire ${direBarracksStanding}/6`
+            : '',
+    ].filter(Boolean);
+    if (structureParts.length) {
+        objectiveParts.push(`Final Structure Status - ${structureParts.join(' | ')}`);
+    }
 
 
     const playerBlock = await Promise.all(matchData.players.map(async (p: any) => {
@@ -840,8 +1248,27 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
             `  Dmg Dealt: ${p.heroDamage} | Tower: ${p.towerDamage} | Heal: ${p.heroHealing} | LH: ${p.numLastHits} | DN: ${p.numDenies}`,
             `  Pos: ${p.position?.toString().replace('POSITION_', '') ?? 'Unknown'} | Award: ${p.award === 1 ? 'MVP' : (p.award ? 'Standout' : 'None')}`,
             p.intentionalFeeding ? `  ⚠️ INTENTIONAL FEEDING DETECTED` : '',
-            p.invisibleSeconds > 60 ? `  Sneakiness: ${p.invisibleSeconds}s invisible` : ''
+            Number(p.invisibleSeconds) > 60 && (!matchDurationSeconds || Number(p.invisibleSeconds) <= matchDurationSeconds)
+                ? `  Sneakiness: ${Math.round(Number(p.invisibleSeconds))}s invisible`
+                : ''
         ].filter(Boolean);
+
+        // Support Totality: Stun duration from OpenDota + Ability Counts from Stratz
+        const odPlayer = odMatch?.players?.find((op: any) => op.player_slot === p.playerSlot);
+        const abilityCount = Array.isArray(p.stats?.abilityCastReport)
+            ? p.stats.abilityCastReport.reduce((acc: number, curr: any) => acc + (curr.count || 0), 0)
+            : 0;
+
+        if (odPlayer || abilityCount > 0) {
+            const supportStats = [
+                abilityCount > 0 ? `Abilities Used: ${abilityCount}` : '',
+                odPlayer?.stuns > 0 ? `Stun Duration: ${odPlayer.stuns.toFixed(1)}s` : '',
+                odPlayer?.obs_placed > 0 ? `Obs Placed: ${odPlayer.obs_placed}` : '',
+                odPlayer?.sen_placed > 0 ? `Sen Placed: ${odPlayer.sen_placed}` : '',
+                odPlayer?.pings > 0 ? `Pings: ${odPlayer.pings}` : '',
+            ].filter(Boolean).join(' | ');
+            if (supportStats) lines.push(`  Support Value: ${supportStats}`);
+        }
 
         if (p.stats) {
             // Final Inventory Report (Last item in log is final state)
@@ -1038,6 +1465,7 @@ async function generateRichStratzPrompt(matchData: any): Promise<string> {
 ${summaryParts.join(' | ')}
 ${laneDetailBlock}
 ${draftBlock}
+${teamCompositionBlock}
 ${objectiveParts.length ? `\n=== OBJECTIVES ===\n${objectiveParts.join('\n')}` : ''}
 ${partyBlock ? `\n=== PARTIES ===\n${partyBlock}` : ''}
 
@@ -1050,4 +1478,3 @@ ${predictedWinRateGraph}
 
 Analyze this match. Fill each schema field with CONCISE, data-backed analysis. Reference specific numbers like IMP scores, Lane Outcomes, Win Probability swings, and specific minute marks from the advantage graph. Use Discord markdown (**bold** for names). Be direct and spicy. STRICT LIMIT: 250 words total across all fields. Each field 2-4 sentences max.`;
 }
-
