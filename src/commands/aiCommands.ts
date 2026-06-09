@@ -123,6 +123,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - If a stat is absent, such as lane CS, state it is unavailable in one short clause and move on.
 - If only some of a player's death timings are listed, report the count honestly: "1 of 8 deaths is timestamped", not language implying all deaths are explained.
 - Net worth lead and lane CS are independent signals. When they disagree, reconcile through kills, deaths, objectives, or tower damage; do not assume the richer team won lane.
+- Lane creep reports are same-team lane buckets, not mirrored direct matchup pairs. Use them to discuss aggregate lane farm, not "safe lane beat safe lane" head-to-head claims.
 - OpenDota benchmark percentiles are not mode-specific. If MATCH_FACTS says benchmarks were omitted or caveated for Turbo/non-standard mode, do not use those percentiles as proof of elite farm or poor last-hitting.
 
 ## Mistake Objects
@@ -1311,7 +1312,7 @@ function summarizeLaneReport(matchData: any): string | null {
         };
         return `${lane('safe', 'safeLane')}, ${lane('mid', 'midLane')}, ${lane('off', 'offLane')}`;
     };
-    return `Lane creep report - Radiant ${laneSummary(matchData.laneReport.radiant)}; Dire ${laneSummary(matchData.laneReport.dire)}.`;
+    return `Lane creep report (same-team lane buckets, not mirrored head-to-head matchups) - Radiant ${laneSummary(matchData.laneReport.radiant)}; Dire ${laneSummary(matchData.laneReport.dire)}.`;
 }
 
 function summarizeTowerClusters(events: TowerDeathEvent[], minCount = 3, maxGapSeconds = 90): Array<Record<string, any>> {
@@ -1616,7 +1617,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         });
         const towerClusters = summarizeTowerClusters(towerEvents);
         for (const cluster of towerClusters) {
-            addFact('objectiveCluster', `Tower cluster only, no barracks or Ancient: ${cluster.teamLost} lost ${cluster.count} towers from ${formatFactTime(cluster.start)} to ${formatFactTime(cluster.end)} (${formatDuration(cluster.durationSeconds)} window): exact tower death times ${cluster.times.map((time: number) => formatFactTime(time)).join(', ')}.`, {
+            addFact('objectiveCluster', `Canonical tower timing window; tower cluster only, no barracks or Ancient: ${cluster.teamLost} lost ${cluster.count} towers from ${formatFactTime(cluster.start)} to ${formatFactTime(cluster.end)} (${formatDuration(cluster.durationSeconds)} window): exact tower death times ${cluster.times.map((time: number) => formatFactTime(time)).join(', ')}.`, {
                 ...cluster,
                 structureType: 'tower',
             });
