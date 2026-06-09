@@ -34,13 +34,10 @@ export const AI_PARAMS = {
 
 // Params for +analyze — reasoning enabled for deep match analysis
 export const AI_ANALYZE_PARAMS = {
-    temperature: 1,           // Required: must be 1 for reasoning on Claude
+    temperature: 0.25,
     max_tokens: 8000,
     top_p: 1,
-    stream: false,
-    reasoning: {
-        max_tokens: 4096
-    }
+    stream: false
 };
 
 export const MAX_CONVERSATION_HISTORY = 10;

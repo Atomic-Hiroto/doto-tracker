@@ -95,7 +95,6 @@ query ($matchId: Long!) {
     lobbyType
     averageRank
     actualRank
-    averageImp
     firstBloodTime
     radiantKills
     direKills
@@ -133,20 +132,13 @@ query ($matchId: Long!) {
         safeLane { meleeCount rangeCount siegeCount denyCount neutralCount }
       }
     }
-    topLaneOutcome
-    midLaneOutcome
-    bottomLaneOutcome
     radiantNetworthLeads
     radiantExperienceLeads
-    winRates
-    predictedWinRates
     pickBans { isPick isRadiant heroId order }
     players {
       steamAccountId
       playerSlot
       isRadiant
-      imp
-      award
       level
       kills
       deaths
@@ -163,18 +155,12 @@ query ($matchId: Long!) {
       partyId
       isRandom
       variant
-      behavior
-      intentionalFeeding
       invisibleSeconds
       goldPerMinute
       experiencePerMinute
       gold
       goldSpent
       leaverStatus
-      streakPrediction
-      heroAverage {
-        apm casts abilityCasts kills deaths assists networth xp cs dn neutrals heroDamage towerDamage physicalDamage magicalDamage tripleKill ultraKill rampage godLike goldPerMinute disableCount disableDuration stunCount stunDuration slowCount slowDuration healingSelf healingAllies invisibleCount
-      }
       item0Id item1Id item2Id item3Id item4Id item5Id
       backpack0Id backpack1Id backpack2Id neutral0Id
       abilities { abilityId level time isTalent }
@@ -188,7 +174,6 @@ query ($matchId: Long!) {
         healPerMinute
         heroDamagePerMinute
         towerDamagePerMinute
-        impPerMinute
         courierKills { time }
         tripsFountainPerMinute
         wardDestruction { time gold }
@@ -326,4 +311,3 @@ export async function waitForStratzParse(
 
   return false;
 }
-
