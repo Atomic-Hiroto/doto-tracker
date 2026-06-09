@@ -3,3 +3,13 @@ node_modules
 users.json
 dist/
 usersts.json
+
+# Local debug dumps/logs
+match_dump_debug.json
+raw_dump*.json
+raw_match.json
+crash.log
+stratz_error.log
+prompt_dump*.txt
+rich_prompt_totality_dump*.txt
+*introspection*.json

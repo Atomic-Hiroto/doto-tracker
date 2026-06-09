@@ -124,6 +124,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Use only facts in MATCH_FACTS.
 - If a stat is absent, such as lane CS, state it is unavailable in one short clause and move on.
 - If only some of a player's death timings are listed, report the count honestly: "1 of 8 deaths is timestamped", not language implying all deaths are explained.
+- Stratz deathEvents contain timings only, not killers. Never state who killed or caught the focused player as fact from death events; describe the death timing, received-damage breakdown, and surrounding objective/economy context instead. KillEvents may identify who the player killed when target data is present.
 - Net worth lead and lane CS are independent signals. When they disagree, reconcile through kills, deaths, objectives, or tower damage; do not assume the richer team won lane.
 - Lane creep reports are same-team lane buckets, not mirrored direct matchup pairs. Use them to discuss aggregate lane farm, not "safe lane beat safe lane" head-to-head claims.
 - Player role/position facts from Stratz are inferred. Mention them as inferred context only; do not use role alone to excuse or condemn farm, net worth, deaths, or item timings.
@@ -1284,11 +1285,12 @@ function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
     const typedTowerDeaths = Array.isArray(matchData.playbackData?.buildingEvents)
         ? matchData.playbackData.buildingEvents
             .filter((event: any) => event?.type === 'TOWER' && Number(event.hp) === 0 && Number(event.time) >= 0)
-            .map((tower: any) => {
+            .map((tower: any, index: number) => {
                 const time = finiteNumber(tower.time);
                 if (time == null) return null;
+                const towerId = tower.npcId ?? tower.indexId ?? `unknown-${index}`;
                 return {
-                    key: `${tower.isRadiant ? 'Radiant' : 'Dire'}:${tower.npcId ?? tower.indexId ?? time}`,
+                    key: `${tower.isRadiant ? 'Radiant' : 'Dire'}:${towerId}`,
                     event: {
                         teamLost: tower.isRadiant ? 'Radiant' as const : 'Dire' as const,
                         time,
