@@ -117,7 +117,8 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Center the whole analysis on the focus player. Other heroes appear only as context for what that player faced or should have done.
 - Order the report around their game: laning -> item timings -> fights they were in -> their deaths -> result.
 - Lead the narrative with their individual arc, not the match's.
-- If MATCH_FACTS contains benchmark facts for this player, use them explicitly as percentile context.
+- If MATCH_FACTS contains benchmark facts for this player, use them explicitly as hero-level percentile context.
+- OpenDota benchmark facts are hero benchmarks, not role/position-specific benchmarks, unless MATCH_FACTS explicitly says otherwise.
 - If benchmark facts are absent, do not invent a benchmark.
 
 ## Data Honesty
@@ -135,10 +136,11 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Severity must be one of: "game-losing", "costly", "minor".
 - Each mistake needs: claim, evidence, severity, fix.
 - The fix must chain mistake -> consequence -> specific alternative using only facts on the sheet.
+- In focus mode, do not invent filler mistakes for a player who clearly had a clean/high-impact game. One real mistake plus marginal improvement notes is better than three weak mistakes.
 
 ## Length Budget
 - Whole-match mode: write a complete but compact recap that fits one Discord embed. Use 2 sentences for narrative, draft/laning, items/damage, and map control; use exactly 2 keyMistakes unless the third is truly decisive.
-- Personal coaching mode: you may be more detailed, especially in keyMistakes and whatToImprove, but stay focused on the target player. Use 2-3 keyMistakes.
+- Personal coaching mode: you may be more detailed, especially in keyMistakes and whatToImprove, but stay focused on the target player. Use 1-3 keyMistakes based on how many real mistakes MATCH_FACTS supports.
 - Do not list every stat that appears in MATCH_FACTS. Pick the facts that explain the result.
 
 ## Output Exemplar
@@ -236,11 +238,11 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
                 },
                 benchmarkCheck: {
                     type: 'string',
-                    description: 'Use benchmark facts only when comparable benchmark percentiles are present. If benchmarks were omitted for Turbo/non-standard mode or are unavailable, state that briefly and use replay facts instead. Include evidence ids when available.',
+                    description: 'Use benchmark facts only when comparable benchmark percentiles are present. OpenDota benchmarks are hero-level, not role/position-specific, unless facts say otherwise. If benchmarks were omitted for Turbo/non-standard mode or are unavailable, state that briefly and use replay facts instead. Include evidence ids when available.',
                 },
                 keyMistakes: {
                     type: 'array',
-                    description: '2-3 focused-player mistakes ranked by impact.',
+                    description: '1-3 focused-player mistakes ranked by impact. Do not invent filler mistakes when facts only support one real error.',
                     items: {
                         type: 'object',
                         properties: {
@@ -1166,12 +1168,22 @@ function sampleNumberSeries(values: any[], maxPoints = 8): Array<{ minute: numbe
     return [...selected.values()].sort((a, b) => a.minute - b.minute);
 }
 
+function formatSeriesMinute(minute: number, durationSeconds?: number): string {
+    const duration = Number(durationSeconds);
+    if (Number.isFinite(duration) && duration > 0) {
+        const finalBucket = Math.ceil(duration / 60);
+        if (minute >= finalBucket) return `game end ${formatDuration(duration)}`;
+    }
+    return `${minute}m`;
+}
+
 function summarizeAdvantageSeries(
     label: string,
     values: any[],
     positiveTeam = 'Radiant',
     negativeTeam = 'Dire',
-    perspectiveLabel = 'Radiant perspective'
+    perspectiveLabel = 'Radiant perspective',
+    durationSeconds?: number
 ): { text: string; data: Record<string, any> } | null {
     const nums = (values || [])
         .map((value, minute) => ({ minute, value: Number(value) }))
@@ -1190,19 +1202,28 @@ function summarizeAdvantageSeries(
     const direPositive = nums.filter((point) => point.value < 0);
     const lastRadiantPositive = radiantPositive[radiantPositive.length - 1] || null;
     const firstDirePositive = direPositive[0] || null;
-    const samples = sampleNumberSeries(values).map((point) => `${point.minute}m ${formatTeamLead(point.value, positiveTeam, negativeTeam)}`);
+    const minuteLabel = (point: { minute: number }) => formatSeriesMinute(point.minute, durationSeconds);
+    const samples = sampleNumberSeries(values).map((point) => `${minuteLabel(point)} ${formatTeamLead(point.value, positiveTeam, negativeTeam)}`);
     const leadSignText = [
-        radiantPositive.length ? `${positiveTeam}-lead samples ${radiantPositive.length}, last at ${lastRadiantPositive?.minute}m` : `no ${positiveTeam}-lead samples`,
-        direPositive.length ? `${negativeTeam}-lead samples ${direPositive.length}, first at ${firstDirePositive?.minute}m` : `no ${negativeTeam}-lead samples`,
+        radiantPositive.length ? `${positiveTeam}-lead samples ${radiantPositive.length}, last at ${lastRadiantPositive ? minuteLabel(lastRadiantPositive) : 'unknown'}` : `no ${positiveTeam}-lead samples`,
+        direPositive.length ? `${negativeTeam}-lead samples ${direPositive.length}, first at ${firstDirePositive ? minuteLabel(firstDirePositive) : 'unknown'}` : `no ${negativeTeam}-lead samples`,
     ].join('; ');
 
     return {
-        text: `${label} differential series (${perspectiveLabel}; positive values favor ${positiveTeam}, negative values favor ${negativeTeam}; not team totals): final ${formatTeamLead(final.value, positiveTeam, negativeTeam)} at ${final.minute}m; max ${positiveTeam} lead ${Math.abs(Math.round(maxRadiant.value)).toLocaleString()} at ${maxRadiant.minute}m; max ${negativeTeam} lead ${Math.abs(Math.round(maxDire.value)).toLocaleString()} at ${maxDire.minute}m; largest 1-min differential swing ${formatTeamSwing(largestSwing.delta, positiveTeam, negativeTeam)} from ${largestSwing.from}m-${largestSwing.to}m; lead signs: ${leadSignText}.`,
+        text: `${label} differential series (${perspectiveLabel}; positive values favor ${positiveTeam}, negative values favor ${negativeTeam}; not team totals): final ${formatTeamLead(final.value, positiveTeam, negativeTeam)} at ${minuteLabel(final)}; max ${positiveTeam} lead ${Math.abs(Math.round(maxRadiant.value)).toLocaleString()} at ${minuteLabel(maxRadiant)}; max ${negativeTeam} lead ${Math.abs(Math.round(maxDire.value)).toLocaleString()} at ${minuteLabel(maxDire)}; largest 1-min differential swing ${formatTeamSwing(largestSwing.delta, positiveTeam, negativeTeam)} from ${minuteLabel({ minute: largestSwing.from })} to ${minuteLabel({ minute: largestSwing.to })}; lead signs: ${leadSignText}.`,
         data: {
             seriesKind: 'team_differential',
             valueSemantics: `positive favors ${positiveTeam}; negative favors ${negativeTeam}; values are not team totals`,
             positiveTeam,
             negativeTeam,
+            durationSeconds: durationSeconds ?? null,
+            minuteLabels: {
+                final: minuteLabel(final),
+                maxPositiveTeamLead: minuteLabel(maxRadiant),
+                maxNegativeTeamLead: minuteLabel(maxDire),
+                largestSwingFrom: minuteLabel({ minute: largestSwing.from }),
+                largestSwingTo: minuteLabel({ minute: largestSwing.to }),
+            },
             final,
             maxPositiveTeamLead: maxRadiant,
             maxNegativeTeamLead: maxDire,
@@ -1218,11 +1239,11 @@ function summarizeAdvantageSeries(
     };
 }
 
-function summarizeAdvantageForTeam(label: string, values: any[], team: 'Radiant' | 'Dire'): { text: string; data: Record<string, any> } | null {
+function summarizeAdvantageForTeam(label: string, values: any[], team: 'Radiant' | 'Dire', durationSeconds?: number): { text: string; data: Record<string, any> } | null {
     const multiplier = team === 'Radiant' ? 1 : -1;
     const adjusted = (values || []).map((value) => Number(value) * multiplier);
     const otherTeam = team === 'Radiant' ? 'Dire' : 'Radiant';
-    const summary = summarizeAdvantageSeries(label, adjusted, team, otherTeam, `${team} perspective`);
+    const summary = summarizeAdvantageSeries(label, adjusted, team, otherTeam, `${team} perspective`, durationSeconds);
     if (!summary) return null;
     return { text: summary.text, data: { ...summary.data, perspectiveTeam: team } };
 }
@@ -1663,12 +1684,12 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
 
     const focusTeam = focusPlayer ? (focusPlayer.isRadiant ? 'Radiant' as const : 'Dire' as const) : null;
     const goldSummary = focusTeam
-        ? summarizeAdvantageForTeam('Net worth lead', matchData.radiantNetworthLeads || [], focusTeam)
-        : summarizeAdvantageSeries('Net worth lead', matchData.radiantNetworthLeads || []);
+        ? summarizeAdvantageForTeam('Net worth lead', matchData.radiantNetworthLeads || [], focusTeam, durationSeconds)
+        : summarizeAdvantageSeries('Net worth lead', matchData.radiantNetworthLeads || [], 'Radiant', 'Dire', 'Radiant perspective', durationSeconds);
     if (goldSummary) addFact('economy', goldSummary.text, goldSummary.data);
     const xpSummary = focusTeam
-        ? summarizeAdvantageForTeam('XP lead', matchData.radiantExperienceLeads || [], focusTeam)
-        : summarizeAdvantageSeries('XP lead', matchData.radiantExperienceLeads || []);
+        ? summarizeAdvantageForTeam('XP lead', matchData.radiantExperienceLeads || [], focusTeam, durationSeconds)
+        : summarizeAdvantageSeries('XP lead', matchData.radiantExperienceLeads || [], 'Radiant', 'Dire', 'Radiant perspective', durationSeconds);
     if (xpSummary) addFact('economy', xpSummary.text, xpSummary.data);
     if (!matchData.radiantExperienceLeads?.length) {
         addFact('economy', 'XP lead data is unavailable for this match.');
@@ -1878,10 +1899,10 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     };
 
     const focusRules = focusPlayerLabel
-        ? `\nPersonal coaching mode:\n- Focus on ${focusPlayerLabel}; use other players only as context for what this player faced or should have done.\n- Structure the analysis around this player's game: laning -> item timings -> fights they were in -> their deaths -> result.\n- Lead with this player's individual arc, not the match's overall arc.\n- Use benchmark facts explicitly only if MATCH_FACTS contains a benchmarks topic for this player; otherwise do not invent benchmark comparisons.\n- whatToImprove / nextGamePlan must be a counterfactual coaching chain for this player: mistake -> consequence -> specific alternative.\n- keyMistakes should prioritize this player's errors unless another teammate fact is necessary context.\n`
+        ? `\nPersonal coaching mode:\n- Focus on ${focusPlayerLabel}; use other players only as context for what this player faced or should have done.\n- Structure the analysis around this player's game: laning -> item timings -> fights they were in -> their deaths -> result.\n- Lead with this player's individual arc, not the match's overall arc.\n- Use benchmark facts explicitly only if MATCH_FACTS contains a benchmarks topic for this player; treat OpenDota percentiles as hero-level, not role/position-specific, unless the fact says otherwise.\n- whatToImprove / nextGamePlan must be a counterfactual coaching chain for this player: mistake -> consequence -> specific alternative.\n- keyMistakes should prioritize this player's errors unless another teammate fact is necessary context.\n`
         : '';
     const lengthRules = focusPlayerLabel
-        ? `\nLength target:\n- Personal coaching mode can be richer than the default recap, but stay under two Discord embeds.\n- Use 2-3 keyMistakes. Keep each claim and fix to one compact sentence.\n`
+        ? `\nLength target:\n- Personal coaching mode can be richer than the default recap, but stay under two Discord embeds.\n- Use 1-3 keyMistakes based on actual evidence. Keep each claim and fix to one compact sentence.\n`
         : `\nLength target:\n- Whole-match recap must fit one Discord embed.\n- Use exactly 2 keyMistakes unless a third is essential to explain the result.\n- Keep every section concise: usually 2 sentences, with no stat listing unless it explains the game.\n`;
 
     return {
