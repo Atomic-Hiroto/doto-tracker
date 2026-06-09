@@ -112,6 +112,11 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Each mistake needs: claim, evidence, severity, fix.
 - The fix must chain mistake -> consequence -> specific alternative using only facts on the sheet.
 
+## Length Budget
+- Whole-match mode: write a complete but compact recap that fits one Discord embed. Use 2 sentences for narrative, draft/laning, items/damage, and map control; use exactly 2 keyMistakes unless the third is truly decisive.
+- Personal coaching mode: you may be more detailed, especially in keyMistakes and whatToImprove, but stay focused on the target player. Use 2-3 keyMistakes.
+- Do not list every stat that appears in MATCH_FACTS. Pick the facts that explain the result.
+
 ## Output Exemplar
 For a stomp:
 {
@@ -212,27 +217,51 @@ function formatMistakes(mistakes: any, debug: boolean): string {
     }).join('\n');
 }
 
-// ── Format structured analysis into a single Discord embed ────────────────────
-function formatAnalysis(data: any, matchId: number, model: string, source: string, opts: { debug?: boolean; focusPlayer?: string; cached?: boolean } = {}): EmbedBuilder {
-    const debug = !!opts.debug;
-    const display = maybeStripEvidence(data, debug);
-    const sections = [
-        `**📖 GAME NARRATIVE**\n${display.gameNarrative}`,
-        `**🏗️ DRAFT & LANING**\n${display.draftAndLaning}`,
-        `**⚔️ ITEMS & DAMAGE**\n${display.itemizationAndDamage}`,
-        `**💀 KEY MISTAKES**\n${formatMistakes(data.keyMistakes, debug)}`,
-        `**👁️ MAP CONTROL & VISION**\n${display.mapControl}`,
-        `**🏆 MVP & STANDOUTS**\n${display.mvpAndStandouts}`,
-        `**📝 WHAT TO IMPROVE**\n${display.whatToImprove}`,
-    ];
+function limitText(text: any, max: number): string {
+    return trunc(String(text || ''), max);
+}
 
-    return new EmbedBuilder()
+function formatSections(data: any, debug: boolean, focusMode: boolean): string[] {
+    const display = maybeStripEvidence(data, debug);
+    const limits = focusMode
+        ? { narrative: 760, draft: 620, items: 760, mistakes: 1400, map: 620, mvp: 620, improve: 560 }
+        : { narrative: 540, draft: 460, items: 560, mistakes: 860, map: 420, mvp: 520, improve: 340 };
+    return [
+        `**📖 GAME NARRATIVE**\n${limitText(display.gameNarrative, limits.narrative)}`,
+        `**🏗️ DRAFT & LANING**\n${limitText(display.draftAndLaning, limits.draft)}`,
+        `**⚔️ ITEMS & DAMAGE**\n${limitText(display.itemizationAndDamage, limits.items)}`,
+        `**💀 KEY MISTAKES**\n${limitText(formatMistakes(data.keyMistakes, debug), limits.mistakes)}`,
+        `**👁️ MAP CONTROL & VISION**\n${limitText(display.mapControl, limits.map)}`,
+        `**🏆 MVP & STANDOUTS**\n${limitText(display.mvpAndStandouts, limits.mvp)}`,
+        `**📝 WHAT TO IMPROVE**\n${limitText(display.whatToImprove, limits.improve)}`,
+    ];
+}
+
+// ── Format structured analysis into a single Discord embed ────────────────────
+function formatAnalysis(data: any, matchId: number, model: string, source: string, opts: { debug?: boolean; focusPlayer?: string; cached?: boolean } = {}): EmbedBuilder[] {
+    const debug = !!opts.debug;
+    const focusMode = !!opts.focusPlayer;
+    const sections = formatSections(data, debug, focusMode);
+    const title = `🔍 Match Analysis — #${matchId}${opts.focusPlayer ? ` — ${opts.focusPlayer}` : ''}`;
+    const footer = `doto-chan coaching • ${source}${opts.cached ? ' • cached' : ''}${debug ? ' • debug facts' : ''} • ${model}`;
+
+    const makeEmbed = (description: string, suffix = '') => new EmbedBuilder()
         .setColor('#ef4444')
-        .setTitle(`🔍 Match Analysis — #${matchId}${opts.focusPlayer ? ` — ${opts.focusPlayer}` : ''}`)
-        .setDescription(trunc(sections.join('\n\n'), 4096))
+        .setTitle(`${title}${suffix}`)
+        .setDescription(trunc(description, 4096))
         .setURL(`https://www.opendota.com/matches/${matchId}`)
-        .setFooter({ text: `doto-chan coaching • ${source}${opts.cached ? ' • cached' : ''}${debug ? ' • debug facts' : ''} • ${model}` })
+        .setFooter({ text: footer })
         .setTimestamp();
+
+    if (!focusMode) {
+        return [makeEmbed(sections.join('\n\n'))];
+    }
+
+    const first = sections.slice(0, 4).join('\n\n');
+    const second = sections.slice(4).join('\n\n');
+    return second.trim()
+        ? [makeEmbed(first, ' — 1/2'), makeEmbed(second, ' — 2/2')]
+        : [makeEmbed(first)];
 }
 
 const BOT_OWNER_ID = '78168838910246912';
@@ -285,12 +314,12 @@ export async function analyze(message: Message, args: string[]) {
     const cacheKey = `${matchId}:${requestedSource}:${mode}:${focusPlayerQuery.toLowerCase()}:${useModel}`;
     const cached = analyzeCache.get(cacheKey);
     if (!forceRedo && cached && Date.now() - cached.createdAt < ANALYZE_CACHE_TTL_MS) {
-        const embed = formatAnalysis(cached.data, matchId, cached.model, cached.source, {
+        const embeds = formatAnalysis(cached.data, matchId, cached.model, cached.source, {
             debug: debugFacts,
             focusPlayer: focusPlayerQuery || undefined,
             cached: true,
         });
-        return message.reply({ embeds: [embed] });
+        return message.reply({ embeds });
     }
 
     try {
@@ -606,11 +635,11 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
 
         const source = useStratz ? 'Stratz' : 'OpenDota';
         analyzeCache.set(cacheKey, { createdAt: Date.now(), data: analysisData, source, model: useModel });
-        const embed = formatAnalysis(analysisData, matchId, useModel, source, {
+        const embeds = formatAnalysis(analysisData, matchId, useModel, source, {
             debug: debugFacts,
             focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
         });
-        await message.reply({ embeds: [embed] });
+        await message.reply({ embeds });
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
@@ -1456,6 +1485,9 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     const focusRules = focusPlayerLabel
         ? `\nPersonal coaching mode:\n- Focus on ${focusPlayerLabel}; use other players only as context.\n- whatToImprove must be a counterfactual coaching chain for this player: mistake -> consequence -> specific alternative.\n- keyMistakes should prioritize this player's errors unless another teammate fact is necessary context.\n`
         : '';
+    const lengthRules = focusPlayerLabel
+        ? `\nLength target:\n- Personal coaching mode can be richer than the default recap, but stay under two Discord embeds.\n- Use 2-3 keyMistakes. Keep each claim and fix to one compact sentence.\n`
+        : `\nLength target:\n- Whole-match recap must fit one Discord embed.\n- Use exactly 2 keyMistakes unless a third is essential to explain the result.\n- Keep every section concise: usually 2 sentences, with no stat listing unless it explains the game.\n`;
 
     return {
         prompt: `Analyze this Dota 2 match using only MATCH_FACTS.
@@ -1469,6 +1501,7 @@ Rules for this response:
 - Do not calculate new structure totals, damage totals, or approximate objective windows. Use the provided damage and objective-cluster facts.
 - Prefer concrete player, item, timing, objective, and economy facts over generic advice.
 ${focusRules}
+${lengthRules}
 
 MATCH_FACTS:
 ${JSON.stringify(factSheet, null, 2)}`,
