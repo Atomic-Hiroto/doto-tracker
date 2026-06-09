@@ -103,6 +103,8 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Do not mix tower clusters with barracks or Ancient damage. Objective-cluster facts are towers only unless they explicitly say otherwise.
 - Do not say "Ancient fell" or name a final building unless MATCH_FACTS explicitly contains that building event.
 - Do not use web/meta knowledge for match facts. Patch context may explain broad strategic context only if MATCH_FACTS.patchContext is present.
+- Economy and XP time-series facts are team differentials only when the fact explicitly says "differential"; never treat them as team totals or individual net worth.
+- If an item timing is before an event, do not claim the team lacked that item for the event; critique death, positioning, cooldown, usage, or lateness relative to earlier pressure instead.
 - Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
 - LVP should come from the losing team unless MATCH_FACTS clearly shows an extreme exception such as abandon-level impact.
 - Keep the spicy style, but every roast needs a real stat behind it.
@@ -124,6 +126,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - If only some of a player's death timings are listed, report the count honestly: "1 of 8 deaths is timestamped", not language implying all deaths are explained.
 - Net worth lead and lane CS are independent signals. When they disagree, reconcile through kills, deaths, objectives, or tower damage; do not assume the richer team won lane.
 - Lane creep reports are same-team lane buckets, not mirrored direct matchup pairs. Use them to discuss aggregate lane farm, not "safe lane beat safe lane" head-to-head claims.
+- Player role/position facts from Stratz are inferred. Mention them as inferred context only; do not use role alone to excuse or condemn farm, net worth, deaths, or item timings.
 - OpenDota benchmark percentiles are not mode-specific. If MATCH_FACTS says benchmarks were omitted or caveated for Turbo/non-standard mode, do not use those percentiles as proof of elite farm or poor last-hitting.
 
 ## Mistake Objects
@@ -216,7 +219,7 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
             properties: {
                 focusSummary: {
                     type: 'string',
-                    description: '2-3 sentences about the focused player only: their team, hero, result, role in the win/loss, and the decisive personal arc. Include evidence ids.',
+                    description: '2-3 sentences about the focused player only: their team, hero, result, inferred role if available, and the decisive personal arc. Include evidence ids.',
                 },
                 laneAndFarm: {
                     type: 'string',
@@ -1035,6 +1038,27 @@ function formatStratzGameMode(mode: any): string {
     return 'Unknown';
 }
 
+function formatStratzEnum(value: any): string | null {
+    if (value == null || value === '') return null;
+    const raw = String(value);
+    return raw
+        .replace(/^POSITION_/, 'position ')
+        .replace(/^ROLE_/, '')
+        .replace(/_/g, ' ')
+        .toLowerCase()
+        .replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
+function formatStratzPosition(value: any): string | null {
+    if (value == null || value === '') return null;
+    const raw = String(value).replace(/^POSITION_/, '');
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric >= 1 && numeric <= 5) {
+        return `position ${numeric}`;
+    }
+    return formatStratzEnum(value);
+}
+
 function isReliableDraftMode(mode: any): boolean {
     if (typeof mode === 'number') return mode === 2 || mode === 16;
     if (typeof mode !== 'string') return false;
@@ -1172,17 +1196,21 @@ function summarizeAdvantageSeries(
     ].join('; ');
 
     return {
-        text: `${label} (${perspectiveLabel}): final ${formatTeamLead(final.value, positiveTeam, negativeTeam)} at ${final.minute}m; max ${positiveTeam} lead ${Math.abs(Math.round(maxRadiant.value)).toLocaleString()} at ${maxRadiant.minute}m; max ${negativeTeam} lead ${Math.abs(Math.round(maxDire.value)).toLocaleString()} at ${maxDire.minute}m; largest 1-min swing ${formatTeamSwing(largestSwing.delta, positiveTeam, negativeTeam)} from ${largestSwing.from}m-${largestSwing.to}m; lead signs: ${leadSignText}.`,
+        text: `${label} differential series (${perspectiveLabel}; positive values favor ${positiveTeam}, negative values favor ${negativeTeam}; not team totals): final ${formatTeamLead(final.value, positiveTeam, negativeTeam)} at ${final.minute}m; max ${positiveTeam} lead ${Math.abs(Math.round(maxRadiant.value)).toLocaleString()} at ${maxRadiant.minute}m; max ${negativeTeam} lead ${Math.abs(Math.round(maxDire.value)).toLocaleString()} at ${maxDire.minute}m; largest 1-min differential swing ${formatTeamSwing(largestSwing.delta, positiveTeam, negativeTeam)} from ${largestSwing.from}m-${largestSwing.to}m; lead signs: ${leadSignText}.`,
         data: {
+            seriesKind: 'team_differential',
+            valueSemantics: `positive favors ${positiveTeam}; negative favors ${negativeTeam}; values are not team totals`,
+            positiveTeam,
+            negativeTeam,
             final,
-            maxRadiant,
-            maxDire,
+            maxPositiveTeamLead: maxRadiant,
+            maxNegativeTeamLead: maxDire,
             largestSwing,
             leadSigns: {
-                radiantPositiveSamples: radiantPositive.length,
-                direPositiveSamples: direPositive.length,
-                lastRadiantPositive,
-                firstDirePositive,
+                positiveTeamLeadSamples: radiantPositive.length,
+                negativeTeamLeadSamples: direPositive.length,
+                lastPositiveTeamLead: lastRadiantPositive,
+                firstNegativeTeamLead: firstDirePositive,
             },
             samples,
         },
@@ -1315,7 +1343,7 @@ function summarizeLaneReport(matchData: any): string | null {
     return `Lane creep report (same-team lane buckets, not mirrored head-to-head matchups) - Radiant ${laneSummary(matchData.laneReport.radiant)}; Dire ${laneSummary(matchData.laneReport.dire)}.`;
 }
 
-function summarizeTowerClusters(events: TowerDeathEvent[], minCount = 3, maxGapSeconds = 90): Array<Record<string, any>> {
+function summarizeTowerClusters(events: TowerDeathEvent[], minCount = 3, maxGapSeconds = 45): Array<Record<string, any>> {
     const clusters: Array<Record<string, any>> = [];
     for (const teamLost of ['Radiant', 'Dire'] as const) {
         const teamEvents = events.filter((event) => event.teamLost === teamLost);
@@ -1617,7 +1645,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         });
         const towerClusters = summarizeTowerClusters(towerEvents);
         for (const cluster of towerClusters) {
-            addFact('objectiveCluster', `Canonical tower timing window; tower cluster only, no barracks or Ancient: ${cluster.teamLost} lost ${cluster.count} towers from ${formatFactTime(cluster.start)} to ${formatFactTime(cluster.end)} (${formatDuration(cluster.durationSeconds)} window): exact tower death times ${cluster.times.map((time: number) => formatFactTime(time)).join(', ')}.`, {
+            addFact('objectiveCluster', `Canonical tower timing window from distinct tower death events; tower cluster only, no barracks or Ancient: ${cluster.teamLost} lost ${cluster.count} towers from ${formatFactTime(cluster.start)} to ${formatFactTime(cluster.end)} (${formatDuration(cluster.durationSeconds)} window): exact distinct tower death times ${cluster.times.map((time: number) => formatFactTime(time)).join(', ')}.`, {
                 ...cluster,
                 structureType: 'tower',
             });
@@ -1655,6 +1683,18 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         if (focusPlayer && !isFocus) continue;
 
         if (isFocus) {
+            const positionLabel = formatStratzPosition(p.position);
+            const roleLabel = typeof p.role === 'string' ? formatStratzEnum(p.role) : null;
+            if (positionLabel || roleLabel) {
+                addFact('role', `${playerLabel} Stratz-inferred role context: ${[positionLabel, roleLabel].filter(Boolean).join(', ')}. This is inferred metadata, not proof that low net worth, farm, deaths, or item timing were acceptable.`, {
+                    inferredPosition: p.position ?? null,
+                    inferredRole: p.role ?? null,
+                    roleConfidence: 'heuristic',
+                });
+            } else {
+                addFact('role', `${playerLabel} has no reliable role/position fact in MATCH_FACTS. Do not invent position 4/5 or excuse farm/net worth based on assumed role.`);
+            }
+
             const benchmarkFacts = benchmarkComparable ? formatOpenDotaBenchmarks(odPlayer) : [];
             if (!benchmarkComparable) {
                 addFact('benchmarks', `${playerLabel} OpenDota benchmark percentiles were intentionally omitted because ${gameModeLabel} is a non-standard mode and OpenDota benchmarks are not mode-specific; Turbo/non-standard modes inflate GPM/XPM/tower-damage percentiles compared with normal-mode distributions.`);
