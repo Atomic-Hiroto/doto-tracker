@@ -288,7 +288,15 @@ function formatMistakes(mistakes: any, debug: boolean): string {
 }
 
 function limitText(text: any, max: number): string {
-    return trunc(String(text || ''), max);
+    const value = String(text || '').trim();
+    if (value.length <= max) return value;
+    const slice = value.slice(0, max - 1);
+    const sentenceEnd = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '));
+    if (sentenceEnd > Math.floor(max * 0.55)) {
+        return slice.slice(0, sentenceEnd + 1).trim();
+    }
+    const wordEnd = slice.lastIndexOf(' ');
+    return `${slice.slice(0, wordEnd > Math.floor(max * 0.55) ? wordEnd : max - 1).trim()}...`;
 }
 
 function formatSections(data: any, debug: boolean, focusMode: boolean): string[] {
@@ -347,6 +355,16 @@ function formatAnalysis(data: any, matchId: number, model: string, source: strin
         : [makeEmbed(first)];
 }
 
+async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[]) {
+    if (!embeds.length) return null;
+    const [first, ...rest] = embeds;
+    const reply = await message.reply({ embeds: [first] });
+    for (const embed of rest) {
+        await safeSend(message.channel, { embeds: [embed] });
+    }
+    return reply;
+}
+
 const BOT_OWNER_ID = '78168838910246912';
 
 export async function analyze(message: Message, args: string[]) {
@@ -402,7 +420,7 @@ export async function analyze(message: Message, args: string[]) {
             focusPlayer: focusPlayerQuery || undefined,
             cached: true,
         });
-        return message.reply({ embeds });
+        return sendAnalysisEmbeds(message, embeds);
     }
 
     try {
@@ -722,7 +740,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             debug: debugFacts,
             focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
         });
-        await message.reply({ embeds });
+        await sendAnalysisEmbeds(message, embeds);
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
@@ -1192,6 +1210,32 @@ function formatDamageTotals(totals: DamageTotals): string {
 }
 
 function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
+    const typedTowerDeaths = Array.isArray(matchData.playbackData?.buildingEvents)
+        ? matchData.playbackData.buildingEvents
+            .filter((event: any) => event?.type === 'TOWER' && Number(event.hp) === 0 && Number(event.time) >= 0)
+            .map((tower: any) => {
+                const time = finiteNumber(tower.time);
+                if (time == null) return null;
+                return {
+                    key: `${tower.isRadiant ? 'Radiant' : 'Dire'}:${tower.indexId ?? tower.npcId ?? time}`,
+                    event: {
+                        teamLost: tower.isRadiant ? 'Radiant' as const : 'Dire' as const,
+                        time,
+                    },
+                };
+            })
+            .filter((row: { key: string; event: TowerDeathEvent } | null): row is { key: string; event: TowerDeathEvent } => !!row)
+        : [];
+    if (typedTowerDeaths.length > 0) {
+        const deduped = new Map<string, TowerDeathEvent>();
+        for (const row of typedTowerDeaths) {
+            if (!deduped.has(row.key) || row.event.time < deduped.get(row.key)!.time) {
+                deduped.set(row.key, row.event);
+            }
+        }
+        return [...deduped.values()].sort((a, b) => a.time - b.time);
+    }
+
     if (!Array.isArray(matchData.towerDeaths)) return [];
     return matchData.towerDeaths
         .map((tower: any) => {
@@ -1204,6 +1248,28 @@ function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
         })
         .filter((event: TowerDeathEvent | null): event is TowerDeathEvent => !!event)
         .sort((a: TowerDeathEvent, b: TowerDeathEvent) => a.time - b.time);
+}
+
+function laneTotals(teamReport: any, laneName: 'safeLane' | 'midLane' | 'offLane') {
+    const rows = Array.isArray(teamReport) ? teamReport : [teamReport].filter(Boolean);
+    return rows.reduce((total, row) => {
+        const lane = row?.[laneName] || {};
+        total.cs += Number(lane.meleeCount || 0) + Number(lane.rangeCount || 0) + Number(lane.siegeCount || 0);
+        total.denies += Number(lane.denyCount || 0);
+        return total;
+    }, { cs: 0, denies: 0 });
+}
+
+function summarizeLaneReport(matchData: any): string | null {
+    if (!matchData.laneReport) return null;
+    const laneSummary = (team: any) => {
+        const lane = (label: string, name: 'safeLane' | 'midLane' | 'offLane') => {
+            const totals = laneTotals(team, name);
+            return `${label}: ${totals.cs} CS/${totals.denies} denies`;
+        };
+        return `${lane('safe', 'safeLane')}, ${lane('mid', 'midLane')}, ${lane('off', 'offLane')}`;
+    };
+    return `Lane creep report - Radiant ${laneSummary(matchData.laneReport.radiant)}; Dire ${laneSummary(matchData.laneReport.dire)}.`;
 }
 
 function summarizeTowerClusters(events: TowerDeathEvent[], minCount = 3, maxGapSeconds = 90): Array<Record<string, any>> {
@@ -1432,15 +1498,9 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         warnings.push('Do not analyze bans for this match unless a reliable draft fact exists.');
     }
 
-    if (matchData.laneReport) {
-        const laneSummary = (team: any) => {
-            const lane = (name: 'safeLane' | 'midLane' | 'offLane') => {
-                const row = team?.[name] || {};
-                return `${name.replace('Lane', '')}: ${Number(row.meleeCount || 0) + Number(row.rangeCount || 0) + Number(row.siegeCount || 0)} CS/${Number(row.denyCount || 0)} denies`;
-            };
-            return `${lane('safeLane')}, ${lane('midLane')}, ${lane('offLane')}`;
-        };
-        addFact('lanes', `Lane creep report - Radiant ${laneSummary(matchData.laneReport.radiant)}; Dire ${laneSummary(matchData.laneReport.dire)}.`);
+    const laneReportSummary = summarizeLaneReport(matchData);
+    if (laneReportSummary) {
+        addFact('lanes', laneReportSummary);
     } else {
         addFact('lanes', 'Lane creep report is unavailable for this match.');
     }
@@ -1609,7 +1669,10 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
             const leverage = selectLeverageEvents(p, matchData.radiantNetworthLeads || [], towerEvents);
             if (isFocus) {
                 const allDeathTimes = deaths.map((event: any) => formatFactTime(event.time));
-                addFact('combatTimeline', `${playerLabel} death timing coverage: ${allDeathTimes.length} of ${Number(p.deaths || 0)} deaths are timestamped${allDeathTimes.length ? ` (${allDeathTimes.join(', ')})` : ''}. If this count is lower than total deaths, describe it as partial timing coverage.`);
+                const coverageText = allDeathTimes.length === Number(p.deaths || 0)
+                    ? `all ${Number(p.deaths || 0)} deaths are timestamped${allDeathTimes.length ? ` from ${allDeathTimes[0]} through ${allDeathTimes[allDeathTimes.length - 1]} (${allDeathTimes.join(', ')})` : ''}`
+                    : `${allDeathTimes.length} of ${Number(p.deaths || 0)} deaths are timestamped${allDeathTimes.length ? ` (${allDeathTimes.join(', ')})` : ''}`;
+                addFact('combatTimeline', `${playerLabel} death timing coverage: ${coverageText}. If the final timestamp is included, describe it as "through" or "last at" that time, not "before" that time. If this count is lower than total deaths, describe it as partial timing coverage.`);
             }
             addFact('combatTimeline', `${playerLabel} leverage-ranked combat events: ${kills.length} kill events${leverage.killTimes.length ? ` (selected ${leverage.killTimes.join(', ')})` : ''}; ${deaths.length} death events${leverage.deathTimes.length ? ` (selected ${leverage.deathTimes.join(', ')})` : ''}. Selected events are ranked by proximity to economy swings and tower deaths, not by earliest timestamp.`);
         }
