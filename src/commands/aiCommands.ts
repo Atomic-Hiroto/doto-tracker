@@ -1506,6 +1506,88 @@ function selectLeverageEvents(player: any, economyValues: any[], towerEvents: To
     };
 }
 
+function summarizeFocusDeathOutcomes(
+    focusPlayer: any,
+    players: any[],
+    towerEvents: TowerDeathEvent[],
+    radiantNetworthLeads: any[],
+    windowSeconds = 60,
+    maxDeaths = 10
+): { text: string; data: Record<string, any> } | null {
+    const deaths: number[] = (Array.isArray(focusPlayer.stats?.deathEvents) ? focusPlayer.stats.deathEvents : [])
+        .map((event: any) => finiteNumber(event.time))
+        .filter((time: number | null): time is number => time != null)
+        .sort((a: number, b: number) => a - b);
+    if (!deaths.length) return null;
+
+    const focusTeam = focusPlayer.isRadiant ? 'Radiant' : 'Dire';
+    const otherTeam = focusPlayer.isRadiant ? 'Dire' : 'Radiant';
+    const economyValues = (radiantNetworthLeads || [])
+        .map((value) => Number(value) * (focusPlayer.isRadiant ? 1 : -1));
+
+    const outcomes: Array<{
+        deathTime: number;
+        alliedKills: number;
+        enemyKills: number;
+        alliedTowersLost: number;
+        enemyTowersLost: number;
+        economyDelta: number | null;
+        text: string;
+    }> = deaths.slice(0, maxDeaths).map((deathTime: number) => {
+        const windowEnd = deathTime + windowSeconds;
+        let alliedKills = 0;
+        let enemyKills = 0;
+
+        for (const player of players) {
+            const killEvents = Array.isArray(player.stats?.killEvents) ? player.stats.killEvents : [];
+            const killCount = killEvents.filter((event: any) => {
+                const time = finiteNumber(event.time);
+                return time != null && time > deathTime && time <= windowEnd;
+            }).length;
+            if (player.isRadiant === focusPlayer.isRadiant) alliedKills += killCount;
+            else enemyKills += killCount;
+        }
+
+        const nearbyTowers = towerEvents.filter((tower) => tower.time > deathTime && tower.time <= windowEnd);
+        const alliedTowersLost = nearbyTowers.filter((tower) => tower.teamLost === focusTeam).length;
+        const enemyTowersLost = nearbyTowers.filter((tower) => tower.teamLost === otherTeam).length;
+        const startMinute = Math.max(0, Math.floor(deathTime / 60));
+        const endMinute = Math.min(economyValues.length - 1, Math.floor(windowEnd / 60));
+        const economyDelta = startMinute <= endMinute
+            && Number.isFinite(economyValues[startMinute])
+            && Number.isFinite(economyValues[endMinute])
+            ? economyValues[endMinute] - economyValues[startMinute]
+            : null;
+        const economyText = economyDelta == null
+            ? 'NW differential unavailable'
+            : `NW differential moved ${formatTeamSwing(economyDelta, focusTeam, otherTeam)} from ${startMinute}m-${endMinute}m`;
+        const towerText = nearbyTowers.length
+            ? `${focusTeam} lost ${alliedTowersLost} tower${alliedTowersLost === 1 ? '' : 's'}, ${otherTeam} lost ${enemyTowersLost} tower${enemyTowersLost === 1 ? '' : 's'}`
+            : 'no tower deaths';
+
+        return {
+            deathTime,
+            alliedKills,
+            enemyKills,
+            alliedTowersLost,
+            enemyTowersLost,
+            economyDelta,
+            text: `${formatFactTime(deathTime)} -> next ${windowSeconds}s: allied kills ${alliedKills}, enemy kills ${enemyKills}; ${towerText}; ${economyText}`,
+        };
+    });
+
+    const omitted = deaths.length > outcomes.length ? ` Showing first ${outcomes.length} of ${deaths.length} deaths.` : '';
+    return {
+        text: `${focusTeam} death outcome context for the focused player, using the ${windowSeconds}s after each death to distinguish isolated deaths from traded deaths: ${outcomes.map((outcome: { text: string }) => outcome.text).join(' | ')}.${omitted}`,
+        data: {
+            focusTeam,
+            windowSeconds,
+            totalDeathsWithTiming: deaths.length,
+            outcomes,
+        },
+    };
+}
+
 async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: AnalyzePromptOptions = {}): Promise<BuiltAnalyzePrompt> {
     const facts: AnalyzeFact[] = [];
     const warnings: string[] = [];
@@ -1763,6 +1845,10 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
                     ? `all ${Number(p.deaths || 0)} deaths are timestamped${allDeathTimes.length ? ` from ${allDeathTimes[0]} through ${allDeathTimes[allDeathTimes.length - 1]} (${allDeathTimes.join(', ')})` : ''}`
                     : `${allDeathTimes.length} of ${Number(p.deaths || 0)} deaths are timestamped${allDeathTimes.length ? ` (${allDeathTimes.join(', ')})` : ''}`;
                 addFact('combatTimeline', `${playerLabel} death timing coverage: ${coverageText}. If the final timestamp is included, describe it as "through" or "last at" that time, not "before" that time. If this count is lower than total deaths, describe it as partial timing coverage.`);
+                const deathOutcomeContext = summarizeFocusDeathOutcomes(p, players, towerEvents, matchData.radiantNetworthLeads || []);
+                if (deathOutcomeContext) {
+                    addFact('combatTimeline', deathOutcomeContext.text, deathOutcomeContext.data);
+                }
             }
             addFact('combatTimeline', `${playerLabel} leverage-ranked combat events: ${kills.length} kill events${leverage.killTimes.length ? ` (selected ${leverage.killTimes.join(', ')})` : ''}; ${deaths.length} death events${leverage.deathTimes.length ? ` (selected ${leverage.deathTimes.join(', ')})` : ''}. Selected events are ranked by proximity to economy swings and tower deaths, not by earliest timestamp.`);
         }
