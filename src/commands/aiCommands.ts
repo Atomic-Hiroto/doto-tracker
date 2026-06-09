@@ -104,6 +104,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Do not say "Ancient fell" or name a final building unless MATCH_FACTS explicitly contains that building event.
 - Do not use web/meta knowledge for match facts. Patch context may explain broad strategic context only if MATCH_FACTS.patchContext is present.
 - Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
+- LVP should come from the losing team unless MATCH_FACTS clearly shows an extreme exception such as abandon-level impact.
 - Keep the spicy style, but every roast needs a real stat behind it.
 
 ## Perspective
@@ -121,6 +122,8 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Use only facts in MATCH_FACTS.
 - If a stat is absent, such as lane CS, state it is unavailable in one short clause and move on.
 - If only some of a player's death timings are listed, report the count honestly: "1 of 8 deaths is timestamped", not language implying all deaths are explained.
+- Net worth lead and lane CS are independent signals. When they disagree, reconcile through kills, deaths, objectives, or tower damage; do not assume the richer team won lane.
+- OpenDota benchmark percentiles are not mode-specific. If MATCH_FACTS says benchmarks were omitted or caveated for Turbo/non-standard mode, do not use those percentiles as proof of elite farm or poor last-hitting.
 
 ## Mistake Objects
 - keyMistakes must be an array of ranked objects.
@@ -185,7 +188,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 mvpAndStandouts: {
                     type: 'string',
-                    description: 'Format EXACTLY like this with NEWLINES and evidence ids:\\n**MVP: Player — Hero** - 1 sentence on why.\\n**LVP: Player — Hero** - 1 sentence on why.\\n**Honorable Mention: Player — Hero** - 1 sentence on why.',
+                    description: 'Format EXACTLY like this with NEWLINES and evidence ids:\\n**MVP: Player — Hero** - 1 sentence on why.\\n**LVP: Player — Hero** - 1 sentence on why; strongly prefer a losing-team player unless facts show an extreme exception.\\n**Honorable Mention: Player — Hero** - 1 sentence on why.',
                 },
                 mapControl: {
                     type: 'string',
@@ -228,7 +231,7 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
                 },
                 benchmarkCheck: {
                     type: 'string',
-                    description: 'Compare focused player to available OpenDota benchmark percentiles. If benchmarks are unavailable, say unavailable and use replay facts instead. Include evidence ids when available.',
+                    description: 'Use benchmark facts only when comparable benchmark percentiles are present. If benchmarks were omitted for Turbo/non-standard mode or are unavailable, state that briefly and use replay facts instead. Include evidence ids when available.',
                 },
                 keyMistakes: {
                     type: 'array',
@@ -257,7 +260,16 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
 };
 
 function stripEvidenceMarkers(text: string): string {
-    return text.replace(/\s*\[F\d+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+    return normalizeDisplayMarkdown(text.replace(/\s*\[F\d+\]/g, '').replace(/\s{2,}/g, ' ').trim());
+}
+
+function normalizeDisplayMarkdown(text: string): string {
+    const value = String(text || '');
+    const boldMarkerCount = (value.match(/\*\*/g) || []).length;
+    if (boldMarkerCount % 2 !== 0) {
+        return value.replace(/\*\*/g, '');
+    }
+    return value;
 }
 
 function maybeStripEvidence(value: any, debug: boolean): any {
@@ -274,17 +286,20 @@ function maybeStripEvidence(value: any, debug: boolean): any {
     return value;
 }
 
-function formatMistakes(mistakes: any, debug: boolean): string {
+function formatMistakes(mistakes: any, debug: boolean, maxItems = 3): string {
     if (!Array.isArray(mistakes)) return String(mistakes || 'No mistakes returned.');
-    return mistakes.map((mistake, idx) => {
-        const evidence = debug && Array.isArray(mistake.evidence) && mistake.evidence.length
-            ? ` [${mistake.evidence.join('][')}]`
-            : '';
-        const severity = mistake.severity ? `**${mistake.severity}**` : `**#${idx + 1}**`;
-        const claim = debug ? mistake.claim : stripEvidenceMarkers(String(mistake.claim || ''));
-        const fix = debug ? mistake.fix : stripEvidenceMarkers(String(mistake.fix || ''));
-        return `${idx + 1}. ${severity}: ${claim}${evidence}\nFix: ${fix}`;
-    }).join('\n');
+    return mistakes
+        .filter((mistake) => mistake?.claim || mistake?.fix)
+        .slice(0, maxItems)
+        .map((mistake, idx) => {
+            const evidence = debug && Array.isArray(mistake.evidence) && mistake.evidence.length
+                ? ` [${mistake.evidence.join('][')}]`
+                : '';
+            const severity = mistake.severity ? `**${mistake.severity}**` : `**#${idx + 1}**`;
+            const claim = limitText(debug ? normalizeDisplayMarkdown(String(mistake.claim || '')) : stripEvidenceMarkers(String(mistake.claim || '')), 260);
+            const fix = limitText(debug ? normalizeDisplayMarkdown(String(mistake.fix || '')) : stripEvidenceMarkers(String(mistake.fix || '')), 320);
+            return `${idx + 1}. ${severity}: ${claim}${evidence}\nFix: ${fix}`;
+        }).join('\n');
 }
 
 function limitText(text: any, max: number): string {
@@ -302,26 +317,26 @@ function limitText(text: any, max: number): string {
 function formatSections(data: any, debug: boolean, focusMode: boolean): string[] {
     const display = maybeStripEvidence(data, debug);
     if (focusMode && data.focusSummary) {
-        const limits = { summary: 700, lane: 620, items: 680, fights: 780, benchmarks: 520, mistakes: 1200, plan: 620 };
+        const limits = { summary: 850, lane: 780, items: 850, fights: 900, benchmarks: 700, mistakes: 1200, plan: 760 };
         return [
             `**🎯 YOUR GAME**\n${limitText(display.focusSummary, limits.summary)}`,
             `**🌱 LANE & FARM**\n${limitText(display.laneAndFarm, limits.lane)}`,
             `**⚔️ TIMINGS & ITEMS**\n${limitText(display.timingsAndItems, limits.items)}`,
             `**💀 FIGHTS & DEATHS**\n${limitText(display.fightsAndDeaths, limits.fights)}`,
             `**📊 BENCHMARK CHECK**\n${limitText(display.benchmarkCheck, limits.benchmarks)}`,
-            `**🧯 KEY MISTAKES**\n${limitText(formatMistakes(data.keyMistakes, debug), limits.mistakes)}`,
+            `**🧯 KEY MISTAKES**\n${formatMistakes(data.keyMistakes, debug, 3)}`,
             `**📝 NEXT GAME PLAN**\n${limitText(display.nextGamePlan, limits.plan)}`,
         ];
     }
 
     const limits = focusMode
         ? { narrative: 760, draft: 620, items: 760, mistakes: 1400, map: 620, mvp: 620, improve: 560 }
-        : { narrative: 540, draft: 460, items: 560, mistakes: 860, map: 420, mvp: 520, improve: 340 };
+        : { narrative: 720, draft: 720, items: 820, mistakes: 900, map: 700, mvp: 760, improve: 520 };
     return [
         `**📖 GAME NARRATIVE**\n${limitText(display.gameNarrative, limits.narrative)}`,
         `**🏗️ DRAFT & LANING**\n${limitText(display.draftAndLaning, limits.draft)}`,
         `**⚔️ ITEMS & DAMAGE**\n${limitText(display.itemizationAndDamage, limits.items)}`,
-        `**💀 KEY MISTAKES**\n${limitText(formatMistakes(data.keyMistakes, debug), limits.mistakes)}`,
+        `**💀 KEY MISTAKES**\n${formatMistakes(data.keyMistakes, debug, focusMode ? 3 : 2)}`,
         `**👁️ MAP CONTROL & VISION**\n${limitText(display.mapControl, limits.map)}`,
         `**🏆 MVP & STANDOUTS**\n${limitText(display.mvpAndStandouts, limits.mvp)}`,
         `**📝 WHAT TO IMPROVE**\n${limitText(display.whatToImprove, limits.improve)}`,
@@ -345,7 +360,12 @@ function formatAnalysis(data: any, matchId: number, model: string, source: strin
         .setTimestamp();
 
     if (!focusMode) {
-        return [makeEmbed(sections.join('\n\n'))];
+        const full = sections.join('\n\n');
+        if (full.length <= 3900) return [makeEmbed(full)];
+        return [
+            makeEmbed(sections.slice(0, 4).join('\n\n'), ' — 1/2'),
+            makeEmbed(sections.slice(4).join('\n\n'), ' — 2/2'),
+        ];
     }
 
     const first = sections.slice(0, 4).join('\n\n');
@@ -1021,6 +1041,13 @@ function isReliableDraftMode(mode: any): boolean {
     return normalized.includes('CAPTAINSMODE') || normalized.includes('CAPTAINSDRAFT');
 }
 
+function isOpenDotaBenchmarkComparableMode(mode: any): boolean {
+    if (typeof mode === 'number') return [1, 2, 16, 22].includes(mode);
+    if (typeof mode !== 'string') return false;
+    const normalized = mode.replace(/[_\s-]/g, '').toUpperCase();
+    return ['ALLPICK', 'RANKEDALLPICK', 'CAPTAINSMODE', 'CAPTAINSDRAFT'].some((modeName) => normalized.includes(modeName));
+}
+
 function countStatusBits(value: any): number | null {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric < 0) return null;
@@ -1210,6 +1237,21 @@ function formatDamageTotals(totals: DamageTotals): string {
 }
 
 function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
+    const capByFinalStatus = (events: TowerDeathEvent[]) => {
+        const caps: Record<'Radiant' | 'Dire', number | null> = {
+            Radiant: countStatusBits(matchData.towerStatusRadiant),
+            Dire: countStatusBits(matchData.towerStatusDire),
+        };
+        return (['Radiant', 'Dire'] as const).flatMap((team) => {
+            const standing = caps[team];
+            const maxDestroyed = standing == null ? 11 : Math.max(0, 11 - standing);
+            return events
+                .filter((event) => event.teamLost === team)
+                .sort((a, b) => a.time - b.time)
+                .slice(0, maxDestroyed);
+        }).sort((a, b) => a.time - b.time);
+    };
+
     const typedTowerDeaths = Array.isArray(matchData.playbackData?.buildingEvents)
         ? matchData.playbackData.buildingEvents
             .filter((event: any) => event?.type === 'TOWER' && Number(event.hp) === 0 && Number(event.time) >= 0)
@@ -1217,7 +1259,7 @@ function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
                 const time = finiteNumber(tower.time);
                 if (time == null) return null;
                 return {
-                    key: `${tower.isRadiant ? 'Radiant' : 'Dire'}:${tower.indexId ?? tower.npcId ?? time}`,
+                    key: `${tower.isRadiant ? 'Radiant' : 'Dire'}:${tower.npcId ?? tower.indexId ?? time}`,
                     event: {
                         teamLost: tower.isRadiant ? 'Radiant' as const : 'Dire' as const,
                         time,
@@ -1233,11 +1275,11 @@ function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
                 deduped.set(row.key, row.event);
             }
         }
-        return [...deduped.values()].sort((a, b) => a.time - b.time);
+        return capByFinalStatus([...deduped.values()]);
     }
 
     if (!Array.isArray(matchData.towerDeaths)) return [];
-    return matchData.towerDeaths
+    return capByFinalStatus(matchData.towerDeaths
         .map((tower: any) => {
             const time = finiteNumber(tower.time);
             if (time == null) return null;
@@ -1247,7 +1289,7 @@ function collectTowerDeathEvents(matchData: any): TowerDeathEvent[] {
             };
         })
         .filter((event: TowerDeathEvent | null): event is TowerDeathEvent => !!event)
-        .sort((a: TowerDeathEvent, b: TowerDeathEvent) => a.time - b.time);
+        .sort((a: TowerDeathEvent, b: TowerDeathEvent) => a.time - b.time));
 }
 
 function laneTotals(teamReport: any, laneName: 'safeLane' | 'midLane' | 'offLane') {
@@ -1445,6 +1487,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     const gameModeValue = matchData.gameMode ?? matchData.game_mode;
     const gameModeLabel = formatStratzGameMode(gameModeValue);
     const reliableDraft = isReliableDraftMode(gameModeValue);
+    const benchmarkComparable = isOpenDotaBenchmarkComparableMode(gameModeValue);
     const durationSeconds = Number(matchData.durationSeconds || matchData.duration || 0);
     const winner = matchData.didRadiantWin ? 'Radiant' : 'Dire';
     const matchId = matchData.id || matchData.match_id;
@@ -1611,9 +1654,13 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         if (focusPlayer && !isFocus) continue;
 
         if (isFocus) {
-            const benchmarkFacts = formatOpenDotaBenchmarks(odPlayer);
-            if (benchmarkFacts.length) {
+            const benchmarkFacts = benchmarkComparable ? formatOpenDotaBenchmarks(odPlayer) : [];
+            if (!benchmarkComparable) {
+                addFact('benchmarks', `${playerLabel} OpenDota benchmark percentiles were intentionally omitted because ${gameModeLabel} is a non-standard mode and OpenDota benchmarks are not mode-specific; Turbo/non-standard modes inflate GPM/XPM/tower-damage percentiles compared with normal-mode distributions.`);
+            } else if (benchmarkFacts.length) {
                 addFact('benchmarks', `${playerLabel} OpenDota hero benchmark percentiles: ${benchmarkFacts.join('; ')}. Treat these as available benchmark facts for the focused player only.`);
+            } else {
+                addFact('benchmarks', `${playerLabel} OpenDota benchmark percentiles are unavailable for this match.`);
             }
         }
 
