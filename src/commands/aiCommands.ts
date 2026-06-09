@@ -106,6 +106,22 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
 - Keep the spicy style, but every roast needs a real stat behind it.
 
+## Perspective
+- Never print an unlabeled +/- lead. Always name the side: "Dire led by 30,383", not "-30,383".
+- When a focus player is set, frame all economy / XP / lead facts from that player's team's point of view.
+
+## Focus Mode
+- Center the whole analysis on the focus player. Other heroes appear only as context for what that player faced or should have done.
+- Order the report around their game: laning -> item timings -> fights they were in -> their deaths -> result.
+- Lead the narrative with their individual arc, not the match's.
+- If MATCH_FACTS contains benchmark facts for this player, use them explicitly as percentile context.
+- If benchmark facts are absent, do not invent a benchmark.
+
+## Data Honesty
+- Use only facts in MATCH_FACTS.
+- If a stat is absent, such as lane CS, state it is unavailable in one short clause and move on.
+- If only some of a player's death timings are listed, report the count honestly: "1 of 8 deaths is timestamped", not language implying all deaths are explained.
+
 ## Mistake Objects
 - keyMistakes must be an array of ranked objects.
 - Severity must be one of: "game-losing", "costly", "minor".
@@ -186,6 +202,60 @@ const ANALYZE_RESPONSE_FORMAT = {
     },
 };
 
+const ANALYZE_FOCUS_RESPONSE_FORMAT = {
+    type: 'json_schema' as const,
+    json_schema: {
+        name: 'player_match_coaching',
+        strict: true,
+        schema: {
+            type: 'object',
+            properties: {
+                focusSummary: {
+                    type: 'string',
+                    description: '2-3 sentences about the focused player only: their team, hero, result, role in the win/loss, and the decisive personal arc. Include evidence ids.',
+                },
+                laneAndFarm: {
+                    type: 'string',
+                    description: 'Focused-player laning/farm analysis from CS, denies, net worth, GPM/XPM, lane report, and benchmark facts when available. Do not write a whole-team recap. Include evidence ids.',
+                },
+                timingsAndItems: {
+                    type: 'string',
+                    description: 'Focused-player item timings/final inventory and how those timings changed fights or objectives. Include evidence ids.',
+                },
+                fightsAndDeaths: {
+                    type: 'string',
+                    description: 'Focused-player combat and death review. Use all-death timing facts when present, plus leverage-ranked events. Include evidence ids.',
+                },
+                benchmarkCheck: {
+                    type: 'string',
+                    description: 'Compare focused player to available OpenDota benchmark percentiles. If benchmarks are unavailable, say unavailable and use replay facts instead. Include evidence ids when available.',
+                },
+                keyMistakes: {
+                    type: 'array',
+                    description: '2-3 focused-player mistakes ranked by impact.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            claim: { type: 'string', description: 'A concrete focused-player mistake claim with no unsupported numbers.' },
+                            evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids like F7, without brackets.' },
+                            severity: { type: 'string', enum: ['game-losing', 'costly', 'minor'] },
+                            fix: { type: 'string', description: 'Counterfactual coaching: mistake -> consequence -> specific alternative.' },
+                        },
+                        required: ['claim', 'evidence', 'severity', 'fix'],
+                        additionalProperties: false,
+                    },
+                },
+                nextGamePlan: {
+                    type: 'string',
+                    description: 'A concrete next-game plan for the focused player: lane/farm target, item/timing target, fight rule, and one avoidable death pattern. Include evidence ids.',
+                },
+            },
+            required: ['focusSummary', 'laneAndFarm', 'timingsAndItems', 'fightsAndDeaths', 'benchmarkCheck', 'keyMistakes', 'nextGamePlan'],
+            additionalProperties: false,
+        },
+    },
+};
+
 function stripEvidenceMarkers(text: string): string {
     return text.replace(/\s*\[F\d+\]/g, '').replace(/\s{2,}/g, ' ').trim();
 }
@@ -223,6 +293,19 @@ function limitText(text: any, max: number): string {
 
 function formatSections(data: any, debug: boolean, focusMode: boolean): string[] {
     const display = maybeStripEvidence(data, debug);
+    if (focusMode && data.focusSummary) {
+        const limits = { summary: 700, lane: 620, items: 680, fights: 780, benchmarks: 520, mistakes: 1200, plan: 620 };
+        return [
+            `**🎯 YOUR GAME**\n${limitText(display.focusSummary, limits.summary)}`,
+            `**🌱 LANE & FARM**\n${limitText(display.laneAndFarm, limits.lane)}`,
+            `**⚔️ TIMINGS & ITEMS**\n${limitText(display.timingsAndItems, limits.items)}`,
+            `**💀 FIGHTS & DEATHS**\n${limitText(display.fightsAndDeaths, limits.fights)}`,
+            `**📊 BENCHMARK CHECK**\n${limitText(display.benchmarkCheck, limits.benchmarks)}`,
+            `**🧯 KEY MISTAKES**\n${limitText(formatMistakes(data.keyMistakes, debug), limits.mistakes)}`,
+            `**📝 NEXT GAME PLAN**\n${limitText(display.nextGamePlan, limits.plan)}`,
+        ];
+    }
+
     const limits = focusMode
         ? { narrative: 760, draft: 620, items: 760, mistakes: 1400, map: 620, mvp: 620, improve: 560 }
         : { narrative: 540, draft: 460, items: 560, mistakes: 860, map: 420, mvp: 520, improve: 340 };
@@ -610,7 +693,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
         const response = await callAI(ANALYZE_SYSTEM, prompt, {
             model: useModel,
             params: modelOverride ? { ...AIConstants.AI_ANALYZE_PARAMS, max_tokens: 16000 } : AIConstants.AI_ANALYZE_PARAMS,
-            response_format: ANALYZE_RESPONSE_FORMAT,
+            response_format: resolvedFocusPlayer ? ANALYZE_FOCUS_RESPONSE_FORMAT : ANALYZE_RESPONSE_FORMAT,
             useWeb: false,
         });
 
@@ -972,13 +1055,29 @@ function formatFactTime(seconds: any): string {
     return formatDuration(value);
 }
 
-function formatSignedNumber(value: number): string {
-    return `${value > 0 ? '+' : ''}${Math.round(value).toLocaleString()}`;
+function formatTeamLead(value: number, positiveTeam: string, negativeTeam: string): string {
+    const rounded = Math.abs(Math.round(value)).toLocaleString();
+    if (value > 0) return `${positiveTeam} led by ${rounded}`;
+    if (value < 0) return `${negativeTeam} led by ${rounded}`;
+    return 'the teams were even';
+}
+
+function formatTeamSwing(value: number, positiveTeam: string, negativeTeam: string): string {
+    const rounded = Math.abs(Math.round(value)).toLocaleString();
+    if (value > 0) return `${rounded} toward ${positiveTeam}`;
+    if (value < 0) return `${rounded} toward ${negativeTeam}`;
+    return '0';
 }
 
 function formatPercent(part: number, total: number): string {
     if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) return '0%';
     return `${Math.round((part / total) * 100)}%`;
+}
+
+function ordinal(n: number): string {
+    const suffixes = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return `${n}${suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]}`;
 }
 
 function sampleNumberSeries(values: any[], maxPoints = 8): Array<{ minute: number; value: number }> {
@@ -996,7 +1095,13 @@ function sampleNumberSeries(values: any[], maxPoints = 8): Array<{ minute: numbe
     return [...selected.values()].sort((a, b) => a.minute - b.minute);
 }
 
-function summarizeAdvantageSeries(label: string, values: any[]): { text: string; data: Record<string, any> } | null {
+function summarizeAdvantageSeries(
+    label: string,
+    values: any[],
+    positiveTeam = 'Radiant',
+    negativeTeam = 'Dire',
+    perspectiveLabel = 'Radiant perspective'
+): { text: string; data: Record<string, any> } | null {
     const nums = (values || [])
         .map((value, minute) => ({ minute, value: Number(value) }))
         .filter((point) => Number.isFinite(point.value));
@@ -1014,14 +1119,14 @@ function summarizeAdvantageSeries(label: string, values: any[]): { text: string;
     const direPositive = nums.filter((point) => point.value < 0);
     const lastRadiantPositive = radiantPositive[radiantPositive.length - 1] || null;
     const firstDirePositive = direPositive[0] || null;
-    const samples = sampleNumberSeries(values).map((point) => `${point.minute}m ${formatSignedNumber(point.value)}`);
+    const samples = sampleNumberSeries(values).map((point) => `${point.minute}m ${formatTeamLead(point.value, positiveTeam, negativeTeam)}`);
     const leadSignText = [
-        radiantPositive.length ? `Radiant-positive samples ${radiantPositive.length}, last at ${lastRadiantPositive?.minute}m` : 'no Radiant-positive samples',
-        direPositive.length ? `Dire-positive samples ${direPositive.length}, first at ${firstDirePositive?.minute}m` : 'no Dire-positive samples',
+        radiantPositive.length ? `${positiveTeam}-lead samples ${radiantPositive.length}, last at ${lastRadiantPositive?.minute}m` : `no ${positiveTeam}-lead samples`,
+        direPositive.length ? `${negativeTeam}-lead samples ${direPositive.length}, first at ${firstDirePositive?.minute}m` : `no ${negativeTeam}-lead samples`,
     ].join('; ');
 
     return {
-        text: `${label} Radiant perspective: final ${formatSignedNumber(final.value)} at ${final.minute}m; max Radiant lead ${formatSignedNumber(maxRadiant.value)} at ${maxRadiant.minute}m; max Dire lead ${formatSignedNumber(maxDire.value)} at ${maxDire.minute}m; largest 1-min swing ${formatSignedNumber(largestSwing.delta)} from ${largestSwing.from}m-${largestSwing.to}m; lead signs: ${leadSignText}.`,
+        text: `${label} (${perspectiveLabel}): final ${formatTeamLead(final.value, positiveTeam, negativeTeam)} at ${final.minute}m; max ${positiveTeam} lead ${Math.abs(Math.round(maxRadiant.value)).toLocaleString()} at ${maxRadiant.minute}m; max ${negativeTeam} lead ${Math.abs(Math.round(maxDire.value)).toLocaleString()} at ${maxDire.minute}m; largest 1-min swing ${formatTeamSwing(largestSwing.delta, positiveTeam, negativeTeam)} from ${largestSwing.from}m-${largestSwing.to}m; lead signs: ${leadSignText}.`,
         data: {
             final,
             maxRadiant,
@@ -1036,6 +1141,15 @@ function summarizeAdvantageSeries(label: string, values: any[]): { text: string;
             samples,
         },
     };
+}
+
+function summarizeAdvantageForTeam(label: string, values: any[], team: 'Radiant' | 'Dire'): { text: string; data: Record<string, any> } | null {
+    const multiplier = team === 'Radiant' ? 1 : -1;
+    const adjusted = (values || []).map((value) => Number(value) * multiplier);
+    const otherTeam = team === 'Radiant' ? 'Dire' : 'Radiant';
+    const summary = summarizeAdvantageSeries(label, adjusted, team, otherTeam, `${team} perspective`);
+    if (!summary) return null;
+    return { text: summary.text, data: { ...summary.data, perspectiveTeam: team } };
 }
 
 function isImportantItemName(name: string): boolean {
@@ -1187,6 +1301,27 @@ function findOpenDotaPlayer(odMatch: any, stratzPlayer: any): any | null {
     ) || null;
 }
 
+function formatOpenDotaBenchmarks(odPlayer: any): string[] {
+    const labels: Record<string, string> = {
+        gold_per_min: 'GPM',
+        xp_per_min: 'XPM',
+        kills_per_min: 'kills/min',
+        last_hits_per_min: 'LH/min',
+        hero_damage_per_min: 'hero damage/min',
+        hero_healing_per_min: 'healing/min',
+        tower_damage: 'tower damage',
+    };
+    const benchmarks = odPlayer?.benchmarks;
+    if (!benchmarks || typeof benchmarks !== 'object') return [];
+
+    return Object.entries(labels)
+        .map(([key, label]) => {
+            const pct = Number((benchmarks as any)[key]?.pct);
+            return Number.isFinite(pct) ? `${label} ${ordinal(Math.round(pct * 100))} percentile` : '';
+        })
+        .filter(Boolean);
+}
+
 async function findFocusPlayer(players: any[], query?: string): Promise<any | null> {
     const needle = query?.trim().toLowerCase();
     if (!needle) return null;
@@ -1306,12 +1441,22 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
             return `${lane('safeLane')}, ${lane('midLane')}, ${lane('offLane')}`;
         };
         addFact('lanes', `Lane creep report - Radiant ${laneSummary(matchData.laneReport.radiant)}; Dire ${laneSummary(matchData.laneReport.dire)}.`);
+    } else {
+        addFact('lanes', 'Lane creep report is unavailable for this match.');
     }
 
-    const goldSummary = summarizeAdvantageSeries('Net worth lead', matchData.radiantNetworthLeads || []);
+    const focusTeam = focusPlayer ? (focusPlayer.isRadiant ? 'Radiant' as const : 'Dire' as const) : null;
+    const goldSummary = focusTeam
+        ? summarizeAdvantageForTeam('Net worth lead', matchData.radiantNetworthLeads || [], focusTeam)
+        : summarizeAdvantageSeries('Net worth lead', matchData.radiantNetworthLeads || []);
     if (goldSummary) addFact('economy', goldSummary.text, goldSummary.data);
-    const xpSummary = summarizeAdvantageSeries('XP lead', matchData.radiantExperienceLeads || []);
+    const xpSummary = focusTeam
+        ? summarizeAdvantageForTeam('XP lead', matchData.radiantExperienceLeads || [], focusTeam)
+        : summarizeAdvantageSeries('XP lead', matchData.radiantExperienceLeads || []);
     if (xpSummary) addFact('economy', xpSummary.text, xpSummary.data);
+    if (!matchData.radiantExperienceLeads?.length) {
+        addFact('economy', 'XP lead data is unavailable for this match.');
+    }
 
     const radiantDamage = emptyDamageTotals();
     const direDamage = emptyDamageTotals();
@@ -1405,6 +1550,13 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
 
         if (focusPlayer && !isFocus) continue;
 
+        if (isFocus) {
+            const benchmarkFacts = formatOpenDotaBenchmarks(odPlayer);
+            if (benchmarkFacts.length) {
+                addFact('benchmarks', `${playerLabel} OpenDota hero benchmark percentiles: ${benchmarkFacts.join('; ')}. Treat these as available benchmark facts for the focused player only.`);
+            }
+        }
+
         const inventory = await resolveFinalInventory(p);
         if (inventory.length) addFact('items', `${playerLabel} final inventory: ${inventory.join(', ')}.`);
         const importantPurchases = await resolveImportantPurchases(p);
@@ -1453,8 +1605,12 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
 
         const kills = Array.isArray(p.stats?.killEvents) ? p.stats.killEvents : [];
         const deaths = Array.isArray(p.stats?.deathEvents) ? p.stats.deathEvents : [];
-        if (kills.length || deaths.length) {
+        if (kills.length || deaths.length || (isFocus && Number(p.deaths || 0) > 0)) {
             const leverage = selectLeverageEvents(p, matchData.radiantNetworthLeads || [], towerEvents);
+            if (isFocus) {
+                const allDeathTimes = deaths.map((event: any) => formatFactTime(event.time));
+                addFact('combatTimeline', `${playerLabel} death timing coverage: ${allDeathTimes.length} of ${Number(p.deaths || 0)} deaths are timestamped${allDeathTimes.length ? ` (${allDeathTimes.join(', ')})` : ''}. If this count is lower than total deaths, describe it as partial timing coverage.`);
+            }
             addFact('combatTimeline', `${playerLabel} leverage-ranked combat events: ${kills.length} kill events${leverage.killTimes.length ? ` (selected ${leverage.killTimes.join(', ')})` : ''}; ${deaths.length} death events${leverage.deathTimes.length ? ` (selected ${leverage.deathTimes.join(', ')})` : ''}. Selected events are ranked by proximity to economy swings and tower deaths, not by earliest timestamp.`);
         }
     }
@@ -1483,7 +1639,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     };
 
     const focusRules = focusPlayerLabel
-        ? `\nPersonal coaching mode:\n- Focus on ${focusPlayerLabel}; use other players only as context.\n- whatToImprove must be a counterfactual coaching chain for this player: mistake -> consequence -> specific alternative.\n- keyMistakes should prioritize this player's errors unless another teammate fact is necessary context.\n`
+        ? `\nPersonal coaching mode:\n- Focus on ${focusPlayerLabel}; use other players only as context for what this player faced or should have done.\n- Structure the analysis around this player's game: laning -> item timings -> fights they were in -> their deaths -> result.\n- Lead with this player's individual arc, not the match's overall arc.\n- Use benchmark facts explicitly only if MATCH_FACTS contains a benchmarks topic for this player; otherwise do not invent benchmark comparisons.\n- whatToImprove / nextGamePlan must be a counterfactual coaching chain for this player: mistake -> consequence -> specific alternative.\n- keyMistakes should prioritize this player's errors unless another teammate fact is necessary context.\n`
         : '';
     const lengthRules = focusPlayerLabel
         ? `\nLength target:\n- Personal coaching mode can be richer than the default recap, but stay under two Discord embeds.\n- Use 2-3 keyMistakes. Keep each claim and fix to one compact sentence.\n`
