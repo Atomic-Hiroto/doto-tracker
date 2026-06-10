@@ -84,10 +84,12 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 
 ## Reasoning Style
 - Write like an analyst, not a stat dump: every section should explain what the facts meant for how the game played out.
+- Each fact may be deep-analyzed in ONE section only. Other sections may reference that same fact in 5 words or fewer, and only when adding new evidence.
 - You may infer strategic conclusions such as "damage profile problem", "map collapse", "timing window", or "failed initiation", but tie each conclusion to concrete evidence.
 - Exact numbers, counts, timings, structure totals, and damage splits must be copied from facts. Do not calculate new totals, approximate durations, or combine categories unless a fact already did it.
 - If you use a qualitative label like "physical-heavy", "magic burst", "vision control", or "tower cascade", cite the team damage, utility, or objective-cluster fact that justifies it.
 - Do not add player damage values together. Combined damage claims are allowed only when MATCH_FACTS has an explicit combined-damage fact.
+- Persona is presentation-only, never analysis. Only the TL;DR and the first clause of a section opener may use mild doto-chan flavor; all evidence, numbers, causality, mistakes, and coaching fixes must stay neutral and factual.
 
 ## Analysis Order
 1. Match arc: winner, duration, game mode, decisive economy or objective swings.
@@ -135,7 +137,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - keyMistakes must be an array of ranked objects.
 - Severity must be one of: "game-losing", "costly", "minor".
 - Each mistake needs: claim, evidence, severity, fix.
-- The fix must chain mistake -> consequence -> specific alternative using only facts on the sheet.
+- The fix must be compact and chain cause -> consequence -> specific alternative using only facts on the sheet.
 - In focus mode, do not invent filler mistakes for a player who clearly had a clean/high-impact game. One real mistake plus marginal improvement notes is better than three weak mistakes.
 
 ## Length Budget
@@ -146,6 +148,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 ## Output Exemplar
 For a stomp:
 {
+  "tldr": "Dire found the only timing that mattered, then turned one item reveal into a tower avalanche.",
   "gameNarrative": "**Dire** won because the economy graph turned once and never came back: the net worth lead flipped by 7m and peaked at -28,000 by 18m [F6]. The tower cluster at 14:10-15:22 shows the map collapsing immediately after that swing, not a slow loss [F12].",
   "draftAndLaning": "Radiant had physical cores but their lane CS did not create a usable timing; Dire's magic-heavy damage profile punished every defensive move [F4][F8].",
   "itemizationAndDamage": "**Axe**'s 6:02 Blink timing mattered because it arrived before Radiant's BKBs, turning the next two death clusters into objectives [F20][F31].",
@@ -166,6 +169,10 @@ const ANALYZE_RESPONSE_FORMAT = {
         schema: {
             type: 'object',
             properties: {
+                tldr: {
+                    type: 'string',
+                    description: 'One sharp one-line TL;DR of the match result or focused-player arc. Include no more than one evidence id.',
+                },
                 gameNarrative: {
                     type: 'string',
                     description: 'The story of this match in 2-4 concise sentences. Use concrete economy/objective/timing facts and include evidence ids like [F12]. Do not mention Ancient/final buildings unless a fact explicitly says so. Use **bold** for player and hero names.',
@@ -187,7 +194,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                             claim: { type: 'string', description: 'A concrete mistake claim with no unsupported numbers.' },
                             evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids like F7, without brackets.' },
                             severity: { type: 'string', enum: ['game-losing', 'costly', 'minor'] },
-                            fix: { type: 'string', description: 'Counterfactual coaching: mistake -> consequence -> specific alternative.' },
+                            fix: { type: 'string', description: 'Compact counterfactual coaching: cause -> consequence -> specific alternative.' },
                         },
                         required: ['claim', 'evidence', 'severity', 'fix'],
                         additionalProperties: false,
@@ -206,7 +213,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                     description: 'One direct sentence on what the losing team should have done differently, grounded in one or more evidence ids.',
                 },
             },
-            required: ['gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'mapControl', 'whatToImprove'],
+            required: ['tldr', 'gameNarrative', 'draftAndLaning', 'itemizationAndDamage', 'keyMistakes', 'mvpAndStandouts', 'mapControl', 'whatToImprove'],
             additionalProperties: false,
         },
     },
@@ -220,6 +227,10 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
         schema: {
             type: 'object',
             properties: {
+                tldr: {
+                    type: 'string',
+                    description: 'One sharp one-line TL;DR of the focused player arc. Include no more than one evidence id.',
+                },
                 focusSummary: {
                     type: 'string',
                     description: '2-3 sentences about the focused player only: their team, hero, result, inferred role if available, and the decisive personal arc. Include evidence ids.',
@@ -249,7 +260,7 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
                             claim: { type: 'string', description: 'A concrete focused-player mistake claim with no unsupported numbers.' },
                             evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids like F7, without brackets.' },
                             severity: { type: 'string', enum: ['game-losing', 'costly', 'minor'] },
-                            fix: { type: 'string', description: 'Counterfactual coaching: mistake -> consequence -> specific alternative.' },
+                            fix: { type: 'string', description: 'Compact counterfactual coaching: cause -> consequence -> specific alternative.' },
                         },
                         required: ['claim', 'evidence', 'severity', 'fix'],
                         additionalProperties: false,
@@ -260,7 +271,7 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
                     description: 'A concrete next-game plan for the focused player: lane/farm target, item/timing target, fight rule, and one avoidable death pattern. Include evidence ids.',
                 },
             },
-            required: ['focusSummary', 'laneAndFarm', 'timingsAndItems', 'fightsAndDeaths', 'benchmarkCheck', 'keyMistakes', 'nextGamePlan'],
+            required: ['tldr', 'focusSummary', 'laneAndFarm', 'timingsAndItems', 'fightsAndDeaths', 'benchmarkCheck', 'keyMistakes', 'nextGamePlan'],
             additionalProperties: false,
         },
     },
@@ -298,18 +309,18 @@ function formatMistakes(mistakes: any, debug: boolean, maxItems = 3): string {
     return mistakes
         .filter((mistake) => mistake?.claim || mistake?.fix)
         .slice(0, maxItems)
-        .map((mistake, idx) => {
+        .map((mistake) => {
             const evidence = debug && Array.isArray(mistake.evidence) && mistake.evidence.length
                 ? ` [${mistake.evidence.join('][')}]`
                 : '';
-            const severity = mistake.severity ? `**${mistake.severity}**` : `**#${idx + 1}**`;
-            const claim = limitText(debug ? normalizeDisplayMarkdown(String(mistake.claim || '')) : stripEvidenceMarkers(String(mistake.claim || '')), 260);
-            const fix = limitText(debug ? normalizeDisplayMarkdown(String(mistake.fix || '')) : stripEvidenceMarkers(String(mistake.fix || '')), 320);
-            return `${idx + 1}. ${severity}: ${claim}${evidence}\nFix: ${fix}`;
+            const severity = mistake.severity ? `${mistake.severity}: ` : '';
+            const claim = limitText(debug ? normalizeDisplayMarkdown(String(mistake.claim || '')) : stripEvidenceMarkers(String(mistake.claim || '')), 700, { ellipsis: false });
+            const fix = limitText(debug ? normalizeDisplayMarkdown(String(mistake.fix || '')) : stripEvidenceMarkers(String(mistake.fix || '')), 420);
+            return `⚠️ **${severity}${claim}**${evidence} — ${fix}`;
         }).join('\n');
 }
 
-function limitText(text: any, max: number): string {
+function limitText(text: any, max: number, opts: { ellipsis?: boolean } = {}): string {
     const value = String(text || '').trim();
     if (value.length <= max) return value;
     const slice = value.slice(0, max - 1);
@@ -318,14 +329,17 @@ function limitText(text: any, max: number): string {
         return slice.slice(0, sentenceEnd + 1).trim();
     }
     const wordEnd = slice.lastIndexOf(' ');
-    return `${slice.slice(0, wordEnd > Math.floor(max * 0.55) ? wordEnd : max - 1).trim()}...`;
+    const trimmed = slice.slice(0, wordEnd > Math.floor(max * 0.55) ? wordEnd : max - 1).trim();
+    return opts.ellipsis === false ? trimmed : `${trimmed}...`;
 }
 
 function formatSections(data: any, debug: boolean, focusMode: boolean): string[] {
     const display = maybeStripEvidence(data, debug);
+    const tldr = display.tldr ? [`**⚡ TL;DR**\n${limitText(display.tldr, 280)}`] : [];
     if (focusMode && data.focusSummary) {
         const limits = { summary: 850, lane: 780, items: 850, fights: 900, benchmarks: 700, mistakes: 1200, plan: 760 };
         return [
+            ...tldr,
             `**🎯 YOUR GAME**\n${limitText(display.focusSummary, limits.summary)}`,
             `**🌱 LANE & FARM**\n${limitText(display.laneAndFarm, limits.lane)}`,
             `**⚔️ TIMINGS & ITEMS**\n${limitText(display.timingsAndItems, limits.items)}`,
@@ -340,6 +354,7 @@ function formatSections(data: any, debug: boolean, focusMode: boolean): string[]
         ? { narrative: 760, draft: 620, items: 760, mistakes: 1400, map: 620, mvp: 620, improve: 560 }
         : { narrative: 720, draft: 720, items: 820, mistakes: 900, map: 700, mvp: 760, improve: 520 };
     return [
+        ...tldr,
         `**📖 GAME NARRATIVE**\n${limitText(display.gameNarrative, limits.narrative)}`,
         `**🏗️ DRAFT & LANING**\n${limitText(display.draftAndLaning, limits.draft)}`,
         `**⚔️ ITEMS & DAMAGE**\n${limitText(display.itemizationAndDamage, limits.items)}`,
@@ -351,12 +366,18 @@ function formatSections(data: any, debug: boolean, focusMode: boolean): string[]
 }
 
 // ── Format structured analysis into a single Discord embed ────────────────────
-function formatAnalysis(data: any, matchId: number, model: string, source: string, opts: { debug?: boolean; focusPlayer?: string; cached?: boolean } = {}): EmbedBuilder[] {
+function formatAnalysis(data: any, matchId: number, model: string, source: string, opts: { debug?: boolean; focusPlayer?: string; cached?: boolean; showModel?: boolean } = {}): EmbedBuilder[] {
     const debug = !!opts.debug;
     const focusMode = !!opts.focusPlayer;
     const sections = formatSections(data, debug, focusMode);
     const title = `🔍 Match Analysis — #${matchId}${opts.focusPlayer ? ` — ${opts.focusPlayer}` : ''}`;
-    const footer = `doto-chan coaching • ${source}${opts.cached ? ' • cached' : ''}${debug ? ' • debug facts' : ''} • ${model}`;
+    const footer = [
+        'doto-chan coaching',
+        source,
+        opts.cached ? 'cached' : '',
+        debug ? 'debug facts' : '',
+        opts.showModel ? model : '',
+    ].filter(Boolean).join(' • ');
 
     const makeEmbed = (description: string, suffix = '') => new EmbedBuilder()
         .setColor('#ef4444')
@@ -446,6 +467,7 @@ export async function analyze(message: Message, args: string[]) {
             debug: debugFacts,
             focusPlayer: focusPlayerQuery || undefined,
             cached: true,
+            showModel: message.author.id === BOT_OWNER_ID,
         });
         return sendAnalysisEmbeds(message, embeds);
     }
@@ -756,7 +778,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
                 .setTitle(`🔍 Match Analysis — #${matchId}`)
                 .setDescription(trunc(fallbackText, 4096))
                 .setURL(`https://www.opendota.com/matches/${matchId}`)
-                .setFooter({ text: `doto-chan coaching • ${useModel}` })
+                .setFooter({ text: message.author.id === BOT_OWNER_ID ? `doto-chan coaching • ${useModel}` : 'doto-chan coaching' })
                 .setTimestamp();
             return message.reply({ embeds: [fallbackEmbed] });
         }
@@ -766,6 +788,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
         const embeds = formatAnalysis(analysisData, matchId, useModel, source, {
             debug: debugFacts,
             focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
+            showModel: message.author.id === BOT_OWNER_ID,
         });
         await sendAnalysisEmbeds(message, embeds);
     } catch (error: any) {
