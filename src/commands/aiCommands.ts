@@ -108,6 +108,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Do not use web/meta knowledge for match facts. Patch context may explain broad strategic context only if MATCH_FACTS.patchContext is present.
 - Economy and XP time-series facts are team differentials only when the fact explicitly says "differential"; never treat them as team totals or individual net worth.
 - If an item timing is before an event, do not claim the team lacked that item for the event; critique death, positioning, cooldown, usage, or lateness relative to earlier pressure instead.
+- When OpenDota teamfight facts exist, prefer those exact fight windows over inferred death-cluster language.
 - Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
 - LVP should come from the losing team unless MATCH_FACTS clearly shows an extreme exception such as abandon-level impact.
 - Keep the spicy style, but every roast needs a real stat behind it.
@@ -1364,6 +1365,165 @@ function summarizeAdvantageForTeam(label: string, values: any[], team: 'Radiant'
     return { text: summary.text, data: { ...summary.data, perspectiveTeam: team } };
 }
 
+function openDotaTeam(player: any): 'Radiant' | 'Dire' {
+    return Number(player?.player_slot || 0) < 128 ? 'Radiant' : 'Dire';
+}
+
+function normalizeHeroKey(key: any): string {
+    return String(key || '')
+        .replace(/^npc_dota_hero_/, '')
+        .replace(/_/g, ' ')
+        .trim();
+}
+
+function normalizeInflictorKey(key: any): string {
+    const raw = String(key || '');
+    if (!raw || raw === 'null') return 'Right Click';
+    return raw
+        .replace(/^npc_dota_hero_/, '')
+        .replace(/^item_/, '')
+        .replace(/_/g, ' ')
+        .trim()
+        .replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
+function getOpenDotaHeroKey(player: any): string | null {
+    const hero = player?.hero_id != null ? dotaDataService.getHeroById(Number(player.hero_id)) : null;
+    return hero?.name || null;
+}
+
+function findOpenDotaPlayerBySlot(match: any, slot: any): any | null {
+    const slotNumber = Number(slot);
+    if (!Number.isFinite(slotNumber)) return null;
+    return (Array.isArray(match?.players) ? match.players : []).find((player: any) => Number(player.player_slot) === slotNumber) || null;
+}
+
+function sumTeamfightKills(players: any[], team: 'Radiant' | 'Dire'): number {
+    return players
+        .filter((player) => openDotaTeam(player) === team)
+        .reduce((sum, player) => {
+            const killed = player?.killed || {};
+            return sum + Object.values(killed).reduce((inner: number, value: any) => inner + (Number(value) || 0), 0);
+        }, 0);
+}
+
+function sumTeamfightDeaths(players: any[], team: 'Radiant' | 'Dire'): number {
+    return players
+        .filter((player) => openDotaTeam(player) === team)
+        .reduce((sum, player) => sum + Number(player?.deaths || 0), 0);
+}
+
+function sumTeamfightGoldDelta(players: any[], team: 'Radiant' | 'Dire'): number {
+    return players
+        .filter((player) => openDotaTeam(player) === team)
+        .reduce((sum, player) => sum + Number(player?.gold_delta || 0), 0);
+}
+
+async function summarizeOpenDotaTeamfights(odMatch: any, focusPlayer?: any): Promise<Array<{ text: string; data: Record<string, any> }>> {
+    const teamfights = Array.isArray(odMatch?.teamfights) ? odMatch.teamfights : [];
+    if (!teamfights.length) return [];
+    const focusSlot = focusPlayer?.player_slot;
+    const ranked = teamfights
+        .map((fight: any, index: number) => {
+            const players = Array.isArray(fight.players) ? fight.players : [];
+            const radiantDeaths = sumTeamfightDeaths(players, 'Radiant');
+            const direDeaths = sumTeamfightDeaths(players, 'Dire');
+            const radiantGoldDelta = sumTeamfightGoldDelta(players, 'Radiant');
+            const direGoldDelta = sumTeamfightGoldDelta(players, 'Dire');
+            const focus = focusSlot == null ? null : players.find((player: any) => Number(player.player_slot) === Number(focusSlot));
+            const score = Math.abs(radiantGoldDelta - direGoldDelta) + (radiantDeaths + direDeaths) * 1500 + (focus ? 2500 : 0);
+            return {
+                index,
+                start: Number(fight.start),
+                end: Number(fight.end),
+                players,
+                radiantDeaths,
+                direDeaths,
+                radiantKills: sumTeamfightKills(players, 'Radiant'),
+                direKills: sumTeamfightKills(players, 'Dire'),
+                radiantGoldDelta,
+                direGoldDelta,
+                focus,
+                score,
+            };
+        })
+        .filter((fight: any) => Number.isFinite(fight.start) && Number.isFinite(fight.end))
+        .sort((a: any, b: any) => b.score - a.score)
+        .slice(0, 6)
+        .sort((a: any, b: any) => a.start - b.start);
+
+    return ranked.map((fight: any) => {
+        const focusText = fight.focus
+            ? `; focus player ${Number(fight.focus.deaths || 0) > 0 ? 'died' : 'survived'}, kills ${Object.values(fight.focus.killed || {}).reduce((sum: number, value: any) => sum + Number(value || 0), 0)}, gold delta ${formatNumber(fight.focus.gold_delta)}`
+            : '';
+        return {
+            text: `OpenDota teamfight window ${formatFactTime(fight.start)}-${formatFactTime(fight.end)}: kills Radiant ${fight.radiantKills}, Dire ${fight.direKills}; deaths Radiant ${fight.radiantDeaths}, Dire ${fight.direDeaths}; gold delta Radiant ${formatNumber(fight.radiantGoldDelta)}, Dire ${formatNumber(fight.direGoldDelta)}${focusText}. Use this exact teamfight fact before inferred death-cluster logic.`,
+            data: {
+                start: fight.start,
+                end: fight.end,
+                radiantKills: fight.radiantKills,
+                direKills: fight.direKills,
+                radiantDeaths: fight.radiantDeaths,
+                direDeaths: fight.direDeaths,
+                radiantGoldDelta: fight.radiantGoldDelta,
+                direGoldDelta: fight.direGoldDelta,
+                focusPlayer: fight.focus ? {
+                    playerSlot: fight.focus.player_slot,
+                    deaths: Number(fight.focus.deaths || 0),
+                    goldDelta: Number(fight.focus.gold_delta || 0),
+                } : null,
+            },
+        };
+    });
+}
+
+function summarizeOpenDotaGoldAdvantage(odMatch: any, durationSeconds?: number): { text: string; data: Record<string, any> } | null {
+    return summarizeAdvantageSeries('OpenDota gold advantage', odMatch?.radiant_gold_adv || [], 'Radiant', 'Dire', 'OpenDota Radiant perspective', durationSeconds);
+}
+
+function topEntries(record: Record<string, any> | undefined, max = 5): Array<{ key: string; value: number }> {
+    return Object.entries(record || {})
+        .map(([key, value]) => ({ key, value: Number(value) }))
+        .filter((entry) => Number.isFinite(entry.value) && entry.value > 0)
+        .sort((a, b) => b.value - a.value)
+        .slice(0, max);
+}
+
+function summarizeFocusDamageReceived(player: any): string | null {
+    const entries = topEntries(player?.damage_inflictor_received, 3);
+    if (!entries.length) return null;
+    return entries.map((entry) => `${normalizeInflictorKey(entry.key)} ${formatNumber(entry.value)}`).join('; ');
+}
+
+function summarizeFocusDamageTargets(odMatch: any, player: any): string | null {
+    const totals: Record<string, number> = {};
+    for (const targets of Object.values(player?.damage_targets || {}) as Array<Record<string, any>>) {
+        for (const [target, damage] of Object.entries(targets || {})) {
+            if (!String(target).startsWith('npc_dota_hero_')) continue;
+            totals[target] = (totals[target] || 0) + Number(damage || 0);
+        }
+    }
+    const byHeroKey = new Map<string, any>();
+    for (const targetPlayer of Array.isArray(odMatch?.players) ? odMatch.players : []) {
+        const key = getOpenDotaHeroKey(targetPlayer);
+        if (key) byHeroKey.set(key, targetPlayer);
+    }
+    const entries = topEntries(totals, 5);
+    if (!entries.length) return null;
+    return entries.map((entry) => {
+        const target = byHeroKey.get(entry.key);
+        const deathText = target ? `, target deaths ${Number(target.deaths || 0)}` : '';
+        return `${normalizeHeroKey(entry.key)} ${formatNumber(entry.value)}${deathText}`;
+    }).join('; ');
+}
+
+async function summarizeAbilityBuild(player: any): Promise<string | null> {
+    const ids = Array.isArray(player?.ability_upgrades_arr) ? player.ability_upgrades_arr.slice(0, 12) : [];
+    if (!ids.length) return null;
+    const names = await Promise.all(ids.map((id: any) => dotaDataService.getAbilityName(Number(id))));
+    return names.filter(Boolean).join(' -> ');
+}
+
 function isImportantItemName(name: string): boolean {
     return /Divine Rapier|Black King Bar|Aghanim|Refresher|Butterfly|Daedalus|Satanic|Eye of Skadi|Heart of Tarrasque|Assault Cuirass|Mjollnir|Manta Style|Radiance|Bloodthorn|Nullifier|Silver Edge|Monkey King Bar|Abyssal Blade|Hurricane Pike|Shiva|Pipe of Insight|Crimson Guard|Lotus Orb|Aeon Disk|Gleipnir|Orchid|Scythe of Vyse|Ethereal Blade|Blink Dagger|Overwhelming Blink|Swift Blink|Arcane Blink|Boots of Travel|Desolator|Diffusal Blade|Mage Slayer|Sange|Yasha|Kaya|Hand of Midas|Helm of the Overlord|Solar Crest/i.test(name);
 }
@@ -1880,6 +2040,8 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     if (!matchData.radiantExperienceLeads?.length) {
         addFact('economy', 'XP lead data is unavailable for this match.');
     }
+    const odGoldSummary = summarizeOpenDotaGoldAdvantage(odMatch, durationSeconds);
+    if (odGoldSummary) addFact('economy', odGoldSummary.text, odGoldSummary.data);
 
     const radiantDamage = emptyDamageTotals();
     const direDamage = emptyDamageTotals();
@@ -1960,6 +2122,11 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     const gpmRanks = buildTeamRanks(players, (player) => Number(player.goldPerMinute || 0));
     const lhRanks = buildTeamRanks(players, (player) => Number(player.numLastHits || 0));
     const netWorthRanks = buildTeamRanks(players, (player) => Number(player.networth || 0));
+    const focusOpenDotaPlayer = focusPlayer ? findOpenDotaPlayer(odMatch, focusPlayer) : null;
+    const teamfightFacts = await summarizeOpenDotaTeamfights(odMatch, focusOpenDotaPlayer);
+    for (const fact of teamfightFacts) {
+        addFact('teamfight', fact.text, fact.data);
+    }
 
     for (const p of players) {
         const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
@@ -2016,6 +2183,30 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
                 });
             } else {
                 addFact('role', `${playerLabel} has no reliable role/position fact in MATCH_FACTS. Do not invent position 4/5 or excuse farm/net worth based on assumed role.`);
+            }
+
+            if (odPlayer) {
+                const focusStats = [
+                    odPlayer.life_state_dead != null ? `time spent dead ${formatFactTime(Number(odPlayer.life_state_dead))}` : '',
+                    odPlayer.teamfight_participation != null ? `teamfight participation ${Math.round(Number(odPlayer.teamfight_participation) * 100)}%` : '',
+                    odPlayer.lane_efficiency_pct != null ? `lane efficiency ${Math.round(Number(odPlayer.lane_efficiency_pct))}%` : '',
+                    odPlayer.stuns != null ? `stun duration ${Number(odPlayer.stuns).toFixed(1)}s` : '',
+                ].filter(Boolean);
+                if (focusStats.length) {
+                    addFact('focusStats', `${playerLabel} OpenDota focus stat line: ${focusStats.join(', ')}.`);
+                }
+                const damageReceived = summarizeFocusDamageReceived(odPlayer);
+                if (damageReceived) {
+                    addFact('focusDamage', `${playerLabel} top damage sources received from OpenDota damage_inflictor_received: ${damageReceived}. Use these as damage sources, not confirmed killers.`);
+                }
+                const damageTargets = summarizeFocusDamageTargets(odMatch, odPlayer);
+                if (damageTargets) {
+                    addFact('focusDamage', `${playerLabel} top damage destinations from OpenDota damage_targets: ${damageTargets}. Target death counts are full-match deaths, not proof this player's damage caused each death.`);
+                }
+                const abilityBuild = await summarizeAbilityBuild(odPlayer);
+                if (abilityBuild) {
+                    addFact('focusSkillBuild', `${playerLabel} first ability upgrades from OpenDota ability_upgrades_arr: ${abilityBuild}. Use for skill-build observations only if directly relevant.`);
+                }
             }
 
             const benchmarkFacts = benchmarkComparable ? formatOpenDotaBenchmarks(odPlayer) : [];
@@ -2148,6 +2339,7 @@ Rules for this response:
 - Do not calculate new structure totals, damage totals, or approximate objective windows. Use the provided damage and objective-cluster facts.
 - Prefer concrete player, item, timing, objective, and economy facts over generic advice.
 - Do not infer core/support labels from hero identity. If role is unclear, use farm-priority and support/utility signal facts instead.
+- Prefer OpenDota teamfight facts over inferred death-cluster claims when both are present.
 - When death facts include ally-death company, coach solo deaths (no allies dead nearby) differently from team wipes (multiple allies dead nearby): solo deaths are positioning/discipline errors, team wipes are fight-selection errors.
 ${focusRules}
 ${lengthRules}${modeContext}
