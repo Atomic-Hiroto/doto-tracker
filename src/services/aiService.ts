@@ -17,7 +17,7 @@ function stripEvidenceMarkers(text: string): string {
   return text
     .replace(/\s*\[F\d+\]/g, '')
     .replace(/\s*\[C\d+\]/g, '')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n\s+/g, '\n')
     .trim();
 }
@@ -252,8 +252,11 @@ function normalizeAnalysisTitle(title: string): string {
 
 async function buildAnalysisEmbedFallbackContext(message: Message, messageId: string): Promise<string | null> {
   try {
-    const referenced = await message.channel.messages.fetch(messageId);
     const botId = message.client.user?.id;
+    const cached = message.channel.messages.cache.get(messageId);
+    if (cached && (!botId || cached.author.id !== botId)) return null;
+
+    const referenced = cached ?? await message.channel.messages.fetch(messageId);
     if (!botId || referenced.author.id !== botId) return null;
 
     const referencedEmbed = referenced.embeds.find(embed => embed.title?.startsWith('🔍 Match Analysis'));
