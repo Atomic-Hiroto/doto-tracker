@@ -1705,10 +1705,12 @@ function summarizeFocusDeathOutcomes(
     const economyValues = (radiantNetworthLeads || [])
         .map((value) => Number(value) * (focusPlayer.isRadiant ? 1 : -1));
 
+    const companyWindowSeconds = 30;
     const outcomes: Array<{
         deathTime: number;
         alliedKills: number;
         enemyKills: number;
+        alliesAlsoDead: number;
         alliedTowersLost: number;
         enemyTowersLost: number;
         economyDelta: number | null;
@@ -1717,6 +1719,7 @@ function summarizeFocusDeathOutcomes(
         const windowEnd = deathTime + windowSeconds;
         let alliedKills = 0;
         let enemyKills = 0;
+        let alliesAlsoDead = 0;
 
         for (const player of players) {
             const killEvents = Array.isArray(player.stats?.killEvents) ? player.stats.killEvents : [];
@@ -1726,6 +1729,15 @@ function summarizeFocusDeathOutcomes(
             }).length;
             if (player.isRadiant === focusPlayer.isRadiant) alliedKills += killCount;
             else enemyKills += killCount;
+
+            if (player !== focusPlayer && player.isRadiant === focusPlayer.isRadiant) {
+                const allyDeathEvents = Array.isArray(player.stats?.deathEvents) ? player.stats.deathEvents : [];
+                const diedNearby = allyDeathEvents.some((event: any) => {
+                    const time = finiteNumber(event.time);
+                    return time != null && Math.abs(time - deathTime) <= companyWindowSeconds;
+                });
+                if (diedNearby) alliesAlsoDead++;
+            }
         }
 
         const nearbyTowers = towerEvents.filter((tower) => tower.time > deathTime && tower.time <= windowEnd);
@@ -1745,23 +1757,29 @@ function summarizeFocusDeathOutcomes(
             ? `${focusTeam} lost ${alliedTowersLost} tower${alliedTowersLost === 1 ? '' : 's'}, ${otherTeam} lost ${enemyTowersLost} tower${enemyTowersLost === 1 ? '' : 's'}`
             : 'no tower deaths';
 
+        const companyText = alliesAlsoDead === 0
+            ? 'no allies died ±30s (solo death)'
+            : `${alliesAlsoDead} all${alliesAlsoDead === 1 ? 'y' : 'ies'} also died ±30s`;
+
         return {
             deathTime,
             alliedKills,
             enemyKills,
+            alliesAlsoDead,
             alliedTowersLost,
             enemyTowersLost,
             economyDelta,
-            text: `${formatFactTime(deathTime)} -> next ${windowSeconds}s: allied kills ${alliedKills}, enemy kills ${enemyKills}; ${towerText}; ${economyText}`,
+            text: `${formatFactTime(deathTime)} -> ${companyText}; next ${windowSeconds}s: allied kills ${alliedKills}, enemy kills ${enemyKills}; ${towerText}; ${economyText}`,
         };
     });
 
     const omitted = deaths.length > outcomes.length ? ` Showing first ${outcomes.length} of ${deaths.length} deaths.` : '';
     return {
-        text: `${focusTeam} death outcome context for the focused player, using the ${windowSeconds}s after each death to distinguish isolated deaths from traded deaths: ${outcomes.map((outcome: { text: string }) => outcome.text).join(' | ')}.${omitted}`,
+        text: `${focusTeam} death outcome context for the focused player. Ally deaths within ±${companyWindowSeconds}s distinguish solo deaths from team wipes; the ${windowSeconds}s after each death distinguishes isolated deaths from traded deaths: ${outcomes.map((outcome: { text: string }) => outcome.text).join(' | ')}.${omitted}`,
         data: {
             focusTeam,
             windowSeconds,
+            companyWindowSeconds,
             totalDeathsWithTiming: deaths.length,
             outcomes,
         },
@@ -2090,6 +2108,19 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         ? `\nLength target:\n- Personal coaching mode can be richer than the default recap, but stay under two Discord embeds.\n- Use 1-3 keyMistakes based on actual evidence. Keep each claim and fix to one compact sentence.\n`
         : `\nLength target:\n- Whole-match recap must fit one Discord embed.\n- Use exactly 2 keyMistakes unless a third is essential to explain the result.\n- Keep every section concise: usually 2 sentences, with no stat listing unless it explains the game.\n`;
 
+    const isTurbo = gameModeLabel.toLowerCase().includes('turbo');
+    const modeContext = isTurbo
+        ? `\n=== MODE CONTEXT (trusted background for framing only — never a source of match events) ===
+This was a Turbo match. Apply these mode truths when judging decisions:
+- All gold and XP sources are doubled and no gold is lost on death, so a death costs tempo and map control, not net worth — but it still pays the enemy a doubled bounty.
+- Respawns are ~25% faster, so a won fight is only valuable if converted into towers, Roshan, or map gains before enemies return. Full base sieges off one pickoff are rarely feasible; taking or chipping the nearest tower is the realistic conversion.
+- Towers have reduced armor and damage in Turbo, so even short push windows convert faster than players expect.
+- Kill AND assist bounties are doubled like all gold, and assist/AoE gold scales up when behind (comeback gold); who lands the killing blow matters little for income. Damage dealt without a kill or assist earns nothing.
+- Dedicated creep farming matters less than in normal modes because passive income is high; tempo and objectives matter more. Repeated unconverted fights are the classic Turbo loss pattern.
+- GPM/XPM/damage figures are inflated versus normal modes; never judge them against normal-mode expectations.
+`
+        : '';
+
     return {
         prompt: `Analyze this Dota 2 match using only MATCH_FACTS.
 
@@ -2102,9 +2133,9 @@ Rules for this response:
 - Do not calculate new structure totals, damage totals, or approximate objective windows. Use the provided damage and objective-cluster facts.
 - Prefer concrete player, item, timing, objective, and economy facts over generic advice.
 - Do not infer core/support labels from hero identity. If role is unclear, use farm-priority and support/utility signal facts instead.
+- When death facts include ally-death company, coach solo deaths (no allies dead nearby) differently from team wipes (multiple allies dead nearby): solo deaths are positioning/discipline errors, team wipes are fight-selection errors.
 ${focusRules}
-${lengthRules}
-
+${lengthRules}${modeContext}
 MATCH_FACTS:
 ${JSON.stringify(factSheet, null, 2)}`,
         focusPlayerLabel,
