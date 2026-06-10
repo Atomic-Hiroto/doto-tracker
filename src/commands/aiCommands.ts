@@ -111,6 +111,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Every player on the losing team should receive at least a brief mention somewhere across the analysis if the output length allows.
 - LVP should come from the losing team unless MATCH_FACTS clearly shows an extreme exception such as abandon-level impact.
 - Keep the spicy style, but every roast needs a real stat behind it.
+- Never call a player a core or support based on their hero's typical role. Use role labels only when MATCH_FACTS contains a role fact. Otherwise frame expectations by farm-priority rank and support/utility signals from MATCH_FACTS.
 
 ## Perspective
 - Never print an unlabeled +/- lead. Always name the side: "Dire led by 30,383", not "-30,383".
@@ -132,6 +133,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Net worth lead and lane CS are independent signals. When they disagree, reconcile through kills, deaths, objectives, or tower damage; do not assume the richer team won lane.
 - Lane creep reports are same-team lane buckets, not mirrored direct matchup pairs. Use them to discuss aggregate lane farm, not "safe lane beat safe lane" head-to-head claims.
 - Player role/position facts from Stratz are inferred. Mention them as inferred context only; do not use role alone to excuse or condemn farm, net worth, deaths, or item timings.
+- If a hero is commonly played as a core or support, ignore that prior unless MATCH_FACTS has role evidence. Prefer phrases like "lowest farm priority on Dire" or "heavy ward/utility profile" over invented position labels.
 - OpenDota benchmark percentiles are not mode-specific. If MATCH_FACTS says benchmarks were omitted or caveated for Turbo/non-standard mode, do not use those percentiles as proof of elite farm or poor last-hitting.
 
 ## Mistake Objects
@@ -1546,6 +1548,56 @@ async function resolveImportantPurchases(player: any): Promise<Array<{ time: num
         .slice(0, 12);
 }
 
+const SUPPORT_UTILITY_ITEMS = new Set([
+    'Observer Ward',
+    'Sentry Ward',
+    'Smoke of Deceit',
+    'Dust of Appearance',
+    'Gem of True Sight',
+    'Glimmer Cape',
+    'Force Staff',
+    'Mekansm',
+    'Guardian Greaves',
+    'Pipe of Insight',
+    'Vladmir\'s Offering',
+    'Drum of Endurance',
+    'Boots of Bearing',
+    'Urn of Shadows',
+    'Spirit Vessel',
+    'Holy Locket',
+    'Solar Crest',
+    'Pavise',
+]);
+
+async function resolveSupportUtilityPurchases(player: any): Promise<Array<{ time: number; item: string }>> {
+    const purchases = Array.isArray(player.stats?.itemPurchases) ? player.stats.itemPurchases : [];
+    const resolved = await Promise.all(
+        purchases
+            .filter((purchase: any) => Number.isFinite(Number(purchase.time)) && Number(purchase.time) >= 0 && purchase.itemId)
+            .map(async (purchase: any) => ({
+                time: Number(purchase.time),
+                item: await dotaDataService.getItemName(purchase.itemId),
+            }))
+    );
+
+    return resolved
+        .filter((purchase) => SUPPORT_UTILITY_ITEMS.has(purchase.item))
+        .sort((a, b) => a.time - b.time)
+        .slice(0, 10);
+}
+
+function buildTeamRanks(players: any[], metric: (player: any) => number): Map<any, number> {
+    const ranks = new Map<any, number>();
+    for (const isRadiant of [true, false]) {
+        players
+            .filter((player: any) => player.isRadiant === isRadiant)
+            .map((player: any) => ({ player, value: metric(player) }))
+            .sort((a, b) => b.value - a.value)
+            .forEach((entry, index) => ranks.set(entry.player, index + 1));
+    }
+    return ranks;
+}
+
 function findOpenDotaPlayer(odMatch: any, stratzPlayer: any): any | null {
     const players = odMatch?.players;
     if (!Array.isArray(players)) return null;
@@ -1879,6 +1931,10 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         });
     }
 
+    const gpmRanks = buildTeamRanks(players, (player) => Number(player.goldPerMinute || 0));
+    const lhRanks = buildTeamRanks(players, (player) => Number(player.numLastHits || 0));
+    const netWorthRanks = buildTeamRanks(players, (player) => Number(player.networth || 0));
+
     for (const p of players) {
         const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
         const playerName = p.steamAccount?.name || 'Anonymous';
@@ -1891,6 +1947,27 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
             playerName,
             heroName,
             slot: p.playerSlot,
+        });
+
+        const teamSize = players.filter((player: any) => player.isRadiant === p.isRadiant).length || 5;
+        const supportPurchases = await resolveSupportUtilityPurchases(p);
+        const wardSignals = [
+            Array.isArray(p.stats?.wards) ? `${p.stats.wards.length} Stratz wards placed` : '',
+            Array.isArray(p.stats?.wardDestruction) ? `${p.stats.wardDestruction.length} Stratz wards destroyed` : '',
+            odPlayer?.obs_placed != null ? `${odPlayer.obs_placed} OpenDota obs placed` : '',
+            odPlayer?.sen_placed != null ? `${odPlayer.sen_placed} OpenDota sentries placed` : '',
+        ].filter(Boolean);
+        const supportText = [
+            wardSignals.length ? wardSignals.join(', ') : 'no ward stats available',
+            supportPurchases.length ? `support/utility purchases ${supportPurchases.map((item) => `${item.item} at ${formatFactTime(item.time)}`).join('; ')}` : 'no tracked support/utility purchases',
+        ].join('; ');
+        addFact('roleSignals', `${playerLabel} team-context role signals: farm priority ranks within ${team} by GPM ${gpmRanks.get(p) ?? 'unknown'}/${teamSize}, last hits ${lhRanks.get(p) ?? 'unknown'}/${teamSize}, net worth ${netWorthRanks.get(p) ?? 'unknown'}/${teamSize}; ${supportText}. Use these deterministic signals instead of hero stereotypes when discussing core/support expectations.`, {
+            team,
+            gpmRank: gpmRanks.get(p) ?? null,
+            lastHitRank: lhRanks.get(p) ?? null,
+            netWorthRank: netWorthRanks.get(p) ?? null,
+            teamSize,
+            supportPurchases,
         });
 
         if (focusPlayer && !isFocus) continue;
@@ -2024,6 +2101,7 @@ Rules for this response:
 - You may reason about why the game played out that way, but exact numbers/timings/counts must be copied from facts.
 - Do not calculate new structure totals, damage totals, or approximate objective windows. Use the provided damage and objective-cluster facts.
 - Prefer concrete player, item, timing, objective, and economy facts over generic advice.
+- Do not infer core/support labels from hero identity. If role is unclear, use farm-priority and support/utility signal facts instead.
 ${focusRules}
 ${lengthRules}
 
