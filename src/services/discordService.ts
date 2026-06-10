@@ -19,6 +19,10 @@ export async function handleMessage(message: Message, userDataService: UserDataS
   // Block all activity in non-allowed channels (except channel admin commands)
   if (!isChannelAdmin && !channelDataService.isAllowed(message.channel.id)) return;
 
+  if (!message.content.startsWith(ProcessConstants.PREFIX) && message.reference?.messageId) {
+    if (await handleAnalysisFollowUp(message)) return;
+  }
+
   // Check if the bot was mentioned
   const botMentioned = message.mentions.has(message.client.user!);
 
@@ -30,10 +34,6 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     logger.debug(`Bot mentioned by ${message.author.username} with args: ${args}`);
     await getAIText(message, args, true);
     return;
-  }
-
-  if (!message.content.startsWith(ProcessConstants.PREFIX) && message.reference?.messageId) {
-    if (await handleAnalysisFollowUp(message)) return;
   }
 
   if (!message.content.startsWith(ProcessConstants.PREFIX)) return;
