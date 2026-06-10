@@ -205,8 +205,12 @@ async function callOpenRouterAPI(systemPrompt: string, messages: any[], opts: { 
 }
 
 export function registerAnalysisConversation(messageId: string, context: string) {
+  const now = Date.now();
+  for (const [id, thread] of analysisConversationHistory.entries()) {
+    if (thread.expiresAt <= now) analysisConversationHistory.delete(id);
+  }
   analysisConversationHistory.set(messageId, {
-    expiresAt: Date.now() + 30 * 60 * 1000,
+    expiresAt: now + 30 * 60 * 1000,
     messages: [
       {
         role: 'user',

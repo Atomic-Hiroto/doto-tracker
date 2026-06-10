@@ -1,4 +1,4 @@
-import { Client, Interaction, EmbedBuilder } from 'discord.js';
+import { Client, Interaction, EmbedBuilder, ButtonInteraction } from 'discord.js';
 import { getDetailedMatchData } from './dotaService';
 import { getMatchStory } from './aiService';
 import { logger } from './loggerService';
@@ -6,6 +6,29 @@ import { opendotaClient } from './apiClient';
 import { dotaDataService } from './dotaDataService';
 import { formatDuration } from '../utils/formatters';
 import { analyze } from '../commands/aiCommands';
+
+function asMessageAdapter(interaction: ButtonInteraction): any {
+    const noop = async () => undefined;
+    return {
+        author: interaction.user,
+        user: interaction.user,
+        channel: interaction.channel,
+        client: interaction.client,
+        guild: interaction.guild,
+        id: interaction.id,
+        content: '',
+        mentions: { users: new Map(), has: () => false },
+        reply: (payload: any) => interaction.followUp(payload),
+        react: noop,
+        reactions: {
+            cache: {
+                get: () => ({
+                    users: { remove: noop },
+                }),
+            },
+        },
+    };
+}
 
 export function registerInteractionHandler(client: Client) {
     client.on('interactionCreate', async (interaction: Interaction) => {
@@ -23,8 +46,7 @@ export function registerInteractionHandler(client: Client) {
                     return interaction.followUp({ content: 'Match data not available or not parsed yet.', ephemeral: true });
                 }
 
-                // Create a pseudo-message wrapper for getMatchStory compatibility
-                await getMatchStory(interaction as any, matchData);
+                await getMatchStory(asMessageAdapter(interaction), matchData);
 
             } else if (customId.startsWith('details_')) {
                 const matchId = parseInt(customId.replace('details_', ''), 10);
@@ -69,7 +91,7 @@ export function registerInteractionHandler(client: Client) {
                     return interaction.reply({ content: 'Invalid coach request.', ephemeral: true });
                 }
                 await interaction.reply({ content: `🎓 Running focused coaching for match #${matchId}...`, ephemeral: false });
-                await analyze(interaction as any, [String(matchId), steamId]);
+                await analyze(asMessageAdapter(interaction), [String(matchId), steamId]);
 
             } else if (customId.startsWith('page_')) {
                 // Pagination buttons — handled by individual commands that registered them

@@ -9,6 +9,7 @@ import { UserDataService } from '../services/userDataService';
 import { safeTyping } from '../utils/channelHelpers';
 import { formatDuration } from '../utils/formatters';
 import { parseArgs } from '../utils/argParser';
+import { getOpenDotaDeathTimes } from '../services/coachingPlanService';
 
 const COACH_SYSTEM = `You are doto-chan, a persistent Dota 2 coach. You receive COACH_FACTS computed by deterministic code. Do not aggregate raw matches yourself.
 
@@ -87,7 +88,6 @@ async function callCoachAI(prompt: string): Promise<any> {
                 { role: 'system', content: COACH_SYSTEM },
                 { role: 'user', content: prompt },
             ],
-            temperature: 0.25,
             max_tokens: 2500,
             stream: false,
             response_format: COACH_RESPONSE_FORMAT,
@@ -133,11 +133,13 @@ export async function coach(message: Message, args: string[], userDataService: U
         const detailed = await Promise.all(
             recentMatches.slice(0, 20).map(async (match) => opendotaClient.get(`/matches/${match.match_id}`).then((res) => res.data).catch(() => null))
         );
-        const rows = await Promise.all(detailed.filter(Boolean).map(async (match: any) => {
+        const fetchedMatches = detailed.filter(Boolean);
+        const parsedMatches = fetchedMatches.filter((match: any) => !!match.version);
+        const rows = await Promise.all(parsedMatches.map(async (match: any) => {
             const player = (match.players || []).find((p: any) => String(p.account_id) === String(user.steamId));
             if (!player) return null;
             const hero = await dotaDataService.getHeroName(player.hero_id);
-            const deaths = Array.isArray(player.death_log) ? player.death_log.map((d: any) => Number(d.time)).filter(Number.isFinite) : [];
+            const deaths = getOpenDotaDeathTimes(match, player);
             const alliedKills = (match.players || [])
                 .filter((p: any) => p !== player && (p.player_slot < 128) === (player.player_slot < 128))
                 .flatMap((p: any) => Array.isArray(p.kills_log) ? p.kills_log : [])
@@ -168,7 +170,14 @@ export async function coach(message: Message, args: string[], userDataService: U
         const facts: Array<{ id: string; topic: string; text: string; data?: any }> = [];
         const addFact = (topic: string, text: string, data?: any) => facts.push({ id: `C${facts.length + 1}`, topic, text, data });
         const wins = matches.filter((m) => m.won).length;
-        addFact('sample', `${targetUser.username}: ${matches.length} detailed matches, ${wins}-${matches.length - wins} record.`, { matches: matches.length, wins });
+        addFact('sample', `${targetUser.username}: ${matches.length} parsed matches used for trend facts, ${fetchedMatches.length - parsedMatches.length} unparsed matches skipped, ${wins}-${matches.length - wins} record.`, {
+            parsedMatches: matches.length,
+            skippedUnparsedMatches: fetchedMatches.length - parsedMatches.length,
+            wins,
+        });
+        if (matches.length < 3) {
+            return message.reply(`Need at least 3 parsed matches for a useful coach report. Found ${matches.length} parsed and skipped ${fetchedMatches.length - parsedMatches.length} unparsed.`);
+        }
 
         const deathBuckets = matches.flatMap((m) => m.deathPhases).reduce((acc: Record<string, number>, phase) => {
             acc[phase] = (acc[phase] || 0) + 1;

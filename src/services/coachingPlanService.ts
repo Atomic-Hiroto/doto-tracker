@@ -1,4 +1,5 @@
 import { coachingDbService } from './coachingDbService';
+import { dotaDataService } from './dotaDataService';
 import { logger } from './loggerService';
 import { formatDuration } from '../utils/formatters';
 
@@ -32,8 +33,13 @@ function playerTeam(player: any): 'Radiant' | 'Dire' {
     return Number(player.player_slot) < 128 ? 'Radiant' : 'Dire';
 }
 
-function deathTimes(player: any): number[] {
-    return (Array.isArray(player.death_log) ? player.death_log : [])
+export function getOpenDotaDeathTimes(match: any, player: any): number[] {
+    const heroKey = player?.hero_id != null ? dotaDataService.getHeroById(Number(player.hero_id))?.name : null;
+    if (!heroKey) return [];
+    return (Array.isArray(match?.players) ? match.players : [])
+        .filter((p: any) => p !== player && playerTeam(p) !== playerTeam(player))
+        .flatMap((p: any) => Array.isArray(p.kills_log) ? p.kills_log : [])
+        .filter((event: any) => event?.key === heroKey)
         .map((event: any) => Number(event.time))
         .filter((time: number) => Number.isFinite(time) && time >= 0)
         .sort((a: number, b: number) => a - b);
@@ -50,7 +56,7 @@ function alliedKillTimes(match: any, player: any): number[] {
 }
 
 function countIsolatedDeaths(player: any, match: any): { isolated: number; totalTimed: number; samples: string[] } {
-    const deaths = deathTimes(player);
+    const deaths = getOpenDotaDeathTimes(match, player);
     const alliedKills = alliedKillTimes(match, player);
     const isolatedTimes = deaths.filter((deathTime) =>
         !alliedKills.some((killTime) => killTime > deathTime && killTime <= deathTime + 60)
@@ -62,8 +68,8 @@ function countIsolatedDeaths(player: any, match: any): { isolated: number; total
     };
 }
 
-function countDeathsWithBuybackDown(player: any): number {
-    const deaths = deathTimes(player);
+function countDeathsWithBuybackDown(player: any, match: any): number {
+    const deaths = getOpenDotaDeathTimes(match, player);
     const buybacks = (Array.isArray(player.buyback_log) ? player.buyback_log : [])
         .map((event: any) => Number(event.time))
         .filter((time: number) => Number.isFinite(time) && time >= 0);
@@ -115,13 +121,13 @@ export async function gradeActivePlanForMatch(steamId: string, matchId: number, 
         const planText = String(activePlan.planJson?.nextGamePlan || '');
         const itemRule = await checkItemRule(player, planText);
         const isolated = countIsolatedDeaths(player, detailedMatch);
-        const buybackDownDeaths = countDeathsWithBuybackDown(player);
+        const buybackDownDeaths = countDeathsWithBuybackDown(player, detailedMatch);
         const fightPassed = isolated.totalTimed === 0
             ? Number(player.deaths || 0) <= 2
             : isolated.isolated <= Math.max(1, Math.floor(isolated.totalTimed / 3));
         const deathEvidence = isolated.totalTimed
             ? `${isolated.isolated}/${isolated.totalTimed} timed deaths had no allied kill within 60s${isolated.samples.length ? ` (${isolated.samples.join(', ')})` : ''}`
-            : `${Number(player.deaths || 0)} deaths; no death_log timings`;
+            : `${Number(player.deaths || 0)} deaths; death timings unavailable from kills_log reconstruction`;
         const buybackText = buybackDownDeaths > 0 ? ` • buyback-risk deaths ${buybackDownDeaths}` : '';
 
         const resultsJson = {
