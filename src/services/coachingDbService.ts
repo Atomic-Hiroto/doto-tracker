@@ -15,6 +15,15 @@ export interface StoredAnalysis {
     createdAt: number;
 }
 
+export interface StoredCoachingPlan {
+    id: number;
+    steamId: string;
+    matchId: number;
+    planJson: any;
+    status: PlanStatus;
+    createdAt: number;
+}
+
 class CoachingDbService {
     private db: Database.Database;
 
@@ -152,6 +161,93 @@ class CoachingDbService {
             `).run(args.steamId, args.matchId, JSON.stringify(args.planJson), Date.now());
         });
         tx();
+    }
+
+    getActivePlan(steamId: string): StoredCoachingPlan | null {
+        const row = this.db.prepare(`
+            SELECT id, steam_id, match_id, plan_json, status, created_at
+            FROM coaching_plans
+            WHERE steam_id = ? AND status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(steamId) as any;
+        if (!row) return null;
+        try {
+            return {
+                id: Number(row.id),
+                steamId: row.steam_id,
+                matchId: Number(row.match_id),
+                planJson: JSON.parse(row.plan_json),
+                status: row.status,
+                createdAt: Number(row.created_at),
+            };
+        } catch (error) {
+            logger.warn('Failed to parse active coaching plan JSON:', error);
+            return null;
+        }
+    }
+
+    savePlanGrade(args: { planId: number; matchId: number; resultsJson: any }) {
+        const tx = this.db.transaction(() => {
+            this.db.prepare(`
+                INSERT INTO plan_grades (plan_id, match_id, results_json, created_at)
+                VALUES (?, ?, ?, ?)
+            `).run(args.planId, args.matchId, JSON.stringify(args.resultsJson), Date.now());
+            this.db.prepare(`
+                UPDATE coaching_plans
+                SET status = 'graded'
+                WHERE id = ?
+            `).run(args.planId);
+        });
+        tx();
+    }
+
+    getRecentPlayerAnalyses(steamId: string, limit = 20): StoredAnalysis[] {
+        const rows = this.db.prepare(`
+            SELECT match_id, steam_id, mode, structured_json, model, source, created_at
+            FROM analyses
+            WHERE steam_id = ? AND mode = 'player'
+            ORDER BY created_at DESC
+            LIMIT ?
+        `).all(steamId, limit) as any[];
+        return rows.flatMap((row) => {
+            try {
+                return [{
+                    matchId: Number(row.match_id),
+                    steamId: row.steam_id ?? null,
+                    mode: row.mode,
+                    structuredJson: JSON.parse(row.structured_json),
+                    model: row.model,
+                    source: row.source,
+                    createdAt: Number(row.created_at),
+                }];
+            } catch {
+                return [];
+            }
+        });
+    }
+
+    getRecentPlanGrades(steamId: string, limit = 20): Array<{ planId: number; matchId: number; resultsJson: any; createdAt: number }> {
+        const rows = this.db.prepare(`
+            SELECT pg.plan_id, pg.match_id, pg.results_json, pg.created_at
+            FROM plan_grades pg
+            JOIN coaching_plans cp ON cp.id = pg.plan_id
+            WHERE cp.steam_id = ?
+            ORDER BY pg.created_at DESC
+            LIMIT ?
+        `).all(steamId, limit) as any[];
+        return rows.flatMap((row) => {
+            try {
+                return [{
+                    planId: Number(row.plan_id),
+                    matchId: Number(row.match_id),
+                    resultsJson: JSON.parse(row.results_json),
+                    createdAt: Number(row.created_at),
+                }];
+            } catch {
+                return [];
+            }
+        });
     }
 }
 

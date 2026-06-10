@@ -110,6 +110,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.ANALYZE:
       await commandHandlers.analyze(message, args);
       break;
+    case Commands.COACH:
+      await commandHandlers.coach(message, args, userDataService);
+      break;
     case Commands.SUGGEST:
       await commandHandlers.suggest(message, args, userDataService);
       break;

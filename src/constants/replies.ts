@@ -17,6 +17,8 @@ export const HELP = `**Available Commands:**
 
 **🤖 AI Commands:**
 \`+gpat <message>\` - Chat with AI assistant (doto-chan)
+\`+analyze <match_id> [player]\` - Fact-grounded match recap or player coaching
+\`+coach [@user]\` - Persistent trend coach from recent matches and saved plans
 \`+gpatclear\` - Clear your AI conversation history
 \`+togglesharedcontext <on/off>\` - Toggle shared AI context in channel
 

@@ -23,6 +23,7 @@ export enum Commands {
     COMPARE = "compare",
     // Phase 4
     ANALYZE = "analyze",
+    COACH = "coach",
     SUGGEST = "suggest",
     DRAFT = "draft",
     META = "meta",

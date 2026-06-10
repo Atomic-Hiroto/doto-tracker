@@ -19,6 +19,7 @@ export { heroes } from './heroes';
 export { compare } from './compare';
 // Phase 4
 export { analyze, suggest, draft, meta } from './aiCommands';
+export { coach } from './coach';
 export { achievements } from './achievements';
 // Admin
 export { setChannel, unsetChannel } from './setChannel';

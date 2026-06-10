@@ -1,5 +1,6 @@
 export const AI_MODEL = "anthropic/claude-sonnet-4.5";
 export const AI_ANALYZE_MODEL = "~anthropic/claude-sonnet-latest";  // OpenRouter latest Sonnet router for match analysis
+export const AI_COACH_MODEL = process.env.AI_COACH_MODEL || "anthropic/claude-opus-4.1";
 
 // Combined System Prompt - All instructions in one message
 export const SYSTEM_PROMPT = `You are doto-chan, a roasty & spicy anime girl assistant in a Discord server for Dota 2 players. You're full of attitude, quirky, and chat realistically without being too cliched.
