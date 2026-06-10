@@ -7,6 +7,7 @@ import { dotaDataService } from '../services/dotaDataService';
 import { parseArgs, parseIntArg } from '../utils/argParser';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping } from '../utils/channelHelpers';
+import { createMatchActionRow } from '../components/matchButtons';
 
 const GAME_MODES: Record<number, string> = {
   0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -103,7 +104,10 @@ export async function recentStats(message: Message, args: string[], userDataServ
         )
         .setTimestamp(new Date(match.start_time * 1000));
 
-      return message.reply({ embeds: [embed] });
+      const components = !didWin
+        ? [createMatchActionRow(match.match_id, { showCoach: true, coachSteamId: user.steamId })]
+        : [createMatchActionRow(match.match_id)];
+      return message.reply({ embeds: [embed], components });
     }
 
     // Multiple matches — compact summary table

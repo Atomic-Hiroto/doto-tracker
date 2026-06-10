@@ -5,6 +5,7 @@ import { logger } from './loggerService';
 import { opendotaClient } from './apiClient';
 import { dotaDataService } from './dotaDataService';
 import { formatDuration } from '../utils/formatters';
+import { analyze } from '../commands/aiCommands';
 
 export function registerInteractionHandler(client: Client) {
     client.on('interactionCreate', async (interaction: Interaction) => {
@@ -60,6 +61,15 @@ export function registerInteractionHandler(client: Client) {
                     .setTimestamp(new Date(match.start_time * 1000));
 
                 await interaction.followUp({ embeds: [embed] });
+
+            } else if (customId.startsWith('coachme_')) {
+                const [, matchIdRaw, steamId] = customId.split('_');
+                const matchId = parseInt(matchIdRaw, 10);
+                if (!matchId || !steamId) {
+                    return interaction.reply({ content: 'Invalid coach request.', ephemeral: true });
+                }
+                await interaction.reply({ content: `🎓 Running focused coaching for match #${matchId}...`, ephemeral: false });
+                await analyze(interaction as any, [String(matchId), steamId]);
 
             } else if (customId.startsWith('page_')) {
                 // Pagination buttons — handled by individual commands that registered them
