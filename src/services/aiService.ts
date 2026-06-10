@@ -224,15 +224,85 @@ export function registerAnalysisConversation(messageId: string, context: string)
   });
 }
 
+function normalizeAnalysisTitle(title: string): string {
+  return title.replace(/\s+—\s+\d+\/\d+$/, '');
+}
+
+async function buildAnalysisEmbedFallbackContext(message: Message, messageId: string): Promise<string | null> {
+  try {
+    const referenced = await message.channel.messages.fetch(messageId);
+    const botId = message.client.user?.id;
+    if (!botId || referenced.author.id !== botId) return null;
+
+    const referencedEmbed = referenced.embeds.find(embed => embed.title?.startsWith('🔍 Match Analysis'));
+    if (!referencedEmbed?.title) return null;
+
+    const baseTitle = normalizeAnalysisTitle(referencedEmbed.title);
+    const nearby = await Promise.allSettled([
+      message.channel.messages.fetch({ limit: 4, before: referenced.id }),
+      message.channel.messages.fetch({ limit: 4, after: referenced.id }),
+    ]);
+
+    const candidates = [referenced];
+    for (const result of nearby) {
+      if (result.status === 'fulfilled') {
+        candidates.push(...result.value.values());
+      }
+    }
+
+    const analysisPages = candidates
+      .filter(candidate => candidate.author.id === botId)
+      .flatMap(candidate => candidate.embeds.map(embed => ({ candidate, embed })))
+      .filter(({ embed }) => embed.title?.startsWith('🔍 Match Analysis'))
+      .filter(({ embed }) => normalizeAnalysisTitle(embed.title ?? '') === baseTitle)
+      .sort((a, b) => a.candidate.createdTimestamp - b.candidate.createdTimestamp);
+
+    if (!analysisPages.length) return null;
+
+    const pageText = analysisPages.map(({ embed }) => {
+      const fields = embed.fields
+        .map(field => `${field.name}\n${field.value}`)
+        .join('\n\n');
+      return [
+        `TITLE: ${embed.title}`,
+        embed.description ? `BODY:\n${embed.description}` : '',
+        fields ? `FIELDS:\n${fields}` : '',
+        embed.footer?.text ? `FOOTER: ${embed.footer.text}` : '',
+      ].filter(Boolean).join('\n\n');
+    }).join('\n\n---\n\n');
+
+    return `ANALYSIS_EMBED_CONTEXT_ONLY:
+This context was reconstructed from the rendered Discord analysis embed because the full MATCH_FACTS thread was unavailable. Answer only from this embed text. If the user asks for details not visible here, say the analysis context does not contain enough data.
+
+${pageText}`;
+  } catch (error) {
+    logger.debug('Could not reconstruct analysis follow-up context from referenced embed');
+    return null;
+  }
+}
+
 export async function handleAnalysisFollowUp(message: Message): Promise<boolean> {
   const messageId = message.reference?.messageId;
   if (!messageId) return false;
-  const thread = analysisConversationHistory.get(messageId);
+  let thread = analysisConversationHistory.get(messageId);
+  if (!thread) {
+    const fallbackContext = await buildAnalysisEmbedFallbackContext(message, messageId);
+    if (!fallbackContext) return false;
+    registerAnalysisConversation(messageId, fallbackContext);
+    thread = analysisConversationHistory.get(messageId);
+  }
   if (!thread) return false;
   if (Date.now() > thread.expiresAt) {
     analysisConversationHistory.delete(messageId);
-    return false;
+    const fallbackContext = await buildAnalysisEmbedFallbackContext(message, messageId);
+    if (!fallbackContext) {
+      await message.reply('That analysis follow-up context expired. Re-run `+analyze` and reply to the fresh analysis embed.');
+      return true;
+    }
+    registerAnalysisConversation(messageId, fallbackContext);
+    thread = analysisConversationHistory.get(messageId);
   }
+  if (!thread) return false;
 
   const prompt = await resolveMentions(message, message.content.trim());
   if (!prompt) return false;
