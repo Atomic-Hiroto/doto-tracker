@@ -4,8 +4,8 @@ import {
     ButtonStyle,
 } from 'discord.js';
 
-export function createMatchActionRow(matchId: number): ActionRowBuilder<ButtonBuilder> {
-    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+export function createMatchActionRow(matchId: number, opts: { coachSteamId?: string; showCoach?: boolean } = {}): ActionRowBuilder<ButtonBuilder> {
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
             .setCustomId(`story_${matchId}`)
             .setLabel('📖 Story')
@@ -19,6 +19,15 @@ export function createMatchActionRow(matchId: number): ActionRowBuilder<ButtonBu
             .setLabel('🔗 OpenDota')
             .setStyle(ButtonStyle.Link),
     );
+    if (opts.showCoach && opts.coachSteamId) {
+        row.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`coachme_${matchId}_${opts.coachSteamId}`)
+                .setLabel('🎓 Coach me')
+                .setStyle(ButtonStyle.Success),
+        );
+    }
+    return row;
 }
 
 export function createPaginationRow(

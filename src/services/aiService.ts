@@ -7,6 +7,7 @@ import { ChannelDataService } from './channelDataService';
 import { safeTyping } from '../utils/channelHelpers';
 
 const conversationHistory = new Map<string, any[]>();
+const analysisConversationHistory = new Map<string, { expiresAt: number; messages: any[] }>();
 const channelDataService = new ChannelDataService();
 
 export { channelDataService };
@@ -161,16 +162,16 @@ async function buildSmartContext(message: Message): Promise<{ context: string; t
 }
 
 // Shared helper to call OpenRouter API
-async function callOpenRouterAPI(systemPrompt: string, messages: any[]): Promise<string | null> {
+async function callOpenRouterAPI(systemPrompt: string, messages: any[], opts: { model?: string; params?: Record<string, any> } = {}): Promise<string | null> {
   const response = await axios.post(
     "https://openrouter.ai/api/v1/chat/completions",
     {
-      model: AIConstants.AI_MODEL,
+      model: opts.model ?? AIConstants.AI_MODEL,
       messages: [
         { role: "system", content: systemPrompt },
         ...messages,
       ],
-      ...AIConstants.AI_PARAMS
+      ...(opts.params ?? AIConstants.AI_PARAMS)
     },
     {
       headers: {
@@ -201,6 +202,65 @@ async function callOpenRouterAPI(systemPrompt: string, messages: any[]): Promise
   }
 
   return (messageContent || '').trimStart();
+}
+
+export function registerAnalysisConversation(messageId: string, context: string) {
+  analysisConversationHistory.set(messageId, {
+    expiresAt: Date.now() + 30 * 60 * 1000,
+    messages: [
+      {
+        role: 'user',
+        content: `Seed this Dota 2 analysis follow-up conversation with the exact analysis context below. Use only this context for match-specific claims.\n\n${context}`,
+      },
+      {
+        role: 'assistant',
+        content: 'Understood. I will answer follow-up questions using only the seeded match facts and structured analysis.',
+      },
+    ],
+  });
+}
+
+export async function handleAnalysisFollowUp(message: Message): Promise<boolean> {
+  const messageId = message.reference?.messageId;
+  if (!messageId) return false;
+  const thread = analysisConversationHistory.get(messageId);
+  if (!thread) return false;
+  if (Date.now() > thread.expiresAt) {
+    analysisConversationHistory.delete(messageId);
+    return false;
+  }
+
+  const prompt = await resolveMentions(message, message.content.trim());
+  if (!prompt) return false;
+  safeTyping(message.channel);
+  thread.messages.push({ role: 'user', content: `${message.author.username}: ${prompt}` });
+
+  const system = `You are doto-chan answering follow-up questions about one Dota 2 analysis.
+Use only the seeded MATCH_FACTS and structured analysis for match-specific claims.
+If the answer is not in the context, say the analysis data does not contain it.
+Be concise, factual, and cite evidence ids when present.`;
+
+  try {
+    const response = await callOpenRouterAPI(system, thread.messages, {
+      model: AIConstants.AI_ANALYZE_MODEL,
+      params: { ...AIConstants.AI_ANALYZE_PARAMS, max_tokens: 1800 },
+    });
+    if (!response) {
+      await message.reply('I could not produce a follow-up answer for that analysis.');
+      return true;
+    }
+    thread.messages.push({ role: 'assistant', content: response });
+    while (thread.messages.length > 14) {
+      thread.messages.splice(2, 2);
+    }
+    thread.expiresAt = Date.now() + 30 * 60 * 1000;
+    await message.reply(response.slice(0, AIConstants.MAX_MESSAGE_LENGTH));
+    return true;
+  } catch (error) {
+    logger.error('Error handling analysis follow-up:', error);
+    await message.reply('Analysis follow-up failed. Try again later.');
+    return true;
+  }
 }
 
 export async function getAIText(message: Message, args: string[], triggeredByMention: boolean = false) {

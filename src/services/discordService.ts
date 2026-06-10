@@ -4,7 +4,7 @@ import { UserDataService } from './userDataService';
 import { TurboStatsService } from './turboStatsService';
 import * as commandHandlers from '../commands';
 import { logger } from './loggerService';
-import { getAIText, channelDataService } from './aiService';
+import { getAIText, channelDataService, handleAnalysisFollowUp } from './aiService';
 
 export async function handleMessage(message: Message, userDataService: UserDataService, turboStatsService: TurboStatsService) {
   // Ignore bot messages
@@ -30,6 +30,10 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     logger.debug(`Bot mentioned by ${message.author.username} with args: ${args}`);
     await getAIText(message, args, true);
     return;
+  }
+
+  if (!message.content.startsWith(ProcessConstants.PREFIX) && message.reference?.messageId) {
+    if (await handleAnalysisFollowUp(message)) return;
   }
 
   if (!message.content.startsWith(ProcessConstants.PREFIX)) return;

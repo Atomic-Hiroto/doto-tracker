@@ -10,6 +10,7 @@ import { formatDuration } from '../utils/formatters';
 import { safeTyping, safeSend } from '../utils/channelHelpers';
 import axios from 'axios';
 import { coachingDbService } from '../services/coachingDbService';
+import { registerAnalysisConversation } from '../services/aiService';
 
 // Discord embed field values are capped at 1024 chars
 const trunc = (s: string, max = 1024) => s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -403,10 +404,13 @@ function formatAnalysis(data: any, matchId: number, model: string, source: strin
         : [makeEmbed(first)];
 }
 
-async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[]) {
+async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], context?: string) {
     if (!embeds.length) return null;
     const [first, ...rest] = embeds;
     const reply = await message.reply({ embeds: [first] });
+    if (context) {
+        registerAnalysisConversation(reply.id, context);
+    }
     for (const embed of rest) {
         await safeSend(message.channel, { embeds: [embed] });
     }
@@ -477,7 +481,7 @@ export async function analyze(message: Message, args: string[]) {
             cached: true,
             showModel: message.author.id === BOT_OWNER_ID,
             });
-            return sendAnalysisEmbeds(message, embeds);
+            return sendAnalysisEmbeds(message, embeds, `STRUCTURED_ANALYSIS:\n${JSON.stringify(cached.structuredJson, null, 2)}`);
         }
     }
 
@@ -576,7 +580,7 @@ export async function analyze(message: Message, args: string[]) {
                             cached: true,
                             showModel: message.author.id === BOT_OWNER_ID,
                         });
-                        return sendAnalysisEmbeds(message, embeds);
+                        return sendAnalysisEmbeds(message, embeds, `STRUCTURED_ANALYSIS:\n${JSON.stringify(cached.structuredJson, null, 2)}`);
                     }
                 }
             }
@@ -843,7 +847,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
             showModel: message.author.id === BOT_OWNER_ID,
         });
-        await sendAnalysisEmbeds(message, embeds);
+        await sendAnalysisEmbeds(message, embeds, `MATCH_FACTS_PROMPT:\n${prompt}\n\nSTRUCTURED_ANALYSIS:\n${JSON.stringify(analysisData, null, 2)}`);
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
@@ -1565,7 +1569,8 @@ async function findFocusPlayer(players: any[], query?: string): Promise<any | nu
     for (const p of players) {
         const heroName = (p.hero?.displayName || await dotaDataService.getHeroName(p.heroId)).toLowerCase();
         const playerName = String(p.steamAccount?.name || 'Anonymous').toLowerCase();
-        if (playerName.includes(needle) || heroName.includes(needle)) return p;
+        const steamId = String(p.steamAccountId || '').toLowerCase();
+        if (playerName.includes(needle) || heroName.includes(needle) || (steamId && steamId === needle)) return p;
     }
     return null;
 }
