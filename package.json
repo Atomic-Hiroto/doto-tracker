@@ -9,6 +9,7 @@
     "remote-deploy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "typescript": "latest"
   },
   "keywords": [],
@@ -19,6 +20,7 @@
     "@napi-rs/canvas": "^0.1.93",
     "axios": "^1.7.3",
     "axios-retry": "^4.5.0",
+    "better-sqlite3": "^12.10.0",
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
     "puppeteer": "^24.37.4",
