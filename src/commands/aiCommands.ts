@@ -269,7 +269,7 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
                 },
                 nextGamePlan: {
                     type: 'string',
-                    description: 'A concrete next-game plan for the focused player: lane/farm target, item/timing target, fight rule, and one avoidable death pattern. Include evidence ids.',
+                    description: 'A concrete next-game plan for the focused player in 3-4 short sentences: lane/farm target, item/timing target, fight rule, and one avoidable death pattern. Include evidence ids.',
                 },
             },
             required: ['tldr', 'focusSummary', 'laneAndFarm', 'timingsAndItems', 'fightsAndDeaths', 'benchmarkCheck', 'keyMistakes', 'nextGamePlan'],
@@ -321,12 +321,25 @@ function formatMistakes(mistakes: any, debug: boolean, maxItems = 3): string {
         }).join('\n');
 }
 
+function findSentenceBoundary(text: string, max: number): number {
+    const commonAbbreviations = new Set(['vs', 'e.g', 'i.e', 'min', 'approx', 'no', 'mr', 'mrs', 'dr']);
+    const floor = Math.floor(max * 0.55);
+    const candidates: number[] = [];
+    for (let i = 0; i < text.length - 1; i++) {
+        if (!['.', '!', '?'].includes(text[i]) || text[i + 1] !== ' ') continue;
+        const prefix = text.slice(0, i).match(/([A-Za-z.]+)$/)?.[1]?.toLowerCase();
+        if (text[i] === '.' && prefix && commonAbbreviations.has(prefix)) continue;
+        if (i > floor) candidates.push(i);
+    }
+    return candidates.length ? candidates[candidates.length - 1] : -1;
+}
+
 function limitText(text: any, max: number, opts: { ellipsis?: boolean } = {}): string {
     const value = String(text || '').trim();
     if (value.length <= max) return value;
     const slice = value.slice(0, max - 1);
-    const sentenceEnd = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '));
-    if (sentenceEnd > Math.floor(max * 0.55)) {
+    const sentenceEnd = findSentenceBoundary(slice, max);
+    if (sentenceEnd > -1) {
         return slice.slice(0, sentenceEnd + 1).trim();
     }
     const wordEnd = slice.lastIndexOf(' ');
@@ -339,15 +352,21 @@ function formatSections(data: any, debug: boolean, focusMode: boolean): string[]
     const tldr = display.tldr ? [`**⚡ TL;DR**\n${limitText(display.tldr, 280)}`] : [];
     if (focusMode && data.focusSummary) {
         const limits = { summary: 850, lane: 780, items: 850, fights: 900, benchmarks: 700, mistakes: 1200, plan: 760 };
+        const benchmarkText = String(display.benchmarkCheck || '');
+        const benchmarkOmitted = /omitted|unavailable|not available|non-standard|turbo/i.test(benchmarkText)
+            && !/\d+(st|nd|rd|th) percentile/i.test(benchmarkText);
+        const benchmarkSection = benchmarkOmitted
+            ? [`**📊 BENCHMARKS**\n${debug ? limitText(benchmarkText, 220) : 'Omitted for Turbo/non-standard mode.'}`]
+            : [`**📊 BENCHMARK CHECK**\n${limitText(benchmarkText, limits.benchmarks)}`];
         return [
             ...tldr,
             `**🎯 YOUR GAME**\n${limitText(display.focusSummary, limits.summary)}`,
             `**🌱 LANE & FARM**\n${limitText(display.laneAndFarm, limits.lane)}`,
             `**⚔️ TIMINGS & ITEMS**\n${limitText(display.timingsAndItems, limits.items)}`,
             `**💀 FIGHTS & DEATHS**\n${limitText(display.fightsAndDeaths, limits.fights)}`,
-            `**📊 BENCHMARK CHECK**\n${limitText(display.benchmarkCheck, limits.benchmarks)}`,
+            ...benchmarkSection,
             `**🧯 KEY MISTAKES**\n${formatMistakes(data.keyMistakes, debug, 3)}`,
-            `**📝 NEXT GAME PLAN**\n${limitText(display.nextGamePlan, limits.plan)}`,
+            `**📝 NEXT GAME PLAN**\n${limitText(display.nextGamePlan, limits.plan, { ellipsis: false })}`,
         ];
     }
 
