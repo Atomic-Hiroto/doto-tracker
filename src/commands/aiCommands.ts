@@ -1992,6 +1992,12 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     }
     if (focusPlayerLabel) {
         addFact('focus', `Personal coaching mode target: ${focusPlayerLabel}. Prioritize this player's choices, deaths, item timings, damage, objectives, and counterfactual improvements.`);
+        if (focusSteamId) {
+            const notes = coachingDbService.getRecentPlayerNotes(focusSteamId, 5);
+            if (notes.length) {
+                addFact('playerNotes', `Player-provided context notes for ${focusPlayerLabel}; treat as claims from the player, not API facts: ${notes.map((note) => `${note.matchId ? `match #${note.matchId}: ` : ''}${note.text}`).join(' | ')}.`);
+            }
+        }
     }
 
     const teamLine = async (isRadiant: boolean) => (await Promise.all(
