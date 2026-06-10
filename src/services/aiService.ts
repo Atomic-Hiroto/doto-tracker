@@ -9,8 +9,30 @@ import { safeTyping } from '../utils/channelHelpers';
 const conversationHistory = new Map<string, any[]>();
 const analysisConversationHistory = new Map<string, { expiresAt: number; messages: any[] }>();
 const channelDataService = new ChannelDataService();
+const BOT_OWNER_ID = '78168838910246912';
 
 export { channelDataService };
+
+function stripEvidenceMarkers(text: string): string {
+  return text
+    .replace(/\s*\[F\d+\]/g, '')
+    .replace(/\s*\[C\d+\]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\n\s+/g, '\n')
+    .trim();
+}
+
+function displayNameFor(message: Message): string {
+  return message.member?.displayName ?? message.author.username;
+}
+
+async function replyInChunks(message: Message, text: string): Promise<void> {
+  const chunks = text.match(new RegExp(`(.|[\r\n]){1,${AIConstants.MAX_MESSAGE_LENGTH}}`, 'g'));
+  if (!chunks?.length) return;
+  for (const chunk of chunks) {
+    await message.reply(chunk);
+  }
+}
 
 // Resolve user mentions (<@123456>) to readable usernames
 async function resolveMentions(message: Message, content: string): Promise<string> {
@@ -307,11 +329,13 @@ export async function handleAnalysisFollowUp(message: Message): Promise<boolean>
   const prompt = await resolveMentions(message, message.content.trim());
   if (!prompt) return false;
   safeTyping(message.channel);
-  thread.messages.push({ role: 'user', content: `${message.author.username}: ${prompt}` });
+  thread.messages.push({ role: 'user', content: `${displayNameFor(message)}: ${prompt}` });
 
   const system = `You are doto-chan answering follow-up questions about one Dota 2 analysis.
 Use only the seeded MATCH_FACTS and structured analysis for match-specific claims.
 If the answer is not in the context, say the analysis data does not contain it.
+You may use general Dota knowledge for item or strategy recommendations, but phrase those as recommendations, never as things that happened in this match.
+Answer directly. Do not use openers like "Great question" or address the user by name unless needed for clarity.
 Be concise, factual, and cite evidence ids when present.`;
 
   try {
@@ -323,12 +347,13 @@ Be concise, factual, and cite evidence ids when present.`;
       await message.reply('I could not produce a follow-up answer for that analysis.');
       return true;
     }
-    thread.messages.push({ role: 'assistant', content: response });
+    const rendered = message.author.id === BOT_OWNER_ID ? response : stripEvidenceMarkers(response);
+    thread.messages.push({ role: 'assistant', content: rendered });
     while (thread.messages.length > 14) {
       thread.messages.splice(2, 2);
     }
     thread.expiresAt = Date.now() + 30 * 60 * 1000;
-    await message.reply(response.slice(0, AIConstants.MAX_MESSAGE_LENGTH));
+    await replyInChunks(message, rendered);
     return true;
   } catch (error) {
     logger.error('Error handling analysis follow-up:', error);
