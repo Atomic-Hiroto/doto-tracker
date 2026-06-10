@@ -26,12 +26,14 @@ function displayNameFor(message: Message): string {
   return message.member?.displayName ?? message.author.username;
 }
 
-async function replyInChunks(message: Message, text: string): Promise<void> {
+async function replyInChunks(message: Message, text: string): Promise<Message[]> {
   const chunks = text.match(new RegExp(`(.|[\r\n]){1,${AIConstants.MAX_MESSAGE_LENGTH}}`, 'g'));
-  if (!chunks?.length) return;
+  if (!chunks?.length) return [];
+  const sent: Message[] = [];
   for (const chunk of chunks) {
-    await message.reply(chunk);
+    sent.push(await message.reply(chunk));
   }
+  return sent;
 }
 
 // Resolve user mentions (<@123456>) to readable usernames
@@ -81,7 +83,7 @@ async function getReplyContext(message: Message): Promise<string | null> {
 
     const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
     const resolvedContent = await resolveMentions(message, repliedMessage.content);
-    return `[Replying to ${repliedMessage.author.username}: "${resolvedContent}"]`;
+    return `[Replying to ${displayNameFor(repliedMessage)}: "${resolvedContent}"]`;
   } catch (error) {
     logger.debug('Could not fetch replied message');
     return null;
@@ -105,7 +107,7 @@ async function fetchChannelContext(message: Message): Promise<string> {
         .filter(msg => !msg.author.bot)
         .map(async msg => {
           const resolvedContent = await resolveMentions(message, msg.content);
-          return `${msg.author.username}: ${resolvedContent}`;
+          return `${displayNameFor(msg)}: ${resolvedContent}`;
         })
     );
 
@@ -146,9 +148,9 @@ async function fetchContextAroundMessage(message: Message, targetMessageId: stri
           const resolvedContent = await resolveMentions(message, msg.content);
           const isQuoted = msg.id === targetMessageId;
           if (isQuoted) {
-            return `>> QUOTED: ${msg.author.username}: ${resolvedContent} <<`;
+            return `>> QUOTED: ${displayNameFor(msg)}: ${resolvedContent} <<`;
           }
-          return `${msg.author.username}: ${resolvedContent}`;
+          return `${displayNameFor(msg)}: ${resolvedContent}`;
         })
     );
 
@@ -356,7 +358,11 @@ Be concise, factual, and cite evidence ids when present.`;
       thread.messages.splice(2, 2);
     }
     thread.expiresAt = Date.now() + 30 * 60 * 1000;
-    await replyInChunks(message, rendered);
+    const sentMessages = await replyInChunks(message, rendered);
+    // Chain the bot's own answers into the same thread so replying to them continues the conversation.
+    for (const sent of sentMessages) {
+      analysisConversationHistory.set(sent.id, thread);
+    }
     return true;
   } catch (error) {
     logger.error('Error handling analysis follow-up:', error);
@@ -430,8 +436,8 @@ export async function getAIText(message: Message, args: string[], triggeredByMen
   }
 
   const userPromptText = smartContextPrefix
-    ? `${smartContextPrefix}${message.author.username}: ${prompt}`
-    : `${message.author.username}: ${prompt}`;
+    ? `${smartContextPrefix}${displayNameFor(message)}: ${prompt}`
+    : `${displayNameFor(message)}: ${prompt}`;
 
   let finalUserContent: any = userPromptText;
 
