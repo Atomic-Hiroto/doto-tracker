@@ -22,7 +22,7 @@ async function callAI(
     opts?: { model?: string; params?: Record<string, any>; response_format?: any; useWeb?: boolean }
 ): Promise<string> {
     const model = opts?.model ?? AIConstants.AI_MODEL;
-    const params = opts?.params ?? AIConstants.AI_PARAMS;
+    const params = sanitizeOpenRouterParams(model, opts?.params ?? AIConstants.AI_PARAMS);
     const useWeb = opts?.useWeb ?? true;
 
     const body: Record<string, any> = {
@@ -70,6 +70,21 @@ async function callAI(
         logger.error(`callAI failed [${model}] HTTP ${status}:`, errBody);
         throw new Error(`AI API error (HTTP ${status}): ${errBody}`);
     }
+}
+
+function sanitizeOpenRouterParams(model: string, params: Record<string, any>): Record<string, any> {
+    const next = { ...params };
+    if (/anthropic\/.*(latest|opus|sonnet)/i.test(model)) {
+        delete next.temperature;
+        delete next.top_p;
+        delete next.top_k;
+        delete next.min_p;
+        delete next.top_a;
+        delete next.repetition_penalty;
+        delete next.presence_penalty;
+        delete next.frequency_penalty;
+    }
+    return next;
 }
 
 const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genuinely helpful anime coach. You give blunt, direct advice with roasty humor but always with real insight. You know the game deeply based on the latest patch — timings, drafts, itemization, matchups. Keep responses concise and actionable.`;

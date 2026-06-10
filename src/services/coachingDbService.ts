@@ -33,6 +33,13 @@ export interface PlayerNote {
     createdAt: number;
 }
 
+export interface StoredCoachReport {
+    steamId: string;
+    reportJson: any;
+    sampleText: string;
+    createdAt: number;
+}
+
 class CoachingDbService {
     private db: Database.Database;
 
@@ -90,6 +97,13 @@ class CoachingDbService {
 
             CREATE INDEX IF NOT EXISTS idx_player_notes_player_created
                 ON player_notes(steam_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS coach_reports (
+                steam_id TEXT PRIMARY KEY,
+                report_json TEXT NOT NULL,
+                sample_text TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
         `);
         try {
             this.db.prepare(`ALTER TABLE analyses ADD COLUMN fact_prompt TEXT NULL`).run();
@@ -223,6 +237,39 @@ class CoachingDbService {
             text: String(row.text || ''),
             createdAt: Number(row.created_at),
         }));
+    }
+
+    getFreshCoachReport(steamId: string, ttlMs: number): StoredCoachReport | null {
+        const row = this.db.prepare(`
+            SELECT steam_id, report_json, sample_text, created_at
+            FROM coach_reports
+            WHERE steam_id = ?
+            LIMIT 1
+        `).get(steamId) as any;
+        if (!row) return null;
+        if (Date.now() - Number(row.created_at) >= ttlMs) return null;
+        try {
+            return {
+                steamId: row.steam_id,
+                reportJson: JSON.parse(row.report_json),
+                sampleText: String(row.sample_text || ''),
+                createdAt: Number(row.created_at),
+            };
+        } catch (error) {
+            logger.warn('Failed to parse cached coach report:', error);
+            return null;
+        }
+    }
+
+    saveCoachReport(args: { steamId: string; reportJson: any; sampleText: string }) {
+        this.db.prepare(`
+            INSERT INTO coach_reports (steam_id, report_json, sample_text, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(steam_id) DO UPDATE SET
+                report_json = excluded.report_json,
+                sample_text = excluded.sample_text,
+                created_at = excluded.created_at
+        `).run(args.steamId, JSON.stringify(args.reportJson), args.sampleText.slice(0, 500), Date.now());
     }
 
     replaceActivePlan(args: {
