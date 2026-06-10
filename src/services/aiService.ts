@@ -288,12 +288,7 @@ export async function getAIText(message: Message, args: string[], triggeredByMen
   try {
     logger.debug(`Sending AI request for user ${message.author.username} (${isSharedContext ? 'shared' : 'individual'} context)`);
 
-    const apiMessages = [
-      ...userHistory,
-      { role: "assistant", content: AIConstants.AI_PREFILL }
-    ];
-
-    const aiResponse = await callOpenRouterAPI(AIConstants.SYSTEM_PROMPT, apiMessages);
+    const aiResponse = await callOpenRouterAPI(AIConstants.SYSTEM_PROMPT, userHistory);
 
     if (!aiResponse) {
       logger.error('Unexpected API response structure from OpenRouter');
