@@ -10,6 +10,7 @@ export interface StoredAnalysis {
     steamId: string | null;
     mode: AnalysisMode;
     structuredJson: any;
+    factPrompt: string | null;
     model: string;
     source: string;
     createdAt: number;
@@ -41,6 +42,7 @@ class CoachingDbService {
                 steam_id TEXT NULL,
                 mode TEXT NOT NULL CHECK (mode IN ('match', 'player')),
                 structured_json TEXT NOT NULL,
+                fact_prompt TEXT NULL,
                 model TEXT NOT NULL,
                 source TEXT NOT NULL,
                 created_at INTEGER NOT NULL
@@ -70,6 +72,13 @@ class CoachingDbService {
                 FOREIGN KEY(plan_id) REFERENCES coaching_plans(id)
             );
         `);
+        try {
+            this.db.prepare(`ALTER TABLE analyses ADD COLUMN fact_prompt TEXT NULL`).run();
+        } catch (error: any) {
+            if (!String(error?.message || '').includes('duplicate column name')) {
+                throw error;
+            }
+        }
         logger.info(`Coaching DB ready at ${ProcessConstants.COACHING_DB_FILE}`);
     }
 
@@ -82,7 +91,7 @@ class CoachingDbService {
         ttlMs: number;
     }): StoredAnalysis | null {
         const row = this.db.prepare(`
-            SELECT match_id, steam_id, mode, structured_json, model, source, created_at
+            SELECT match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
             FROM analyses
             WHERE match_id = ?
               AND COALESCE(steam_id, '') = COALESCE(?, '')
@@ -101,6 +110,7 @@ class CoachingDbService {
                 steamId: row.steam_id ?? null,
                 mode: row.mode,
                 structuredJson: JSON.parse(row.structured_json),
+                factPrompt: row.fact_prompt ?? null,
                 model: row.model,
                 source: row.source,
                 createdAt: Number(row.created_at),
@@ -116,6 +126,7 @@ class CoachingDbService {
         steamId?: string | null;
         mode: AnalysisMode;
         structuredJson: any;
+        factPrompt?: string | null;
         model: string;
         source: string;
     }) {
@@ -129,19 +140,46 @@ class CoachingDbService {
                   AND model = ?
             `).run(args.matchId, args.steamId ?? null, args.mode, args.source, args.model);
             this.db.prepare(`
-                INSERT INTO analyses (match_id, steam_id, mode, structured_json, model, source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO analyses (match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
                 args.matchId,
                 args.steamId ?? null,
                 args.mode,
                 JSON.stringify(args.structuredJson),
+                args.factPrompt ?? null,
                 args.model,
                 args.source,
                 Date.now(),
             );
         });
         tx();
+    }
+
+    getLatestAnalysisForMatch(matchId: number): StoredAnalysis | null {
+        const row = this.db.prepare(`
+            SELECT match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
+            FROM analyses
+            WHERE match_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        `).get(matchId) as any;
+        if (!row) return null;
+        try {
+            return {
+                matchId: Number(row.match_id),
+                steamId: row.steam_id ?? null,
+                mode: row.mode,
+                structuredJson: JSON.parse(row.structured_json),
+                factPrompt: row.fact_prompt ?? null,
+                model: row.model,
+                source: row.source,
+                createdAt: Number(row.created_at),
+            };
+        } catch (error) {
+            logger.warn('Failed to parse latest analysis JSON:', error);
+            return null;
+        }
     }
 
     replaceActivePlan(args: {
@@ -204,7 +242,7 @@ class CoachingDbService {
 
     getRecentPlayerAnalyses(steamId: string, limit = 20): StoredAnalysis[] {
         const rows = this.db.prepare(`
-            SELECT match_id, steam_id, mode, structured_json, model, source, created_at
+            SELECT match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
             FROM analyses
             WHERE steam_id = ? AND mode = 'player'
             ORDER BY created_at DESC
@@ -217,6 +255,7 @@ class CoachingDbService {
                     steamId: row.steam_id ?? null,
                     mode: row.mode,
                     structuredJson: JSON.parse(row.structured_json),
+                    factPrompt: row.fact_prompt ?? null,
                     model: row.model,
                     source: row.source,
                     createdAt: Number(row.created_at),

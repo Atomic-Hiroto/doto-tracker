@@ -5,6 +5,7 @@ import { formatDuration } from '../utils/formatters';
 import { logger } from './loggerService';
 import { ChannelDataService } from './channelDataService';
 import { safeTyping } from '../utils/channelHelpers';
+import { coachingDbService } from './coachingDbService';
 
 const conversationHistory = new Map<string, any[]>();
 const analysisConversationHistory = new Map<string, { expiresAt: number; messages: any[] }>();
@@ -252,6 +253,22 @@ function normalizeAnalysisTitle(title: string): string {
   return title.replace(/\s+—\s+\d+\/\d+$/, '');
 }
 
+function matchIdFromAnalysisEmbedTitle(title?: string | null): number | null {
+  const match = title?.match(/Match Analysis\s+—\s+#(\d+)/);
+  if (!match) return null;
+  const matchId = Number(match[1]);
+  return Number.isFinite(matchId) ? matchId : null;
+}
+
+function buildStoredAnalysisContext(matchId: number): string | null {
+  const stored = coachingDbService.getLatestAnalysisForMatch(matchId);
+  if (!stored) return null;
+  const structured = `STRUCTURED_ANALYSIS:\n${JSON.stringify(stored.structuredJson, null, 2)}`;
+  return stored.factPrompt
+    ? `MATCH_FACTS_PROMPT:\n${stored.factPrompt}\n\n${structured}`
+    : structured;
+}
+
 async function buildAnalysisEmbedFallbackContext(message: Message, messageId: string): Promise<string | null> {
   try {
     const botId = message.client.user?.id;
@@ -263,6 +280,10 @@ async function buildAnalysisEmbedFallbackContext(message: Message, messageId: st
 
     const referencedEmbed = referenced.embeds.find(embed => embed.title?.startsWith('🔍 Match Analysis'));
     if (!referencedEmbed?.title) return null;
+
+    const matchId = matchIdFromAnalysisEmbedTitle(referencedEmbed.title);
+    const storedContext = matchId == null ? null : buildStoredAnalysisContext(matchId);
+    if (storedContext) return storedContext;
 
     const baseTitle = normalizeAnalysisTitle(referencedEmbed.title);
     const nearby = await Promise.allSettled([

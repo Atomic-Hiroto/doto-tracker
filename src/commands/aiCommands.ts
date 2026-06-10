@@ -441,6 +441,13 @@ async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], cont
     return reply;
 }
 
+function buildStoredAnalysisConversationContext(cached: { structuredJson: any; factPrompt?: string | null }): string {
+    const structured = `STRUCTURED_ANALYSIS:\n${JSON.stringify(cached.structuredJson, null, 2)}`;
+    return cached.factPrompt
+        ? `MATCH_FACTS_PROMPT:\n${cached.factPrompt}\n\n${structured}`
+        : structured;
+}
+
 const BOT_OWNER_ID = '78168838910246912';
 
 export async function analyze(message: Message, args: string[]) {
@@ -508,7 +515,7 @@ export async function analyze(message: Message, args: string[]) {
                 cached: true,
                 showModel: message.author.id === BOT_OWNER_ID,
             });
-            return sendAnalysisEmbeds(message, embeds, `STRUCTURED_ANALYSIS:\n${JSON.stringify(cached.structuredJson, null, 2)}`);
+            return sendAnalysisEmbeds(message, embeds, buildStoredAnalysisConversationContext(cached));
         }
     }
 
@@ -607,7 +614,7 @@ export async function analyze(message: Message, args: string[]) {
                             cached: true,
                             showModel: message.author.id === BOT_OWNER_ID,
                         });
-                        return sendAnalysisEmbeds(message, embeds, `STRUCTURED_ANALYSIS:\n${JSON.stringify(cached.structuredJson, null, 2)}`);
+                        return sendAnalysisEmbeds(message, embeds, buildStoredAnalysisConversationContext(cached));
                     }
                 }
             }
@@ -851,6 +858,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             steamId: analysisMode === 'player' ? resolvedFocusSteamId ?? null : null,
             mode: analysisMode,
             structuredJson: analysisData,
+            factPrompt: prompt,
             source,
             model: useModel,
         });
@@ -1987,6 +1995,13 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
             teamSize,
             supportPurchases,
         });
+
+        if (focusPlayer && !isFocus && p.isRadiant !== focusPlayer.isRadiant) {
+            const enemyInventory = await resolveFinalInventory(p);
+            if (enemyInventory.length) {
+                addFact('enemyItems', `Enemy context for ${focusPlayerLabel}: ${playerLabel} final inventory ${enemyInventory.slice(0, 6).join(', ')}. Use as matchup context only; do not turn this into a full analysis of that enemy player.`);
+            }
+        }
 
         if (focusPlayer && !isFocus) continue;
 
