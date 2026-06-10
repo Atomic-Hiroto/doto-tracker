@@ -412,7 +412,10 @@ async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], cont
         registerAnalysisConversation(reply.id, context);
     }
     for (const embed of rest) {
-        await safeSend(message.channel, { embeds: [embed] });
+        const sent = await safeSend(message.channel, { embeds: [embed] });
+        if (context && sent?.id) {
+            registerAnalysisConversation(sent.id, context);
+        }
     }
     return reply;
 }
@@ -466,20 +469,23 @@ export async function analyze(message: Message, args: string[]) {
     const useModel = modelOverride || AIConstants.AI_ANALYZE_MODEL;
     const requestedSourceLabel = requestedSource === 'stratz' ? 'Stratz' : 'OpenDota';
     if (!forceRedo && mode === 'match') {
-        const cached = coachingDbService.getFreshAnalysis({
-            matchId,
-            steamId: null,
-            mode: 'match',
-            source: requestedSourceLabel,
-            model: useModel,
-            ttlMs: ANALYZE_CACHE_TTL_MS,
-        });
+        const sourceCandidates = requestedSourceLabel === 'Stratz' ? ['Stratz', 'OpenDota'] : ['OpenDota'];
+        const cached = sourceCandidates
+            .map((source) => coachingDbService.getFreshAnalysis({
+                matchId,
+                steamId: null,
+                mode: 'match',
+                source,
+                model: useModel,
+                ttlMs: ANALYZE_CACHE_TTL_MS,
+            }))
+            .find(Boolean);
         if (cached) {
             const embeds = formatAnalysis(cached.structuredJson, matchId, cached.model, cached.source, {
-            debug: debugFacts,
-            focusPlayer: undefined,
-            cached: true,
-            showModel: message.author.id === BOT_OWNER_ID,
+                debug: debugFacts,
+                focusPlayer: undefined,
+                cached: true,
+                showModel: message.author.id === BOT_OWNER_ID,
             });
             return sendAnalysisEmbeds(message, embeds, `STRUCTURED_ANALYSIS:\n${JSON.stringify(cached.structuredJson, null, 2)}`);
         }
