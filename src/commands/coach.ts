@@ -163,6 +163,8 @@ export async function coach(message: Message, args: string[], userDataService: U
                 senPlaced: Number(player.sen_placed || 0),
                 obsKilled: Number(player.obs_killed || 0),
                 senKilled: Number(player.sen_killed || 0),
+                timeDead: Number(player.life_state_dead || 0),
+                teamfightParticipation: player.teamfight_participation == null ? null : Math.round(Number(player.teamfight_participation) * 100),
             };
         }));
         const matches = rows.filter((row): row is NonNullable<typeof row> => !!row);
@@ -186,6 +188,10 @@ export async function coach(message: Message, args: string[], userDataService: U
         const isolatedDeaths = matches.reduce((sum, m) => sum + m.isolatedDeaths, 0);
         const totalDeaths = matches.reduce((sum, m) => sum + m.deaths, 0);
         addFact('deaths', `Death timing histogram: ${Object.entries(deathBuckets).map(([k, v]) => `${k}: ${v}`).join(', ') || 'no timed deaths'}; isolated deaths ${isolatedDeaths}/${totalDeaths}.`, { deathBuckets, isolatedDeaths, totalDeaths });
+        const avgTimeDead = Math.round(matches.reduce((sum, m) => sum + m.timeDead, 0) / matches.length);
+        const tfpValues = matches.map((m) => m.teamfightParticipation).filter((value): value is number => value != null);
+        const avgTfp = tfpValues.length ? Math.round(tfpValues.reduce((sum, value) => sum + value, 0) / tfpValues.length) : null;
+        addFact('fightImpact', `Fight impact trend: average time dead ${formatDuration(avgTimeDead)} per match; average teamfight participation ${avgTfp == null ? 'unavailable' : `${avgTfp}%`} across ${tfpValues.length} parsed matches with the stat.`, { avgTimeDead, avgTfp, teamfightParticipationSamples: tfpValues.length });
 
         const byHero = new Map<string, typeof matches>();
         for (const match of matches) byHero.set(match.hero, [...(byHero.get(match.hero) || []), match]);
@@ -221,7 +227,14 @@ export async function coach(message: Message, args: string[], userDataService: U
         const totalPlanChecks = planGrades.length;
         const itemPasses = planGrades.filter((grade) => grade.resultsJson?.itemRule?.passed).length;
         const fightPasses = planGrades.filter((grade) => grade.resultsJson?.fightRule?.passed).length;
-        addFact('plans', `Plan compliance checks: ${totalPlanChecks} graded plans; item-rule pass ${itemPasses}/${totalPlanChecks}; fight-rule pass ${fightPasses}/${totalPlanChecks}.`, { totalPlanChecks, itemPasses, fightPasses });
+        const conversionGrades = planGrades.filter((grade) => grade.resultsJson?.conversionRule?.evidence && grade.resultsJson.conversionRule.evidence !== 'no explicit conversion target');
+        const conversionPasses = conversionGrades.filter((grade) => grade.resultsJson?.conversionRule?.passed).length;
+        addFact('plans', `Plan compliance checks: ${totalPlanChecks} graded plans; item-rule pass ${itemPasses}/${totalPlanChecks}; fight-rule pass ${fightPasses}/${totalPlanChecks}; conversion-rule pass ${conversionPasses}/${conversionGrades.length}.`, { totalPlanChecks, itemPasses, fightPasses, conversionPasses, conversionChecks: conversionGrades.length });
+
+        const notes = coachingDbService.getRecentPlayerNotes(user.steamId, 8);
+        if (notes.length) {
+            addFact('playerNotes', `Recent player-provided context notes: ${notes.map((note) => `${note.matchId ? `match #${note.matchId}: ` : ''}${note.text}`).join(' | ')}. Treat these as player claims, not API facts.`);
+        }
 
         const coachFacts = {
             source: 'OpenDota recent matches + stored focus analyses + deterministic plan grades',

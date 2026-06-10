@@ -25,6 +25,14 @@ export interface StoredCoachingPlan {
     createdAt: number;
 }
 
+export interface PlayerNote {
+    id: number;
+    steamId: string | null;
+    matchId: number | null;
+    text: string;
+    createdAt: number;
+}
+
 class CoachingDbService {
     private db: Database.Database;
 
@@ -71,6 +79,17 @@ class CoachingDbService {
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY(plan_id) REFERENCES coaching_plans(id)
             );
+
+            CREATE TABLE IF NOT EXISTS player_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                steam_id TEXT NULL,
+                match_id INTEGER NULL,
+                text TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_player_notes_player_created
+                ON player_notes(steam_id, created_at);
         `);
         try {
             this.db.prepare(`ALTER TABLE analyses ADD COLUMN fact_prompt TEXT NULL`).run();
@@ -180,6 +199,30 @@ class CoachingDbService {
             logger.warn('Failed to parse latest analysis JSON:', error);
             return null;
         }
+    }
+
+    savePlayerNote(args: { steamId?: string | null; matchId?: number | null; text: string }) {
+        this.db.prepare(`
+            INSERT INTO player_notes (steam_id, match_id, text, created_at)
+            VALUES (?, ?, ?, ?)
+        `).run(args.steamId ?? null, args.matchId ?? null, args.text.slice(0, 500), Date.now());
+    }
+
+    getRecentPlayerNotes(steamId: string, limit = 10): PlayerNote[] {
+        const rows = this.db.prepare(`
+            SELECT id, steam_id, match_id, text, created_at
+            FROM player_notes
+            WHERE steam_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        `).all(steamId, limit) as any[];
+        return rows.map((row) => ({
+            id: Number(row.id),
+            steamId: row.steam_id ?? null,
+            matchId: row.match_id == null ? null : Number(row.match_id),
+            text: String(row.text || ''),
+            createdAt: Number(row.created_at),
+        }));
     }
 
     replaceActivePlan(args: {

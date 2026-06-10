@@ -269,6 +269,30 @@ function buildStoredAnalysisContext(matchId: number): string | null {
     : structured;
 }
 
+function matchIdFromContextText(text: string): number | null {
+  const match = text.match(/Match #(\d+)|"matchId":\s*(\d+)|Match Analysis\s+—\s+#(\d+)/);
+  const value = match?.[1] || match?.[2] || match?.[3];
+  const matchId = Number(value);
+  return Number.isFinite(matchId) ? matchId : null;
+}
+
+function looksLikePlayerCorrection(text: string): boolean {
+  return /\b(actually|btw|for context|to be clear|i was|i'm|im|we were|he was|she was|they were|was support|was core|pos\s*[1-5]|position\s*[1-5]|roaming|lagged|disconnected|tilted)\b/i.test(text);
+}
+
+function maybeStorePlayerNote(thread: { messages: any[] }, prompt: string) {
+  if (!looksLikePlayerCorrection(prompt)) return;
+  const contextText = thread.messages.map((entry) => typeof entry.content === 'string' ? entry.content : '').join('\n');
+  const matchId = matchIdFromContextText(contextText);
+  if (!matchId) return;
+  const stored = coachingDbService.getLatestAnalysisForMatch(matchId);
+  coachingDbService.savePlayerNote({
+    steamId: stored?.steamId ?? null,
+    matchId,
+    text: prompt,
+  });
+}
+
 async function buildAnalysisEmbedFallbackContext(message: Message, messageId: string): Promise<string | null> {
   try {
     const botId = message.client.user?.id;
@@ -356,6 +380,7 @@ export async function handleAnalysisFollowUp(message: Message): Promise<boolean>
   if (!prompt) return false;
   safeTyping(message.channel);
   thread.messages.push({ role: 'user', content: `${displayNameFor(message)}: ${prompt}` });
+  maybeStorePlayerNote(thread, prompt);
 
   const system = `You are doto-chan answering follow-up questions about one Dota 2 analysis.
 Use only the seeded MATCH_FACTS and structured analysis for match-specific claims.
