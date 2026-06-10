@@ -9,11 +9,11 @@ import { fetchDotabuffTurboMeta } from '../services/dotabuffScraper';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping, safeSend } from '../utils/channelHelpers';
 import axios from 'axios';
+import { coachingDbService } from '../services/coachingDbService';
 
 // Discord embed field values are capped at 1024 chars
 const trunc = (s: string, max = 1024) => s.length > max ? s.slice(0, max - 1) + '…' : s;
 const ANALYZE_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
-const analyzeCache = new Map<string, { createdAt: number; data: any; source: string; model: string }>();
 
 async function callAI(
     systemPrompt: string,
@@ -460,16 +460,25 @@ export async function analyze(message: Message, args: string[]) {
     const mode = focusPlayerQuery ? 'player' : 'match';
     const requestedSource = useStratz ? 'stratz' : 'opendota';
     const useModel = modelOverride || AIConstants.AI_ANALYZE_MODEL;
-    const cacheKey = `${matchId}:${requestedSource}:${mode}:${focusPlayerQuery.toLowerCase()}:${useModel}`;
-    const cached = analyzeCache.get(cacheKey);
-    if (!forceRedo && cached && Date.now() - cached.createdAt < ANALYZE_CACHE_TTL_MS) {
-        const embeds = formatAnalysis(cached.data, matchId, cached.model, cached.source, {
+    const requestedSourceLabel = requestedSource === 'stratz' ? 'Stratz' : 'OpenDota';
+    if (!forceRedo && mode === 'match') {
+        const cached = coachingDbService.getFreshAnalysis({
+            matchId,
+            steamId: null,
+            mode: 'match',
+            source: requestedSourceLabel,
+            model: useModel,
+            ttlMs: ANALYZE_CACHE_TTL_MS,
+        });
+        if (cached) {
+            const embeds = formatAnalysis(cached.structuredJson, matchId, cached.model, cached.source, {
             debug: debugFacts,
-            focusPlayer: focusPlayerQuery || undefined,
+            focusPlayer: undefined,
             cached: true,
             showModel: message.author.id === BOT_OWNER_ID,
-        });
-        return sendAnalysisEmbeds(message, embeds);
+            });
+            return sendAnalysisEmbeds(message, embeds);
+        }
     }
 
     try {
@@ -478,6 +487,7 @@ export async function analyze(message: Message, args: string[]) {
         // ── Determine which data source to use ───────────────────────────────
         let prompt = '';
         let resolvedFocusPlayer: string | undefined;
+        let resolvedFocusSteamId: string | undefined;
         if (useStratz) {
             let stratzMatch = await fetchStratzMatch(matchId);
 
@@ -549,6 +559,26 @@ export async function analyze(message: Message, args: string[]) {
                 const built = await buildAnalyzeFactPrompt(stratzMatch, openDotaMatch, { focusPlayerQuery });
                 prompt = built.prompt;
                 resolvedFocusPlayer = built.focusPlayerLabel;
+                resolvedFocusSteamId = built.focusSteamId;
+                if (!forceRedo && resolvedFocusSteamId) {
+                    const cached = coachingDbService.getFreshAnalysis({
+                        matchId,
+                        steamId: resolvedFocusSteamId,
+                        mode: 'player',
+                        source: 'Stratz',
+                        model: useModel,
+                        ttlMs: ANALYZE_CACHE_TTL_MS,
+                    });
+                    if (cached) {
+                        const embeds = formatAnalysis(cached.structuredJson, matchId, cached.model, cached.source, {
+                            debug: debugFacts,
+                            focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
+                            cached: true,
+                            showModel: message.author.id === BOT_OWNER_ID,
+                        });
+                        return sendAnalysisEmbeds(message, embeds);
+                    }
+                }
             }
         }
 
@@ -784,7 +814,30 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
         }
 
         const source = useStratz ? 'Stratz' : 'OpenDota';
-        analyzeCache.set(cacheKey, { createdAt: Date.now(), data: analysisData, source, model: useModel });
+        const analysisMode = resolvedFocusPlayer ? 'player' : 'match';
+        coachingDbService.saveAnalysis({
+            matchId,
+            steamId: analysisMode === 'player' ? resolvedFocusSteamId ?? null : null,
+            mode: analysisMode,
+            structuredJson: analysisData,
+            source,
+            model: useModel,
+        });
+        if (analysisMode === 'player' && resolvedFocusSteamId && analysisData?.nextGamePlan) {
+            coachingDbService.replaceActivePlan({
+                steamId: resolvedFocusSteamId,
+                matchId,
+                planJson: {
+                    matchId,
+                    focusPlayer: resolvedFocusPlayer,
+                    tldr: analysisData.tldr ?? null,
+                    nextGamePlan: analysisData.nextGamePlan,
+                    keyMistakes: Array.isArray(analysisData.keyMistakes) ? analysisData.keyMistakes : [],
+                    createdFromModel: useModel,
+                    source,
+                },
+            });
+        }
         const embeds = formatAnalysis(analysisData, matchId, useModel, source, {
             debug: debugFacts,
             focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
@@ -1132,6 +1185,7 @@ type AnalyzePromptOptions = {
 type BuiltAnalyzePrompt = {
     prompt: string;
     focusPlayerLabel?: string;
+    focusSteamId?: string;
 };
 
 function finiteNumber(value: any): number | null {
@@ -1653,6 +1707,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     const focusPlayerLabel = focusPlayer
         ? `${focusPlayer.steamAccount?.name || 'Anonymous'} - ${focusPlayer.hero?.displayName || await dotaDataService.getHeroName(focusPlayer.heroId)}`
         : undefined;
+    const focusSteamId = focusPlayer?.steamAccountId != null ? String(focusPlayer.steamAccountId) : undefined;
     if (options.focusPlayerQuery && !focusPlayer) {
         warnings.push(`Requested focus player "${options.focusPlayerQuery}" was not found; produced whole-match analysis instead.`);
     }
@@ -1945,6 +2000,7 @@ ${lengthRules}
 MATCH_FACTS:
 ${JSON.stringify(factSheet, null, 2)}`,
         focusPlayerLabel,
+        focusSteamId,
     };
 }
 
