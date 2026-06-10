@@ -9,6 +9,7 @@ import { logger } from './loggerService';
 import { opendotaClient } from './apiClient';
 import { dotaDataService } from './dotaDataService';
 import { safeSend } from '../utils/channelHelpers';
+import { gradeActivePlanForMatch } from './coachingPlanService';
 
 export async function checkNewMatches(client: Client, userDataService: UserDataService, turboStatsService?: TurboStatsService) {
   const guild = client.guilds.cache.first();
@@ -100,6 +101,7 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
 
     const itemSlots = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5'];
     const itemNames = await Promise.all(itemSlots.map(slot => dotaDataService.getItemName(playerData[slot])));
+    const planGrade = await gradeActivePlanForMatch(String(playerData.account_id || ''), match.match_id, detailedMatch.data);
 
     const embed = new EmbedBuilder()
       .setColor(didWin ? '#66bb6a' : '#ef5350')
@@ -126,6 +128,9 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
       .setTimestamp(new Date(detailedMatch.data.start_time * 1000))
       .setFooter({ text: `Match played on ${new Date(detailedMatch.data.start_time * 1000).toLocaleString()}` })
       .setURL(`https://www.opendota.com/matches/${match.match_id}`);
+    if (planGrade) {
+      embed.addFields({ name: 'Coach Check-In', value: planGrade.slice(0, 1024), inline: false });
+    }
 
     await safeSend(channel, { embeds: [embed] });
   } catch (error) {
@@ -151,6 +156,11 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
 
     const radiantScoreboard = await Promise.all(radiantPlayers.map(formatPlayer));
     const direScoreboard = await Promise.all(direPlayers.map(formatPlayer));
+    const planGrades = (await Promise.all(players.map(async (tracked) => {
+      const player = match.players.find(p => tracked.steamId === (p.account_id ? p.account_id.toString() : null));
+      if (!player) return null;
+      return gradeActivePlanForMatch(tracked.steamId, matchId, match);
+    }))).filter((line): line is string => !!line);
 
     const radiantKills = radiantPlayers.reduce((sum, player) => sum + (player.kills || 0), 0);
     const direKills = direPlayers.reduce((sum, player) => sum + (player.kills || 0), 0);
@@ -174,6 +184,9 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
       .setTimestamp(new Date(match.start_time * 1000))
       .setFooter({ text: `Match ID: ${matchId}` })
       .setURL(`https://www.opendota.com/matches/${matchId}`);
+    if (planGrades.length) {
+      embed.addFields({ name: 'Coach Check-In', value: planGrades.join('\n').slice(0, 1024), inline: false });
+    }
 
     await safeSend(channel, { embeds: [embed] });
   } catch (error) {
