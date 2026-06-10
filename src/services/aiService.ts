@@ -187,16 +187,33 @@ async function buildSmartContext(message: Message): Promise<{ context: string; t
 }
 
 // Shared helper to call OpenRouter API
+function sanitizeOpenRouterParams(model: string, params: Record<string, any>): Record<string, any> {
+  const next = { ...params };
+  if (/anthropic\/.*(latest|opus|sonnet)/i.test(model)) {
+    delete next.temperature;
+    delete next.top_p;
+    delete next.top_k;
+    delete next.min_p;
+    delete next.top_a;
+    delete next.repetition_penalty;
+    delete next.presence_penalty;
+    delete next.frequency_penalty;
+  }
+  return next;
+}
+
 async function callOpenRouterAPI(systemPrompt: string, messages: any[], opts: { model?: string; params?: Record<string, any> } = {}): Promise<string | null> {
+  const model = opts.model ?? AIConstants.AI_MODEL;
+  const params = sanitizeOpenRouterParams(model, opts.params ?? AIConstants.AI_PARAMS);
   const response = await axios.post(
     "https://openrouter.ai/api/v1/chat/completions",
     {
-      model: opts.model ?? AIConstants.AI_MODEL,
+      model,
       messages: [
         { role: "system", content: systemPrompt },
         ...messages,
       ],
-      ...(opts.params ?? AIConstants.AI_PARAMS)
+      ...params
     },
     {
       headers: {

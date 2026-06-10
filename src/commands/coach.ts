@@ -11,6 +11,10 @@ import { formatDuration } from '../utils/formatters';
 import { parseArgs } from '../utils/argParser';
 import { getOpenDotaDeathTimes } from '../services/coachingPlanService';
 
+const COACH_REPORT_TTL_MS = 6 * 60 * 60 * 1000;
+const COACH_COOLDOWN_MS = 60 * 1000;
+const coachCooldowns = new Map<string, number>();
+
 const COACH_SYSTEM = `You are doto-chan, a persistent Dota 2 coach. You receive COACH_FACTS computed by deterministic code. Do not aggregate raw matches yourself.
 
 Rules:
@@ -110,6 +114,34 @@ async function callCoachAI(prompt: string): Promise<any> {
     return JSON.parse(text);
 }
 
+async function mapInBatches<T, R>(items: T[], batchSize: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+    const results: R[] = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        results.push(...await Promise.all(batch.map(mapper)));
+    }
+    return results;
+}
+
+function buildCoachEmbed(ai: any, targetUser: { username: string }, sampleText: string, cached = false): EmbedBuilder {
+    const problems = Array.isArray(ai.recurringProblems)
+        ? ai.recurringProblems.slice(0, 3).map((p: any) => `⚠️ **${p.claim}** — ${p.fix}`).join('\n')
+        : 'No recurring problems returned.';
+
+    return new EmbedBuilder()
+        .setColor('#8b5cf6')
+        .setTitle(`🎓 Coach Report — ${targetUser.username}`)
+        .setDescription(`**Recurring Problems**\n${problems}`)
+        .addFields(
+            { name: 'Biggest Win', value: String(ai.biggestWin || 'N/A').slice(0, 1024), inline: false },
+            { name: 'Trend Verdict', value: String(ai.trendVerdict || 'N/A').slice(0, 1024), inline: false },
+            { name: 'Focus For Next Week', value: String(ai.focusForNextWeek || 'N/A').slice(0, 1024), inline: false },
+            { name: 'Sample', value: sampleText.slice(0, 1024), inline: true },
+        )
+        .setFooter({ text: cached ? 'doto-chan coaching • cached trend synthesis' : 'doto-chan coaching • trend synthesis' })
+        .setTimestamp();
+}
+
 export async function coach(message: Message, args: string[], userDataService: UserDataService) {
     const parsed = parseArgs(args, message);
     let discordId = message.author.id;
@@ -123,6 +155,20 @@ export async function coach(message: Message, args: string[], userDataService: U
     if (!user) return message.reply(Replies.NEED_REGISTRATION);
 
     try {
+        const cooldownKey = `${message.author.id}:${user.steamId}`;
+        const now = Date.now();
+        const cooldownUntil = coachCooldowns.get(cooldownKey) || 0;
+        if (cooldownUntil > now) {
+            return message.reply(`Coach report is cooling down. Try again in ${Math.ceil((cooldownUntil - now) / 1000)}s.`);
+        }
+        coachCooldowns.set(cooldownKey, now + COACH_COOLDOWN_MS);
+
+        const forceRedo = parsed.flags.redo === true || parsed.flags.refresh === true;
+        const cachedReport = forceRedo ? null : coachingDbService.getFreshCoachReport(user.steamId, COACH_REPORT_TTL_MS);
+        if (cachedReport) {
+            return message.reply({ embeds: [buildCoachEmbed(cachedReport.reportJson, targetUser, cachedReport.sampleText, true)] });
+        }
+
         safeTyping(message.channel);
         const recent = await opendotaClient.get<any[]>(`/players/${user.steamId}/recentMatches?limit=20`);
         const recentMatches = recent.data || [];
@@ -130,8 +176,10 @@ export async function coach(message: Message, args: string[], userDataService: U
             return message.reply('Need at least 3 recent matches before I can coach trends.');
         }
 
-        const detailed = await Promise.all(
-            recentMatches.slice(0, 20).map(async (match) => opendotaClient.get(`/matches/${match.match_id}`).then((res) => res.data).catch(() => null))
+        const detailed = await mapInBatches(
+            recentMatches.slice(0, 20),
+            4,
+            async (match) => opendotaClient.get(`/matches/${match.match_id}`).then((res) => res.data).catch(() => null)
         );
         const fetchedMatches = detailed.filter(Boolean);
         const parsedMatches = fetchedMatches.filter((match: any) => !!match.version);
@@ -243,24 +291,9 @@ export async function coach(message: Message, args: string[], userDataService: U
             facts,
         };
         const ai = await callCoachAI(`Synthesize this coaching trend report using only COACH_FACTS.\n\nCOACH_FACTS:\n${JSON.stringify(coachFacts, null, 2)}`);
-        const problems = Array.isArray(ai.recurringProblems)
-            ? ai.recurringProblems.slice(0, 3).map((p: any) => `⚠️ **${p.claim}** — ${p.fix}`).join('\n')
-            : 'No recurring problems returned.';
-
-        const embed = new EmbedBuilder()
-            .setColor('#8b5cf6')
-            .setTitle(`🎓 Coach Report — ${targetUser.username}`)
-            .setDescription(`**Recurring Problems**\n${problems}`)
-            .addFields(
-                { name: 'Biggest Win', value: String(ai.biggestWin || 'N/A').slice(0, 1024), inline: false },
-                { name: 'Trend Verdict', value: String(ai.trendVerdict || 'N/A').slice(0, 1024), inline: false },
-                { name: 'Focus For Next Week', value: String(ai.focusForNextWeek || 'N/A').slice(0, 1024), inline: false },
-                { name: 'Sample', value: `${matches.length} matches • avg duration ${formatDuration(Math.round(matches.reduce((s, m) => s + m.duration, 0) / matches.length))}`, inline: true },
-            )
-            .setFooter({ text: 'doto-chan coaching • trend synthesis' })
-            .setTimestamp();
-
-        await message.reply({ embeds: [embed] });
+        const sampleText = `${matches.length} matches • avg duration ${formatDuration(Math.round(matches.reduce((s, m) => s + m.duration, 0) / matches.length))}`;
+        coachingDbService.saveCoachReport({ steamId: user.steamId, reportJson: ai, sampleText });
+        await message.reply({ embeds: [buildCoachEmbed(ai, targetUser, sampleText)] });
     } catch (error: any) {
         logger.error('Error in coach command:', error?.response?.data || error);
         await message.reply(`Coach report failed: ${error?.message || 'unknown error'}`);
