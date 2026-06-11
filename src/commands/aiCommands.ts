@@ -158,6 +158,9 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Each mistake needs: claim, evidence, severity, fix.
 - The fix must be compact and chain cause -> consequence -> specific alternative using only facts on the sheet.
 - In focus mode, do not invent filler mistakes for a player who clearly had a clean/high-impact game. One real mistake plus marginal improvement notes is better than three weak mistakes.
+- Every mistake must be role-valid given the role-signal facts. Never flag role-normal behavior as a mistake: low ward/deward counts for a farm-priority 1-2 player, low CS or net worth for a farm-priority 4-5 player, low tower damage for a dedicated support. The mistake must be something that hurt or risked THIS player's game within their own job.
+- If the facts support no genuine error for the focus player, the single keyMistake becomes the highest-leverage role-appropriate refinement, severity "minor", phrased as next-level polish ("what separates this from a perfect game"), never as a manufactured fault.
+- Clean-game refinements to check before reaching for weak ones: Roshan never taken despite the player's team holding kill/tower momentum (Aegis would have de-risked the close-out); a decided game extended for extra farm instead of ending; a power-spike window (item timing fact) not converted into a tower or objective shortly after.
 
 ## Length Budget
 - Whole-match mode: write a complete but compact recap that fits one Discord embed. Use 2 sentences for narrative, draft/laning, items/damage, and map control; use exactly 2 keyMistakes unless the third is truly decisive.
@@ -206,7 +209,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 keyMistakes: {
                     type: 'array',
-                    description: 'The 2-3 biggest mistakes ranked by game impact.',
+                    description: 'The 2-3 biggest mistakes ranked by game impact. Each mistake must be role-valid for the player it names per the role-signal facts; never flag role-normal behavior such as ward counts for farm-priority 1-2 players or CS for farm-priority 4-5 players.',
                     items: {
                         type: 'object',
                         properties: {
@@ -272,7 +275,7 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
                 },
                 keyMistakes: {
                     type: 'array',
-                    description: '1-3 focused-player mistakes ranked by impact. Do not invent filler mistakes when facts only support one real error.',
+                    description: '1-3 focused-player mistakes ranked by impact. Every mistake must be role-valid per the role-signal facts; never flag role-normal behavior (ward counts for farm-priority 1-2, CS for farm-priority 4-5). If no genuine error exists, return one highest-leverage role-appropriate refinement (severity "minor") phrased as next-level polish, e.g. an untaken Roshan or a decided game not closed out.',
                     items: {
                         type: 'object',
                         properties: {
