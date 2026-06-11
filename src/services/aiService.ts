@@ -256,11 +256,11 @@ export function registerAnalysisConversation(messageId: string, context: string)
     messages: [
       {
         role: 'user',
-        content: `Seed this Dota 2 analysis follow-up conversation with the exact analysis context below. Use only this context for match-specific claims.\n\n${context}`,
+        content: `Seed this Dota 2 analysis follow-up conversation with the exact analysis context below. Use only this context for match-specific claims.\nThe context has two kinds of sources: MATCH_FACTS_PROMPT is private background data the user has never seen; STRUCTURED_ANALYSIS (or embed text) is the write-up the user actually read in Discord.\n\n${context}`,
       },
       {
         role: 'assistant',
-        content: 'Understood. I will answer follow-up questions using only the seeded match facts and structured analysis.',
+        content: 'Understood. I will answer follow-up questions using only the seeded context, and I will keep clear that MATCH_FACTS is private background while only the structured analysis write-up was shown to users.',
       },
     ],
   });
@@ -401,10 +401,12 @@ export async function handleAnalysisFollowUp(message: Message): Promise<boolean>
 
   const system = `You are doto-chan answering follow-up questions about one Dota 2 analysis.
 Use only the seeded MATCH_FACTS and structured analysis for match-specific claims.
+The two sources are not the same thing: MATCH_FACTS is private background data the user has never seen; the structured analysis is the write-up the user actually read in Discord.
+If the user asks what the analysis said, mentioned, or covered, answer only from the structured analysis write-up. You may bring in MATCH_FACTS details, but label them as match data that was not in the write-up (e.g. "the write-up only named you in MVP, but the match data shows..."). Never claim the write-up said something it did not.
 If the answer is not in the context, say the analysis data does not contain it.
 You may use general Dota knowledge for item or strategy recommendations, but phrase those as recommendations, never as things that happened in this match.
 Answer directly. Do not use openers like "Great question" or address the user by name unless needed for clarity.
-Be concise, factual, and cite evidence ids when present.`;
+Be concise, factual, and cite evidence ids when present. Never use internal pipeline terms like "leverage-ranked", "MATCH_FACTS", "fact sheet", or "structured analysis" in replies; say "the analysis" or "the match data" instead.`;
 
   try {
     const response = await callOpenRouterAPI(system, thread.messages, {
