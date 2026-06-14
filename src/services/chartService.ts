@@ -127,6 +127,135 @@ function drawLineChart(
     return canvas.toBuffer('image/png');
 }
 
+/**
+ * Renders the iconic Dota "advantage over time" graph: gold advantage as a
+ * diverging green/red filled area (Radiant positive, Dire negative) with the XP
+ * advantage drawn as a line on top. Centered on a zero baseline.
+ */
+export function renderMatchAdvantageGraph(
+    radiantGoldAdv: number[],
+    radiantXpAdv: number[],
+    opts?: { title?: string; radiantWin?: boolean }
+): Buffer {
+    const W = 900;
+    const H = 420;
+    const P = 64;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#2d2d4e';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+
+    const gold = radiantGoldAdv || [];
+    const xp = radiantXpAdv || [];
+    const n = Math.max(gold.length, xp.length);
+
+    if (n < 2) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('No timeline data (match not parsed)', W / 2, H / 2);
+        return canvas.toBuffer('image/png');
+    }
+
+    const plotW = W - P * 2;
+    const plotH = H - P * 2;
+    const all = [...gold, ...xp];
+    const maxAbs = Math.max(1, ...all.map((v) => Math.abs(v)));
+
+    const scaleX = (i: number) => P + (i / (n - 1)) * plotW;
+    const midY = P + plotH / 2;
+    const scaleY = (v: number) => midY - (v / maxAbs) * (plotH / 2);
+
+    // Horizontal grid + value labels (in thousands)
+    ctx.strokeStyle = '#2d2d4e';
+    ctx.lineWidth = 1;
+    ctx.font = '12px sans-serif';
+    for (let i = -2; i <= 2; i++) {
+        const val = (maxAbs / 2) * i;
+        const y = scaleY(val);
+        ctx.strokeStyle = i === 0 ? '#52527a' : '#2d2d4e';
+        ctx.beginPath();
+        ctx.moveTo(P, y);
+        ctx.lineTo(W - P, y);
+        ctx.stroke();
+        ctx.fillStyle = '#888899';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${(val / 1000).toFixed(1)}k`, P - 8, y + 4);
+    }
+
+    // Diverging gold-advantage area, split at the zero baseline.
+    const drawArea = (positive: boolean) => {
+        ctx.beginPath();
+        ctx.moveTo(scaleX(0), midY);
+        for (let i = 0; i < gold.length; i++) {
+            const v = positive ? Math.max(0, gold[i]) : Math.min(0, gold[i]);
+            ctx.lineTo(scaleX(i), scaleY(v));
+        }
+        ctx.lineTo(scaleX(gold.length - 1), midY);
+        ctx.closePath();
+        ctx.fillStyle = positive ? '#10b98144' : '#ef444444';
+        ctx.fill();
+    };
+    drawArea(true);
+    drawArea(false);
+
+    // Gold advantage line
+    ctx.beginPath();
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    gold.forEach((v, i) => (i === 0 ? ctx.moveTo(scaleX(i), scaleY(v)) : ctx.lineTo(scaleX(i), scaleY(v))));
+    ctx.stroke();
+
+    // XP advantage line
+    ctx.beginPath();
+    ctx.strokeStyle = '#60a5fa';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    xp.forEach((v, i) => (i === 0 ? ctx.moveTo(scaleX(i), scaleY(v)) : ctx.lineTo(scaleX(i), scaleY(v))));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // X-axis minute labels
+    ctx.fillStyle = '#888899';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    const step = Math.max(1, Math.round(n / 8));
+    for (let i = 0; i < n; i += step) {
+        ctx.fillText(`${i}m`, scaleX(i), H - P + 20);
+    }
+
+    // Title
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(opts?.title || 'Gold & XP Advantage (Radiant)', W / 2, 30);
+
+    // Legend
+    const legend = [
+        { c: '#f59e0b', t: 'Gold adv' },
+        { c: '#60a5fa', t: 'XP adv' },
+        { c: '#10b981', t: 'Radiant ahead' },
+        { c: '#ef4444', t: 'Dire ahead' },
+    ];
+    let lx = P;
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'left';
+    for (const item of legend) {
+        ctx.fillStyle = item.c;
+        ctx.fillRect(lx, 44, 12, 12);
+        ctx.fillStyle = '#cccccc';
+        ctx.fillText(item.t, lx + 16, 54);
+        lx += 30 + ctx.measureText(item.t).width + 16;
+    }
+
+    return canvas.toBuffer('image/png');
+}
+
 export function renderKDATrend(matches: Array<{ kills: number; deaths: number; assists: number; match_id: number; start_time: number }>): Buffer {
     const data: DataPoint[] = matches.map(m => ({
         label: new Date(m.start_time * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' }),

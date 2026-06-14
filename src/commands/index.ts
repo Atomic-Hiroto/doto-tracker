@@ -23,5 +23,7 @@ export { coach } from './coach';
 export { achievements } from './achievements';
 // Reference (Dota knowledge base)
 export { item, ability, hero, aghs, talents } from './reference';
+// Match visuals
+export { graph } from './matchGraph';
 // Admin
 export { setChannel, unsetChannel } from './setChannel';

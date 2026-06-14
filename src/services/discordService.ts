@@ -147,6 +147,11 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.talents(message, args);
       break;
 
+    // --- Match visuals ---
+    case Commands.GRAPH:
+      await commandHandlers.graph(message, args);
+      break;
+
     // --- Admin ---
     case Commands.SET_CHANNEL:
       await commandHandlers.setChannel(message, channelDataService);
