@@ -34,6 +34,8 @@ export enum Commands {
     HERO = "hero",
     AGHS = "aghs",
     TALENTS = "talents",
+    // Match visuals
+    GRAPH = "graph",
     // Admin
     SET_CHANNEL = "setchannel",
     UNSET_CHANNEL = "unsetchannel",

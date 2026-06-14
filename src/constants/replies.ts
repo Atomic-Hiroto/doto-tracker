@@ -28,6 +28,7 @@ export const HELP = `**Available Commands:**
 \`+ability <name>\` - Ability details and values
 \`+aghs <hero>\` - Aghanim's Scepter & Shard upgrades
 \`+talents <hero>\` - Hero talent tree
+\`+graph <match_id>\` - Gold/XP advantage graph for a match
 
 **ℹ️ Other Commands:**
 \`+caow\` - Fun command
