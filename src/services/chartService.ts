@@ -256,6 +256,134 @@ export function renderMatchAdvantageGraph(
     return canvas.toBuffer('image/png');
 }
 
+export interface MatchRow {
+    won: boolean;
+    hero: string;
+    kills: number;
+    deaths: number;
+    assists: number;
+    gpm: number;
+    durationSec: number;
+    mode: string;
+}
+
+/**
+ * Renders a clean, premium-looking recent-matches table as a PNG: one row per
+ * match with a green/red result bar, hero, K/D/A, KDA ratio, GPM, duration and
+ * mode. Far more readable than plain embed text rows.
+ */
+export function renderRecentMatchesTable(
+    rows: MatchRow[],
+    opts: { username: string; wins: number; total: number; subtitle?: string }
+): Buffer {
+    const W = 820;
+    const HEADER_H = 84;
+    const ROW_H = 40;
+    const FOOTER_H = 12;
+    const H = HEADER_H + rows.length * ROW_H + FOOTER_H;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+
+    // Background
+    ctx.fillStyle = '#15151f';
+    ctx.fillRect(0, 0, W, H);
+
+    // Header band
+    ctx.fillStyle = '#1f1f33';
+    ctx.fillRect(0, 0, W, HEADER_H);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(opts.username, 24, 38);
+
+    const wr = opts.total ? ((opts.wins / opts.total) * 100).toFixed(0) : '0';
+    ctx.font = '15px sans-serif';
+    ctx.fillStyle = '#9aa0c0';
+    const summary = `Last ${opts.total} • ${opts.wins}W ${opts.total - opts.wins}L • ${wr}% WR${opts.subtitle ? `  •  ${opts.subtitle}` : ''}`;
+    ctx.fillText(summary, 24, 64);
+
+    // Column layout
+    const cols = {
+        hero: 64,
+        kda: 320,
+        ratio: 470,
+        gpm: 570,
+        dur: 670,
+        mode: 740,
+    };
+
+    // Column headers
+    const colHeaderY = HEADER_H - 6;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillStyle = '#6b6b8a';
+    ctx.textAlign = 'left';
+    ctx.fillText('HERO', cols.hero, colHeaderY);
+    ctx.fillText('K / D / A', cols.kda, colHeaderY);
+    ctx.fillText('KDA', cols.ratio, colHeaderY);
+    ctx.fillText('GPM', cols.gpm, colHeaderY);
+    ctx.fillText('TIME', cols.dur, colHeaderY);
+    ctx.fillText('MODE', cols.mode, colHeaderY);
+
+    // Rows
+    rows.forEach((r, i) => {
+        const y = HEADER_H + i * ROW_H;
+        // Zebra striping
+        if (i % 2 === 0) {
+            ctx.fillStyle = '#1a1a28';
+            ctx.fillRect(0, y, W, ROW_H);
+        }
+        // Result bar
+        ctx.fillStyle = r.won ? '#10b981' : '#ef4444';
+        ctx.fillRect(0, y, 6, ROW_H);
+
+        const ty = y + ROW_H / 2 + 5;
+        ctx.textAlign = 'left';
+
+        // Result pill letter
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillStyle = r.won ? '#10b981' : '#ef4444';
+        ctx.fillText(r.won ? 'W' : 'L', 24, ty);
+
+        // Hero
+        ctx.font = '15px sans-serif';
+        ctx.fillStyle = '#e6e6f0';
+        ctx.fillText(truncatePx(ctx, r.hero, 240), cols.hero, ty);
+
+        // K/D/A
+        ctx.fillStyle = '#c4c4d8';
+        ctx.fillText(`${r.kills} / ${r.deaths} / ${r.assists}`, cols.kda, ty);
+
+        // KDA ratio
+        const ratio = (r.kills + r.assists) / (r.deaths || 1);
+        ctx.fillStyle = ratio >= 5 ? '#10b981' : ratio >= 3 ? '#eab308' : '#c4c4d8';
+        ctx.fillText(ratio.toFixed(2), cols.ratio, ty);
+
+        // GPM
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillText(String(r.gpm), cols.gpm, ty);
+
+        // Duration
+        ctx.fillStyle = '#9aa0c0';
+        const m = Math.floor(r.durationSec / 60);
+        const s = r.durationSec % 60;
+        ctx.fillText(`${m}:${s.toString().padStart(2, '0')}`, cols.dur, ty);
+
+        // Mode
+        ctx.font = '13px sans-serif';
+        ctx.fillStyle = '#7b7b9a';
+        ctx.fillText(truncatePx(ctx, r.mode, 70), cols.mode, ty);
+    });
+
+    return canvas.toBuffer('image/png');
+}
+
+function truncatePx(ctx: any, text: string, maxPx: number): string {
+    if (ctx.measureText(text).width <= maxPx) return text;
+    let t = text;
+    while (t.length > 1 && ctx.measureText(t + '…').width > maxPx) t = t.slice(0, -1);
+    return t + '…';
+}
+
 export function renderKDATrend(matches: Array<{ kills: number; deaths: number; assists: number; match_id: number; start_time: number }>): Buffer {
     const data: DataPoint[] = matches.map(m => ({
         label: new Date(m.start_time * 1000).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' }),

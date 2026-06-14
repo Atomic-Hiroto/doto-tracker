@@ -1,4 +1,4 @@
-import { Message, EmbedBuilder } from 'discord.js';
+import { Message, EmbedBuilder, AttachmentBuilder } from 'discord.js';
 import { UserDataService } from '../services/userDataService';
 import { Replies } from '../constants';
 import { logger } from '../services/loggerService';
@@ -8,6 +8,7 @@ import { parseArgs, parseIntArg } from '../utils/argParser';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping } from '../utils/channelHelpers';
 import { createMatchActionRow } from '../components/matchButtons';
+import { renderRecentMatchesTable, MatchRow } from '../services/chartService';
 
 const GAME_MODES: Record<number, string> = {
   0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -117,22 +118,26 @@ export async function recentStats(message: Message, args: string[], userDataServ
       return heroCache[id];
     };
 
-    const rows = await Promise.all(
+    const tableRows: MatchRow[] = await Promise.all(
       matches.map(async (match: any) => {
         const heroName = await getHero(match.hero_id);
         const isRadiant = match.player_slot < 128;
         const didWin = (isRadiant && match.radiant_win) || (!isRadiant && !match.radiant_win);
-        const kda = `${match.kills}/${match.deaths}/${match.assists}`;
-        const result = didWin ? '✅' : '❌';
-        return `${result} **${heroName}** • ${kda} • ${match.gold_per_min} GPM • ${formatDuration(match.duration)}`;
+        return {
+          won: didWin,
+          hero: heroName,
+          kills: match.kills,
+          deaths: match.deaths,
+          assists: match.assists,
+          gpm: match.gold_per_min,
+          durationSec: match.duration,
+          mode: GAME_MODES[match.game_mode] || 'Unknown',
+        };
       })
     );
 
     const totalGames = matches.length;
-    const wins = matches.filter((m: any) => {
-      const isRadiant = m.player_slot < 128;
-      return (isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win);
-    }).length;
+    const wins = tableRows.filter((r) => r.won).length;
 
     const filterDesc = [
       turboOnly ? '⚡ Turbo only' : '',
@@ -141,15 +146,22 @@ export async function recentStats(message: Message, args: string[], userDataServ
       lossesOnly ? '❌ Losses only' : '',
     ].filter(Boolean).join(' | ');
 
+    const tableImage = renderRecentMatchesTable(tableRows, {
+      username: targetUser.username,
+      wins,
+      total: totalGames,
+      subtitle: filterDesc || undefined,
+    });
+    const attachment = new AttachmentBuilder(tableImage, { name: 'recent.png' });
+
     const embed = new EmbedBuilder()
       .setColor('#7c3aed')
       .setTitle(`📊 Last ${totalGames} Matches — ${targetUser.username}`)
-      .setDescription(`${filterDesc || 'All modes'}\n**W/L:** ${wins}/${totalGames - wins} (${((wins / totalGames) * 100).toFixed(1)}% WR)`)
-      .addFields({ name: 'Match History', value: rows.join('\n'), inline: false })
+      .setImage('attachment://recent.png')
       .setFooter({ text: `Use +rs <n> --turbo --hero "Name" --wins/--losses for filtering` })
       .setTimestamp();
 
-    await message.reply({ embeds: [embed] });
+    await message.reply({ embeds: [embed], files: [attachment] });
   } catch (error) {
     logger.error(`Error in recentStats for user ${discordId}:`, error);
     await message.reply('An error occurred while fetching match history. Please try again later.');
