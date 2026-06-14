@@ -36,6 +36,10 @@ export enum Commands {
     TALENTS = "talents",
     // Match visuals
     GRAPH = "graph",
+    SKILLBUILD = "skillbuild",
+    INVENTORY = "inventory",
+    PERCENT = "%",
+    ROLES = "roles",
     // Admin
     SET_CHANNEL = "setchannel",
     UNSET_CHANNEL = "unsetchannel",

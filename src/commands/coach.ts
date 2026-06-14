@@ -10,6 +10,7 @@ import { safeTyping } from '../utils/channelHelpers';
 import { formatDuration } from '../utils/formatters';
 import { parseArgs } from '../utils/argParser';
 import { getOpenDotaDeathTimes } from '../services/coachingPlanService';
+import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
 
 const COACH_REPORT_TTL_MS = 6 * 60 * 60 * 1000;
 const COACH_COOLDOWN_MS = 60 * 1000;
@@ -163,15 +164,19 @@ export async function coach(message: Message, args: string[], userDataService: U
         }
         coachCooldowns.set(cooldownKey, now + COACH_COOLDOWN_MS);
 
-        const forceRedo = parsed.flags.redo === true || parsed.flags.refresh === true;
+        const filter = await parseMatchFilter(parsed.positional, message, userDataService);
+        const forceRedo = parsed.flags.redo === true || parsed.flags.refresh === true || filter.consumedAny;
         const cachedReport = forceRedo ? null : coachingDbService.getFreshCoachReport(user.steamId, COACH_REPORT_TTL_MS);
         if (cachedReport) {
             return message.reply({ embeds: [buildCoachEmbed(cachedReport.reportJson, targetUser, cachedReport.sampleText, true)] });
         }
 
         safeTyping(message.channel);
-        const recent = await opendotaClient.get<any[]>(`/players/${user.steamId}/recentMatches?limit=20`);
-        const recentMatches = recent.data || [];
+        const recentEndpoint = filter.consumedAny
+            ? `/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: 60, significant: 0 })}`
+            : `/players/${user.steamId}/recentMatches?limit=20`;
+        const recent = await opendotaClient.get<any[]>(recentEndpoint);
+        const recentMatches = applyResidualFilters(recent.data || [], filter).slice(0, 20);
         if (recentMatches.length < 3) {
             return message.reply('Need at least 3 recent matches before I can coach trends.');
         }
@@ -220,10 +225,11 @@ export async function coach(message: Message, args: string[], userDataService: U
         const facts: Array<{ id: string; topic: string; text: string; data?: any }> = [];
         const addFact = (topic: string, text: string, data?: any) => facts.push({ id: `C${facts.length + 1}`, topic, text, data });
         const wins = matches.filter((m) => m.won).length;
-        addFact('sample', `${targetUser.username}: ${matches.length} parsed matches used for trend facts, ${fetchedMatches.length - parsedMatches.length} unparsed matches skipped, ${wins}-${matches.length - wins} record.`, {
+        addFact('sample', `${targetUser.username}: ${matches.length} parsed matches used for trend facts${filter.descriptionParts.length ? ` (${filter.descriptionParts.join(' • ')})` : ''}, ${fetchedMatches.length - parsedMatches.length} unparsed matches skipped, ${wins}-${matches.length - wins} record.`, {
             parsedMatches: matches.length,
             skippedUnparsedMatches: fetchedMatches.length - parsedMatches.length,
             wins,
+            filters: filter.descriptionParts,
         });
         if (matches.length < 3) {
             return message.reply(`Need at least 3 parsed matches for a useful coach report. Found ${matches.length} parsed and skipped ${fetchedMatches.length - parsedMatches.length} unparsed.`);
@@ -295,8 +301,10 @@ export async function coach(message: Message, args: string[], userDataService: U
             facts,
         };
         const ai = await callCoachAI(`Synthesize this coaching trend report using only COACH_FACTS.\n\nCOACH_FACTS:\n${JSON.stringify(coachFacts, null, 2)}`);
-        const sampleText = `${matches.length} matches • avg duration ${formatDuration(Math.round(matches.reduce((s, m) => s + m.duration, 0) / matches.length))}`;
-        coachingDbService.saveCoachReport({ steamId: user.steamId, reportJson: ai, sampleText });
+        const sampleText = `${matches.length} matches${filter.descriptionParts.length ? ` • ${filter.descriptionParts.join(' • ')}` : ''} • avg duration ${formatDuration(Math.round(matches.reduce((s, m) => s + m.duration, 0) / matches.length))}`;
+        if (!filter.consumedAny) {
+            coachingDbService.saveCoachReport({ steamId: user.steamId, reportJson: ai, sampleText });
+        }
         await message.reply({ embeds: [buildCoachEmbed(ai, targetUser, sampleText)] });
     } catch (error: any) {
         logger.error('Error in coach command:', error?.response?.data || error);

@@ -25,5 +25,6 @@ export { achievements } from './achievements';
 export { item, ability, hero, aghs, talents } from './reference';
 // Match visuals
 export { graph } from './matchGraph';
+export { skillbuild, matchInventory, percent, roles } from './matchUtility';
 // Admin
 export { setChannel, unsetChannel } from './setChannel';

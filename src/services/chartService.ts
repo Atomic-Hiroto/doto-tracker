@@ -1,4 +1,4 @@
-import { createCanvas } from '@napi-rs/canvas';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 
 export interface DataPoint {
     label: string;
@@ -259,12 +259,28 @@ export function renderMatchAdvantageGraph(
 export interface MatchRow {
     won: boolean;
     hero: string;
+    heroImageUrl?: string;
     kills: number;
     deaths: number;
     assists: number;
     gpm: number;
     durationSec: number;
     mode: string;
+}
+
+const imageCache = new Map<string, any | null>();
+
+async function loadCachedImage(url?: string): Promise<any | null> {
+    if (!url) return null;
+    if (imageCache.has(url)) return imageCache.get(url) || null;
+    try {
+        const image = await loadImage(url);
+        imageCache.set(url, image);
+        return image;
+    } catch {
+        imageCache.set(url, null);
+        return null;
+    }
 }
 
 /**
@@ -276,6 +292,33 @@ export function renderRecentMatchesTable(
     rows: MatchRow[],
     opts: { username: string; wins: number; total: number; subtitle?: string }
 ): Buffer {
+    return renderRecentMatchesTableCanvas(rows, opts).toBuffer('image/png');
+}
+
+export async function renderRecentMatchesTableWithIcons(
+    rows: MatchRow[],
+    opts: { username: string; wins: number; total: number; subtitle?: string }
+): Promise<Buffer> {
+    const canvas = renderRecentMatchesTableCanvas(rows, opts);
+    const ctx = canvas.getContext('2d');
+    for (const [i, row] of rows.entries()) {
+        const image = await loadCachedImage(row.heroImageUrl);
+        if (!image) continue;
+        const y = 84 + i * 40 + 5;
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(58, y, 30, 30, 4);
+        ctx.clip();
+        ctx.drawImage(image, 58, y, 30, 30);
+        ctx.restore();
+    }
+    return canvas.toBuffer('image/png');
+}
+
+function renderRecentMatchesTableCanvas(
+    rows: MatchRow[],
+    opts: { username: string; wins: number; total: number; subtitle?: string }
+): any {
     const W = 820;
     const HEADER_H = 84;
     const ROW_H = 40;
@@ -304,7 +347,7 @@ export function renderRecentMatchesTable(
 
     // Column layout
     const cols = {
-        hero: 64,
+        hero: rows.some((row) => row.heroImageUrl) ? 96 : 64,
         kda: 320,
         ratio: 470,
         gpm: 570,
@@ -374,7 +417,7 @@ export function renderRecentMatchesTable(
         ctx.fillText(truncatePx(ctx, r.mode, 70), cols.mode, ty);
     });
 
-    return canvas.toBuffer('image/png');
+    return canvas;
 }
 
 function truncatePx(ctx: any, text: string, maxPx: number): string {
@@ -412,4 +455,151 @@ export function renderWinRateTrend(matches: Array<{ radiant_win: boolean; player
         };
     });
     return drawLineChart('Rolling Win Rate (%)', data, '#10b981', 'Win Rate %');
+}
+
+export function renderSkillBuildGrid(
+    upgrades: Array<{ time?: number; level?: number; abilityName: string }>,
+    opts: { title: string; subtitle?: string }
+): Buffer {
+    const W = 900;
+    const rowH = 42;
+    const H = 104 + Math.max(1, upgrades.length) * rowH;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#15151f';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#1f1f33';
+    ctx.fillRect(0, 0, W, 86);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText(opts.title, 24, 36);
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#9aa0c0';
+    ctx.fillText(opts.subtitle || 'Ability level-up order', 24, 62);
+
+    const cols = { level: 28, time: 110, ability: 210 };
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillStyle = '#6b6b8a';
+    ctx.fillText('LVL', cols.level, 82);
+    ctx.fillText('TIME', cols.time, 82);
+    ctx.fillText('ABILITY', cols.ability, 82);
+
+    upgrades.forEach((upgrade, i) => {
+        const y = 86 + i * rowH;
+        if (i % 2 === 0) {
+            ctx.fillStyle = '#1a1a28';
+            ctx.fillRect(0, y, W, rowH);
+        }
+        ctx.font = 'bold 15px sans-serif';
+        ctx.fillStyle = '#e6e6f0';
+        ctx.fillText(String(upgrade.level ?? i + 1), cols.level, y + 27);
+        ctx.font = '14px sans-serif';
+        ctx.fillStyle = '#9aa0c0';
+        ctx.fillText(formatClock(upgrade.time), cols.time, y + 27);
+        ctx.fillStyle = '#c4c4d8';
+        ctx.fillText(truncatePx(ctx, upgrade.abilityName, 620), cols.ability, y + 27);
+    });
+    if (!upgrades.length) {
+        ctx.fillStyle = '#c4c4d8';
+        ctx.font = '16px sans-serif';
+        ctx.fillText('No skill build data found. The match may be unparsed.', 24, 126);
+    }
+    return canvas.toBuffer('image/png');
+}
+
+export function renderInventoryImage(
+    rows: Array<{ label: string; items: string[]; count?: number }>,
+    opts: { title: string; subtitle?: string }
+): Buffer {
+    const W = 900;
+    const rowH = 46;
+    const H = 96 + Math.max(1, rows.length) * rowH;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#15151f';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#1f1f33';
+    ctx.fillRect(0, 0, W, 82);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText(opts.title, 24, 36);
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#9aa0c0';
+    ctx.fillText(opts.subtitle || '', 24, 62);
+    rows.forEach((row, i) => {
+        const y = 82 + i * rowH;
+        if (i % 2 === 0) {
+            ctx.fillStyle = '#1a1a28';
+            ctx.fillRect(0, y, W, rowH);
+        }
+        ctx.font = 'bold 15px sans-serif';
+        ctx.fillStyle = '#e6e6f0';
+        ctx.fillText(truncatePx(ctx, row.label, 210), 24, y + 29);
+        ctx.font = '14px sans-serif';
+        ctx.fillStyle = '#c4c4d8';
+        ctx.fillText(truncatePx(ctx, row.items.join(', ') || 'No items', 600), 260, y + 29);
+        if (row.count != null) {
+            ctx.fillStyle = '#9aa0c0';
+            ctx.textAlign = 'right';
+            ctx.fillText(`${row.count}x`, W - 28, y + 29);
+            ctx.textAlign = 'left';
+        }
+    });
+    if (!rows.length) {
+        ctx.fillStyle = '#c4c4d8';
+        ctx.font = '16px sans-serif';
+        ctx.fillText('No inventory data found for this query.', 24, 122);
+    }
+    return canvas.toBuffer('image/png');
+}
+
+export function renderRoleDistribution(
+    rows: Array<{ label: string; value: number; color: string }>,
+    opts: { title: string; subtitle?: string }
+): Buffer {
+    const W = 720;
+    const H = 360;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#15151f';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText(opts.title, 24, 38);
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#9aa0c0';
+    ctx.fillText(opts.subtitle || '', 24, 62);
+    const total = Math.max(1, rows.reduce((sum, row) => sum + row.value, 0));
+    let start = -Math.PI / 2;
+    const cx = 190;
+    const cy = 206;
+    const radius = 104;
+    for (const row of rows) {
+        const angle = (row.value / total) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius, start, start + angle);
+        ctx.closePath();
+        ctx.fillStyle = row.color;
+        ctx.fill();
+        start += angle;
+    }
+    let y = 128;
+    rows.forEach((row) => {
+        ctx.fillStyle = row.color;
+        ctx.fillRect(360, y - 12, 16, 16);
+        ctx.fillStyle = '#e6e6f0';
+        ctx.font = '15px sans-serif';
+        ctx.fillText(`${row.label}: ${row.value} (${Math.round((row.value / total) * 100)}%)`, 386, y + 1);
+        y += 34;
+    });
+    return canvas.toBuffer('image/png');
+}
+
+function formatClock(seconds?: number): string {
+    if (!Number.isFinite(seconds)) return '—';
+    const value = Number(seconds);
+    const sign = value < 0 ? '-' : '';
+    const abs = Math.abs(value);
+    return `${sign}${Math.floor(abs / 60)}:${Math.floor(abs % 60).toString().padStart(2, '0')}`;
 }

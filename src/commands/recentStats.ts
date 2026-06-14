@@ -1,6 +1,6 @@
 import { Message, EmbedBuilder, AttachmentBuilder } from 'discord.js';
 import { UserDataService } from '../services/userDataService';
-import { Replies } from '../constants';
+import { APIConstants, Replies } from '../constants';
 import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
@@ -8,7 +8,8 @@ import { parseArgs, parseIntArg } from '../utils/argParser';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping } from '../utils/channelHelpers';
 import { createMatchActionRow } from '../components/matchButtons';
-import { renderRecentMatchesTable, MatchRow } from '../services/chartService';
+import { renderRecentMatchesTableWithIcons, MatchRow } from '../services/chartService';
+import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
 
 const GAME_MODES: Record<number, string> = {
   0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -32,58 +33,38 @@ export async function recentStats(message: Message, args: string[], userDataServ
     return message.reply(Replies.NEED_REGISTRATION);
   }
 
-  // Parse count arg — +rs 5 or default 1
-  const count = Math.min(parseIntArg(parsed.positional[0], 1), 10);
+  // Parse count arg — +rs 5 or default 1. Keep the remaining words for the filter DSL.
+  const countArg = parsed.positional[0] && /^\d+$/.test(parsed.positional[0]) ? parsed.positional[0] : undefined;
+  const count = Math.min(parseIntArg(countArg, 1), 10);
+  const filterWords = countArg ? parsed.positional.slice(1) : parsed.positional.slice();
   const heroFilter = typeof parsed.flags['hero'] === 'string' ? parsed.flags['hero'].toLowerCase() : null;
   const turboOnly = parsed.flags['turbo'] === true;
   const winsOnly = parsed.flags['wins'] === true;
   const lossesOnly = parsed.flags['losses'] === true;
+  if (heroFilter) filterWords.push('as', heroFilter);
+  if (turboOnly) filterWords.push('turbo');
+  if (winsOnly) filterWords.push('won');
+  if (lossesOnly) filterWords.push('lost');
 
   try {
     safeTyping(message.channel);
+    const filter = await parseMatchFilter(filterWords, message, userDataService);
 
-    // Fetch more matches if we need to filter
-    const fetchCount = heroFilter || turboOnly || winsOnly || lossesOnly ? 50 : count;
-    const response = await opendotaClient.get<Array<any>>(
-      `/players/${user.steamId}/recentMatches?limit=${fetchCount}`
-    );
-    let matches = response.data;
-
-    if (!matches || matches.length === 0) {
-      return message.reply('No recent matches found for this user.');
-    }
-
-    // Apply filters
-    if (turboOnly) {
-      matches = matches.filter((m: any) => m.game_mode === 23);
-    }
-    if (winsOnly) {
-      matches = matches.filter((m: any) => {
-        const isRadiant = m.player_slot < 128;
-        return (isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win);
-      });
-    }
-    if (lossesOnly) {
-      matches = matches.filter((m: any) => {
-        const isRadiant = m.player_slot < 128;
-        return !((isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win));
-      });
-    }
-    if (heroFilter) {
-      const hero = dotaDataService.findHeroByName(heroFilter);
-      if (hero) {
-        matches = matches.filter((m: any) => m.hero_id === hero.id);
-      }
-    }
+    const fetchCount = filter.consumedAny ? Math.max(50, count * 5) : count;
+    const endpoint = filter.consumedAny
+      ? `/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: fetchCount, significant: 0 })}`
+      : `/players/${user.steamId}/recentMatches?limit=${fetchCount}`;
+    const response = await opendotaClient.get<Array<any>>(endpoint);
+    let matches = applyResidualFilters(response.data || [], filter);
 
     if (matches.length === 0) {
-      return message.reply('No matches found with those filters.');
+      return message.reply(filter.consumedAny ? 'No matches found with those filters.' : 'No recent matches found for this user.');
     }
 
     matches = matches.slice(0, count);
 
     // Single match — show detailed stats
-    if (count === 1 && !heroFilter && !turboOnly && !winsOnly && !lossesOnly) {
+    if (count === 1 && !filter.consumedAny) {
       const match = matches[0];
       const heroName = await dotaDataService.getHeroName(match.hero_id);
       const isRadiant = match.player_slot < 128;
@@ -126,6 +107,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
         return {
           won: didWin,
           hero: heroName,
+          heroImageUrl: APIConstants.IMAGE_URL(heroName),
           kills: match.kills,
           deaths: match.deaths,
           assists: match.assists,
@@ -140,13 +122,10 @@ export async function recentStats(message: Message, args: string[], userDataServ
     const wins = tableRows.filter((r) => r.won).length;
 
     const filterDesc = [
-      turboOnly ? '⚡ Turbo only' : '',
-      heroFilter ? `🦸 Hero: ${heroFilter}` : '',
-      winsOnly ? '✅ Wins only' : '',
-      lossesOnly ? '❌ Losses only' : '',
+      filter.descriptionParts.length ? filter.descriptionParts.join(' • ') : '',
     ].filter(Boolean).join(' | ');
 
-    const tableImage = renderRecentMatchesTable(tableRows, {
+    const tableImage = await renderRecentMatchesTableWithIcons(tableRows, {
       username: targetUser.username,
       wins,
       total: totalGames,
@@ -158,7 +137,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
       .setColor('#7c3aed')
       .setTitle(`📊 Last ${totalGames} Matches — ${targetUser.username}`)
       .setImage('attachment://recent.png')
-      .setFooter({ text: `Use +rs <n> --turbo --hero "Name" --wins/--losses for filtering` })
+      .setFooter({ text: `Try +rs 10 won as invoker this week • old flags still work` })
       .setTimestamp();
 
     await message.reply({ embeds: [embed], files: [attachment] });
