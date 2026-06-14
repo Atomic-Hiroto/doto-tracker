@@ -6,6 +6,7 @@ export type AnalysisMode = 'match' | 'player';
 export type PlanStatus = 'active' | 'graded';
 
 export interface StoredAnalysis {
+    id: number;
     matchId: number;
     steamId: string | null;
     mode: AnalysisMode;
@@ -14,6 +15,25 @@ export interface StoredAnalysis {
     model: string;
     source: string;
     createdAt: number;
+}
+
+export interface StoredAnalysisPage {
+    messageId: string;
+    pageNumber: number;
+    renderedText: string;
+}
+
+export interface StoredAnalysisMessage {
+    messageId: string;
+    analysisId: number;
+    matchId: number;
+    steamId: string | null;
+    mode: AnalysisMode;
+    pageNumber: number;
+    renderedText: string;
+    createdAt: number;
+    analysis: StoredAnalysis;
+    renderedPages: StoredAnalysisPage[];
 }
 
 export interface StoredCoachingPlan {
@@ -63,8 +83,22 @@ class CoachingDbService {
                 created_at INTEGER NOT NULL
             );
 
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_analyses_cache_key
-                ON analyses(match_id, COALESCE(steam_id, ''), mode, source, model);
+            CREATE INDEX IF NOT EXISTS idx_analyses_cache_key
+                ON analyses(match_id, COALESCE(steam_id, ''), mode, source, model, created_at);
+
+            CREATE TABLE IF NOT EXISTS analysis_messages (
+                message_id TEXT PRIMARY KEY,
+                analysis_id INTEGER NOT NULL,
+                page_number INTEGER NOT NULL,
+                steam_id TEXT NULL,
+                mode TEXT NOT NULL CHECK (mode IN ('match', 'player')),
+                rendered_text TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(analysis_id) REFERENCES analyses(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_analysis_messages_analysis
+                ON analysis_messages(analysis_id, page_number);
 
             CREATE TABLE IF NOT EXISTS coaching_plans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,6 +146,19 @@ class CoachingDbService {
                 throw error;
             }
         }
+        this.db.exec(`
+            DROP INDEX IF EXISTS idx_analyses_cache_key;
+            CREATE INDEX IF NOT EXISTS idx_analyses_cache_key
+                ON analyses(match_id, COALESCE(steam_id, ''), mode, source, model, created_at);
+            DELETE FROM plan_grades
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM plan_grades
+                GROUP BY plan_id, match_id
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_grades_plan_match
+                ON plan_grades(plan_id, match_id);
+        `);
         logger.info(`Coaching DB ready at ${ProcessConstants.COACHING_DB_FILE}`);
     }
 
@@ -124,13 +171,14 @@ class CoachingDbService {
         ttlMs: number;
     }): StoredAnalysis | null {
         const row = this.db.prepare(`
-            SELECT match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
+            SELECT id, match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
             FROM analyses
             WHERE match_id = ?
               AND COALESCE(steam_id, '') = COALESCE(?, '')
               AND mode = ?
               AND source = ?
               AND model = ?
+            ORDER BY created_at DESC
             LIMIT 1
         `).get(args.matchId, args.steamId ?? null, args.mode, args.source, args.model) as any;
 
@@ -139,6 +187,7 @@ class CoachingDbService {
 
         try {
             return {
+                id: Number(row.id),
                 matchId: Number(row.match_id),
                 steamId: row.steam_id ?? null,
                 mode: row.mode,
@@ -162,17 +211,9 @@ class CoachingDbService {
         factPrompt?: string | null;
         model: string;
         source: string;
-    }) {
+    }): number {
         const tx = this.db.transaction(() => {
-            this.db.prepare(`
-                DELETE FROM analyses
-                WHERE match_id = ?
-                  AND COALESCE(steam_id, '') = COALESCE(?, '')
-                  AND mode = ?
-                  AND source = ?
-                  AND model = ?
-            `).run(args.matchId, args.steamId ?? null, args.mode, args.source, args.model);
-            this.db.prepare(`
+            const result = this.db.prepare(`
                 INSERT INTO analyses (match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
@@ -185,13 +226,17 @@ class CoachingDbService {
                 args.source,
                 Date.now(),
             );
+            if (args.mode === 'player' && args.steamId) {
+                this.invalidateCoachReport(args.steamId);
+            }
+            return Number(result.lastInsertRowid);
         });
-        tx();
+        return tx();
     }
 
     getLatestAnalysisForMatch(matchId: number): StoredAnalysis | null {
         const row = this.db.prepare(`
-            SELECT match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
+            SELECT id, match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
             FROM analyses
             WHERE match_id = ?
             ORDER BY created_at DESC
@@ -200,6 +245,7 @@ class CoachingDbService {
         if (!row) return null;
         try {
             return {
+                id: Number(row.id),
                 matchId: Number(row.match_id),
                 steamId: row.steam_id ?? null,
                 mode: row.mode,
@@ -215,21 +261,123 @@ class CoachingDbService {
         }
     }
 
-    savePlayerNote(args: { steamId?: string | null; matchId?: number | null; text: string }) {
+    getAnalysisMessage(messageId: string): StoredAnalysisMessage | null {
+        const row = this.db.prepare(`
+            SELECT
+                am.message_id,
+                am.analysis_id,
+                am.page_number,
+                am.steam_id AS message_steam_id,
+                am.mode AS message_mode,
+                am.rendered_text,
+                am.created_at AS message_created_at,
+                a.id,
+                a.match_id,
+                a.steam_id,
+                a.mode,
+                a.structured_json,
+                a.fact_prompt,
+                a.model,
+                a.source,
+                a.created_at
+            FROM analysis_messages am
+            JOIN analyses a ON a.id = am.analysis_id
+            WHERE am.message_id = ?
+            LIMIT 1
+        `).get(messageId) as any;
+        if (!row) return null;
+
+        const pageRows = this.db.prepare(`
+            SELECT message_id, page_number, rendered_text
+            FROM analysis_messages
+            WHERE analysis_id = ?
+            ORDER BY page_number ASC
+        `).all(row.analysis_id) as any[];
+
+        try {
+            const analysis: StoredAnalysis = {
+                id: Number(row.id),
+                matchId: Number(row.match_id),
+                steamId: row.steam_id ?? null,
+                mode: row.mode,
+                structuredJson: JSON.parse(row.structured_json),
+                factPrompt: row.fact_prompt ?? null,
+                model: row.model,
+                source: row.source,
+                createdAt: Number(row.created_at),
+            };
+            return {
+                messageId: row.message_id,
+                analysisId: Number(row.analysis_id),
+                matchId: analysis.matchId,
+                steamId: row.message_steam_id ?? analysis.steamId ?? null,
+                mode: row.message_mode,
+                pageNumber: Number(row.page_number),
+                renderedText: String(row.rendered_text || ''),
+                createdAt: Number(row.message_created_at),
+                analysis,
+                renderedPages: pageRows.map((page) => ({
+                    messageId: String(page.message_id),
+                    pageNumber: Number(page.page_number),
+                    renderedText: String(page.rendered_text || ''),
+                })),
+            };
+        } catch (error) {
+            logger.warn('Failed to parse analysis message context:', error);
+            return null;
+        }
+    }
+
+    saveAnalysisMessage(args: {
+        messageId: string;
+        analysisId: number;
+        pageNumber: number;
+        steamId?: string | null;
+        mode: AnalysisMode;
+        renderedText: string;
+    }) {
         this.db.prepare(`
-            INSERT INTO player_notes (steam_id, match_id, text, created_at)
-            VALUES (?, ?, ?, ?)
-        `).run(args.steamId ?? null, args.matchId ?? null, args.text.slice(0, 500), Date.now());
+            INSERT INTO analysis_messages (message_id, analysis_id, page_number, steam_id, mode, rendered_text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET
+                analysis_id = excluded.analysis_id,
+                page_number = excluded.page_number,
+                steam_id = excluded.steam_id,
+                mode = excluded.mode,
+                rendered_text = excluded.rendered_text,
+                created_at = excluded.created_at
+        `).run(
+            args.messageId,
+            args.analysisId,
+            args.pageNumber,
+            args.steamId ?? null,
+            args.mode,
+            args.renderedText.slice(0, 6000),
+            Date.now(),
+        );
+    }
+
+    savePlayerNote(args: { steamId?: string | null; matchId?: number | null; text: string }) {
+        const tx = this.db.transaction(() => {
+            this.db.prepare(`
+                INSERT INTO player_notes (steam_id, match_id, text, created_at)
+                VALUES (?, ?, ?, ?)
+            `).run(args.steamId ?? null, args.matchId ?? null, args.text.slice(0, 500), Date.now());
+            this.invalidateCoachReport(args.steamId ?? null);
+        });
+        tx();
     }
 
     getRecentPlayerNotes(steamId: string, limit = 10): PlayerNote[] {
+        const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
         const rows = this.db.prepare(`
             SELECT id, steam_id, match_id, text, created_at
             FROM player_notes
             WHERE steam_id = ?
+              AND created_at >= ?
             ORDER BY created_at DESC
             LIMIT ?
-        `).all(steamId, limit) as any[];
+        `).all(steamId, since, Math.min(limit, 10)) as any[];
         return rows.map((row) => ({
             id: Number(row.id),
             steamId: row.steam_id ?? null,
@@ -237,6 +385,14 @@ class CoachingDbService {
             text: String(row.text || ''),
             createdAt: Number(row.created_at),
         }));
+    }
+
+    invalidateCoachReport(steamId?: string | null) {
+        if (steamId) {
+            this.db.prepare(`DELETE FROM coach_reports WHERE steam_id = ?`).run(steamId);
+            return;
+        }
+        this.db.prepare(`DELETE FROM coach_reports`).run();
     }
 
     getFreshCoachReport(steamId: string, ttlMs: number): StoredCoachReport | null {
@@ -287,6 +443,7 @@ class CoachingDbService {
                 INSERT INTO coaching_plans (steam_id, match_id, plan_json, status, created_at)
                 VALUES (?, ?, ?, 'active', ?)
             `).run(args.steamId, args.matchId, JSON.stringify(args.planJson), Date.now());
+            this.invalidateCoachReport(args.steamId);
         });
         tx();
     }
@@ -315,24 +472,66 @@ class CoachingDbService {
         }
     }
 
-    savePlanGrade(args: { planId: number; matchId: number; resultsJson: any }) {
+    getPlanGrade(planId: number, matchId: number): { planId: number; matchId: number; resultsJson: any; createdAt: number } | null {
+        const row = this.db.prepare(`
+            SELECT plan_id, match_id, results_json, created_at
+            FROM plan_grades
+            WHERE plan_id = ? AND match_id = ?
+            LIMIT 1
+        `).get(planId, matchId) as any;
+        if (!row) return null;
+        try {
+            return {
+                planId: Number(row.plan_id),
+                matchId: Number(row.match_id),
+                resultsJson: JSON.parse(row.results_json),
+                createdAt: Number(row.created_at),
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    countPlanGrades(planId: number): number {
+        const row = this.db.prepare(`
+            SELECT COUNT(*) AS count
+            FROM plan_grades
+            WHERE plan_id = ?
+        `).get(planId) as any;
+        return Number(row?.count || 0);
+    }
+
+    savePlanGrade(args: { planId: number; matchId: number; resultsJson: any; maxGrades?: number }): number | null {
         const tx = this.db.transaction(() => {
-            this.db.prepare(`
-                INSERT INTO plan_grades (plan_id, match_id, results_json, created_at)
+            const plan = this.db.prepare(`
+                SELECT steam_id
+                FROM coaching_plans
+                WHERE id = ?
+                LIMIT 1
+            `).get(args.planId) as any;
+            const result = this.db.prepare(`
+                INSERT OR IGNORE INTO plan_grades (plan_id, match_id, results_json, created_at)
                 VALUES (?, ?, ?, ?)
             `).run(args.planId, args.matchId, JSON.stringify(args.resultsJson), Date.now());
-            this.db.prepare(`
-                UPDATE coaching_plans
-                SET status = 'graded'
-                WHERE id = ?
-            `).run(args.planId);
+            const gradeCount = this.countPlanGrades(args.planId);
+            if (gradeCount >= (args.maxGrades ?? 3)) {
+                this.db.prepare(`
+                    UPDATE coaching_plans
+                    SET status = 'graded'
+                    WHERE id = ?
+                `).run(args.planId);
+            }
+            if (result.changes > 0 && plan?.steam_id) {
+                this.invalidateCoachReport(plan.steam_id);
+            }
+            return result.changes > 0 ? gradeCount : null;
         });
-        tx();
+        return tx();
     }
 
     getRecentPlayerAnalyses(steamId: string, limit = 20): StoredAnalysis[] {
         const rows = this.db.prepare(`
-            SELECT match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
+            SELECT id, match_id, steam_id, mode, structured_json, fact_prompt, model, source, created_at
             FROM analyses
             WHERE steam_id = ? AND mode = 'player'
             ORDER BY created_at DESC
@@ -341,6 +540,7 @@ class CoachingDbService {
         return rows.flatMap((row) => {
             try {
                 return [{
+                    id: Number(row.id),
                     matchId: Number(row.match_id),
                     steamId: row.steam_id ?? null,
                     mode: row.mode,

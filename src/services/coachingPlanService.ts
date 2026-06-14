@@ -19,6 +19,7 @@ const ITEM_RULE_NAMES = [
     'Assault Cuirass',
     'Crimson Guard',
 ];
+const PLAN_GRADE_MATCH_TARGET = 3;
 
 function normalizeItemName(name: string): string {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -64,16 +65,40 @@ function firstRelevantTeamfight(match: any, player: any, afterSeconds = 10 * 60)
         .find((fight: any) => fightPlayers(fight).some((_p: any, index: number) => Number(matchPlayerAtFightIndex(match, index)?.player_slot) === slot)) || null;
 }
 
+function objectiveTeam(objective: any): 'Radiant' | 'Dire' | null {
+    const objectiveTeamNumber = Number(objective?.team);
+    if (objectiveTeamNumber === teamNumber('Radiant')) return 'Radiant';
+    if (objectiveTeamNumber === teamNumber('Dire')) return 'Dire';
+    const slot = Number(objective?.player_slot ?? objective?.slot);
+    if (Number.isFinite(slot)) return slot < 128 ? 'Radiant' : 'Dire';
+    return null;
+}
+
+function isTowerObjectiveForTeam(objective: any, team: 'Radiant' | 'Dire'): boolean {
+    if (objective?.type !== 'building_kill' || !objective?.key) return false;
+    const key = String(objective.key);
+    if (!/tower/i.test(key)) return false;
+    return team === 'Radiant' ? key.includes('badguys') : key.includes('goodguys');
+}
+
+function isRoshanObjectiveForTeam(objective: any, team: 'Radiant' | 'Dire'): boolean {
+    if (!/roshan/i.test(`${objective?.type || ''} ${objective?.key || ''}`)) return false;
+    const explicitTeam = objectiveTeam(objective);
+    return explicitTeam == null || explicitTeam === team;
+}
+
+function objectiveLabel(objective: any): string {
+    if (/roshan/i.test(`${objective?.type || ''} ${objective?.key || ''}`)) return 'Roshan';
+    if (objective?.type === 'building_kill') return 'tower';
+    return String(objective?.type || 'objective');
+}
+
 function objectiveByTeamNear(match: any, team: 'Radiant' | 'Dire', start: number, end: number): any | null {
     return (Array.isArray(match?.objectives) ? match.objectives : [])
         .find((objective: any) => {
             const time = Number(objective?.time);
             if (!Number.isFinite(time) || time < start || time > end) return false;
-            if (objective?.type === 'building_kill' && objective?.key) {
-                const key = String(objective.key);
-                return team === 'Radiant' ? key.includes('badguys') : key.includes('goodguys');
-            }
-            return Number(objective?.team) === teamNumber(team);
+            return isTowerObjectiveForTeam(objective, team) || isRoshanObjectiveForTeam(objective, team);
         }) || null;
 }
 
@@ -86,21 +111,35 @@ function checkConversionRule(player: any, match: any, planText: string): { label
     }
     const team = playerTeam(player);
     const enemy = team === 'Radiant' ? 'Dire' : 'Radiant';
-    const wonFight = (Array.isArray(match?.teamfights) ? match.teamfights : [])
+    const wonFights = (Array.isArray(match?.teamfights) ? match.teamfights : [])
         .filter((fight: any) => Number(fight?.start) >= 8 * 60)
-        .find((fight: any) => {
+        .filter((fight: any) => {
             const players = fightPlayers(fight);
             const alliedKills = teamfightKills(match, players, team);
             const enemyKills = teamfightKills(match, players, enemy);
             return alliedKills > enemyKills;
-        });
-    if (!wonFight) {
+        })
+        .sort((a: any, b: any) => Number(a?.start || 0) - Number(b?.start || 0))
+        .slice(0, 3);
+    if (!wonFights.length) {
         return { label: 'conversion rule', passed: false, evidence: 'no won teamfight found after 8m' };
     }
-    const objective = objectiveByTeamNear(match, team, Number(wonFight.end || wonFight.start), Number(wonFight.end || wonFight.start) + 90);
-    return objective
-        ? { label: 'conversion rule', passed: true, evidence: `objective at ${formatDuration(Number(objective.time))} after won fight ${formatDuration(Number(wonFight.start))}` }
-        : { label: 'conversion rule', passed: false, evidence: `no objective within 90s after won fight ${formatDuration(Number(wonFight.start))}` };
+    for (const fight of wonFights) {
+        const fightEnd = Number(fight.end || fight.start);
+        const objective = objectiveByTeamNear(match, team, fightEnd, fightEnd + 90);
+        if (objective) {
+            return {
+                label: 'conversion rule',
+                passed: true,
+                evidence: `${objectiveLabel(objective)} at ${formatDuration(Number(objective.time))} after won fight ${formatDuration(Number(fight.start))}`,
+            };
+        }
+    }
+    return {
+        label: 'conversion rule',
+        passed: false,
+        evidence: `no tower/Roshan within 90s after first ${wonFights.length} won fight(s): ${wonFights.map((fight: any) => formatDuration(Number(fight.start))).join(', ')}`,
+    };
 }
 
 export function getOpenDotaDeathTimes(match: any, player: any): number[] {
@@ -125,15 +164,34 @@ function alliedKillTimes(match: any, player: any): number[] {
         .sort((a: number, b: number) => a - b);
 }
 
-function countIsolatedDeaths(player: any, match: any): { isolated: number; totalTimed: number; samples: string[] } {
+function teamWonFight(match: any, fight: any, team: 'Radiant' | 'Dire'): boolean {
+    const enemy = team === 'Radiant' ? 'Dire' : 'Radiant';
+    const players = fightPlayers(fight);
+    return teamfightKills(match, players, team) > teamfightKills(match, players, enemy);
+}
+
+function deathInsideWonTeamfight(match: any, deathTime: number, team: 'Radiant' | 'Dire'): boolean {
+    return (Array.isArray(match?.teamfights) ? match.teamfights : [])
+        .some((fight: any) => {
+            const start = Number(fight?.start);
+            const end = Number(fight?.end ?? fight?.start);
+            if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+            return deathTime >= start && deathTime <= end && teamWonFight(match, fight, team);
+        });
+}
+
+function countIsolatedDeaths(player: any, match: any): { isolated: number; totalTimed: number; ignoredWonFight: number; samples: string[] } {
     const deaths = getOpenDotaDeathTimes(match, player);
     const alliedKills = alliedKillTimes(match, player);
-    const isolatedTimes = deaths.filter((deathTime) =>
+    const team = playerTeam(player);
+    const assessedDeaths = deaths.filter((deathTime) => !deathInsideWonTeamfight(match, deathTime, team));
+    const isolatedTimes = assessedDeaths.filter((deathTime) =>
         !alliedKills.some((killTime) => killTime > deathTime && killTime <= deathTime + 60)
     );
     return {
         isolated: isolatedTimes.length,
-        totalTimed: deaths.length,
+        totalTimed: assessedDeaths.length,
+        ignoredWonFight: deaths.length - assessedDeaths.length,
         samples: isolatedTimes.slice(0, 3).map(formatDuration),
     };
 }
@@ -194,6 +252,7 @@ export async function gradeActivePlanForMatch(steamId: string, matchId: number, 
     const activePlan = coachingDbService.getActivePlan(steamId);
     if (!activePlan || activePlan.matchId === matchId) return null;
     if (!detailedMatch?.version) return null;
+    if (coachingDbService.getPlanGrade(activePlan.id, matchId)) return null;
 
     const player = (Array.isArray(detailedMatch.players) ? detailedMatch.players : [])
         .find((p: any) => String(p.account_id) === String(steamId));
@@ -206,10 +265,12 @@ export async function gradeActivePlanForMatch(steamId: string, matchId: number, 
         const isolated = countIsolatedDeaths(player, detailedMatch);
         const buybackDownDeaths = countDeathsWithBuybackDown(player, detailedMatch);
         const fightPassed = isolated.totalTimed === 0
-            ? null
+            ? (isolated.ignoredWonFight > 0 ? true : null)
             : isolated.isolated <= Math.max(1, Math.floor(isolated.totalTimed / 3));
         const deathEvidence = isolated.totalTimed
-            ? `${isolated.isolated}/${isolated.totalTimed} timed deaths had no allied kill within 60s${isolated.samples.length ? ` (${isolated.samples.join(', ')})` : ''}`
+            ? `${isolated.isolated}/${isolated.totalTimed} assessed timed deaths had no allied kill within 60s${isolated.samples.length ? ` (${isolated.samples.join(', ')})` : ''}${isolated.ignoredWonFight ? `; ${isolated.ignoredWonFight} death(s) inside won teamfights ignored` : ''}`
+            : isolated.ignoredWonFight
+                ? `0 assessed isolated deaths; ${isolated.ignoredWonFight} timed death(s) were inside teamfights won by ${playerTeam(player)}`
             : `${Number(player.deaths || 0)} deaths; death timing data unavailable`;
         const buybackText = buybackDownDeaths > 0 ? ` • buyback-risk deaths ${buybackDownDeaths}` : '';
 
@@ -229,7 +290,8 @@ export async function gradeActivePlanForMatch(steamId: string, matchId: number, 
                 heroId: player.hero_id,
             },
         };
-        coachingDbService.savePlanGrade({ planId: activePlan.id, matchId, resultsJson });
+        const gradeNumber = coachingDbService.savePlanGrade({ planId: activePlan.id, matchId, resultsJson, maxGrades: PLAN_GRADE_MATCH_TARGET });
+        if (!gradeNumber) return null;
 
         const conversionText = conversionRule.evidence === 'no explicit conversion target'
             || conversionRule.evidence === 'teamfight data unavailable'
@@ -238,7 +300,7 @@ export async function gradeActivePlanForMatch(steamId: string, matchId: number, 
         const heroName = await dotaDataService.getHeroName(Number(player.hero_id));
         const playerLabel = `${player.personaname || steamId}${heroName && heroName !== 'Unknown Hero' ? ` (${heroName})` : ''}`;
         const fightIcon = fightPassed == null ? '⚪' : fightPassed ? '✅' : '❌';
-        return `📋 Last plan for ${playerLabel}: ${itemRule.label} ${itemRule.passed ? '✅' : '❌'} (${itemRule.evidence}) • fight rule ${fightIcon} (${deathEvidence})${conversionText}${buybackText}`;
+        return `📋 Last plan for ${playerLabel} — Match ${Math.min(gradeNumber, PLAN_GRADE_MATCH_TARGET)}/${PLAN_GRADE_MATCH_TARGET}: ${itemRule.label} ${itemRule.passed ? '✅' : '❌'} (${itemRule.evidence}) • fight rule ${fightIcon} (${deathEvidence})${conversionText}${buybackText}`;
     } catch (error) {
         logger.warn(`Failed to grade active coaching plan for ${steamId} on ${matchId}:`, error);
         return null;
