@@ -4,7 +4,9 @@ import { logger } from '../services/loggerService';
 import { safeTyping } from '../utils/channelHelpers';
 
 const EMBED_COLOR = '#6366f1';
-const OD_IMG_BASE = 'https://cdn.cloudflare.steamstatic.com';
+// Note: cdn.cloudflare.steamstatic.com 301-redirects and Discord won't follow
+// redirects for embed images, so it must be the canonical cdn.steamstatic.com host.
+const OD_IMG_BASE = 'https://cdn.steamstatic.com';
 
 const ATTR_LABEL: Record<string, string> = {
     str: 'Strength', agi: 'Agility', int: 'Intelligence', all: 'Universal',
