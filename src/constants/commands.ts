@@ -3,6 +3,7 @@ export enum Commands {
     REGISTER = "register",
     UNREGISTER = "unregister",
     RECENT_STATS = "rs",
+    MATCHES = "matches",
     TOGGLE_AUTO = "toggleauto",
     GPAT = "gpat",
     GPAT_CLEAR = "gpatclear",
