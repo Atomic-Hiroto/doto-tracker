@@ -7,8 +7,8 @@ import {
 export function createMatchActionRow(matchId: number, opts: { coachSteamId?: string; showCoach?: boolean } = {}): ActionRowBuilder<ButtonBuilder> {
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-            .setCustomId(`story_${matchId}`)
-            .setLabel('📖 Story')
+            .setCustomId(`analyze_${matchId}`)
+            .setLabel('🔍 Analyze')
             .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
             .setCustomId(`details_${matchId}`)
