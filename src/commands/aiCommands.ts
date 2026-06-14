@@ -1416,24 +1416,37 @@ function findOpenDotaPlayerBySlot(match: any, slot: any): any | null {
     return (Array.isArray(match?.players) ? match.players : []).find((player: any) => Number(player.player_slot) === slotNumber) || null;
 }
 
-function sumTeamfightKills(players: any[], team: 'Radiant' | 'Dire'): number {
+function openDotaMatchPlayerAtIndex(match: any, index: number): any | null {
+    return Array.isArray(match?.players) ? match.players[index] || null : null;
+}
+
+function sumTeamfightKills(match: any, players: any[], team: 'Radiant' | 'Dire'): number {
     return players
-        .filter((player) => openDotaTeam(player) === team)
+        .filter((_player, index) => {
+            const matchPlayer = openDotaMatchPlayerAtIndex(match, index);
+            return matchPlayer && openDotaTeam(matchPlayer) === team;
+        })
         .reduce((sum, player) => {
             const killed = player?.killed || {};
             return sum + Object.values(killed).reduce((inner: number, value: any) => inner + (Number(value) || 0), 0);
         }, 0);
 }
 
-function sumTeamfightDeaths(players: any[], team: 'Radiant' | 'Dire'): number {
+function sumTeamfightDeaths(match: any, players: any[], team: 'Radiant' | 'Dire'): number {
     return players
-        .filter((player) => openDotaTeam(player) === team)
+        .filter((_player, index) => {
+            const matchPlayer = openDotaMatchPlayerAtIndex(match, index);
+            return matchPlayer && openDotaTeam(matchPlayer) === team;
+        })
         .reduce((sum, player) => sum + Number(player?.deaths || 0), 0);
 }
 
-function sumTeamfightGoldDelta(players: any[], team: 'Radiant' | 'Dire'): number {
+function sumTeamfightGoldDelta(match: any, players: any[], team: 'Radiant' | 'Dire'): number {
     return players
-        .filter((player) => openDotaTeam(player) === team)
+        .filter((_player, index) => {
+            const matchPlayer = openDotaMatchPlayerAtIndex(match, index);
+            return matchPlayer && openDotaTeam(matchPlayer) === team;
+        })
         .reduce((sum, player) => sum + Number(player?.gold_delta || 0), 0);
 }
 
@@ -1444,11 +1457,11 @@ async function summarizeOpenDotaTeamfights(odMatch: any, focusPlayer?: any): Pro
     const ranked = teamfights
         .map((fight: any, index: number) => {
             const players = Array.isArray(fight.players) ? fight.players : [];
-            const radiantDeaths = sumTeamfightDeaths(players, 'Radiant');
-            const direDeaths = sumTeamfightDeaths(players, 'Dire');
-            const radiantGoldDelta = sumTeamfightGoldDelta(players, 'Radiant');
-            const direGoldDelta = sumTeamfightGoldDelta(players, 'Dire');
-            const focus = focusSlot == null ? null : players.find((player: any) => Number(player.player_slot) === Number(focusSlot));
+            const radiantDeaths = sumTeamfightDeaths(odMatch, players, 'Radiant');
+            const direDeaths = sumTeamfightDeaths(odMatch, players, 'Dire');
+            const radiantGoldDelta = sumTeamfightGoldDelta(odMatch, players, 'Radiant');
+            const direGoldDelta = sumTeamfightGoldDelta(odMatch, players, 'Dire');
+            const focus = focusSlot == null ? null : players.find((_player: any, playerIndex: number) => Number(openDotaMatchPlayerAtIndex(odMatch, playerIndex)?.player_slot) === Number(focusSlot));
             const score = Math.abs(radiantGoldDelta - direGoldDelta) + (radiantDeaths + direDeaths) * 1500 + (focus ? 2500 : 0);
             return {
                 index,
@@ -1457,8 +1470,8 @@ async function summarizeOpenDotaTeamfights(odMatch: any, focusPlayer?: any): Pro
                 players,
                 radiantDeaths,
                 direDeaths,
-                radiantKills: sumTeamfightKills(players, 'Radiant'),
-                direKills: sumTeamfightKills(players, 'Dire'),
+                radiantKills: sumTeamfightKills(odMatch, players, 'Radiant'),
+                direKills: sumTeamfightKills(odMatch, players, 'Dire'),
                 radiantGoldDelta,
                 direGoldDelta,
                 focus,

@@ -274,10 +274,14 @@ export async function coach(message: Message, args: string[], userDataService: U
         const planGrades = coachingDbService.getRecentPlanGrades(user.steamId, 20);
         const totalPlanChecks = planGrades.length;
         const itemPasses = planGrades.filter((grade) => grade.resultsJson?.itemRule?.passed).length;
-        const fightPasses = planGrades.filter((grade) => grade.resultsJson?.fightRule?.passed).length;
-        const conversionGrades = planGrades.filter((grade) => grade.resultsJson?.conversionRule?.evidence && grade.resultsJson.conversionRule.evidence !== 'no explicit conversion target');
+        const fightGrades = planGrades.filter((grade) => grade.resultsJson?.fightRule?.passed !== null && grade.resultsJson?.fightRule?.passed !== undefined);
+        const fightPasses = fightGrades.filter((grade) => grade.resultsJson?.fightRule?.passed).length;
+        const conversionGrades = planGrades.filter((grade) =>
+            grade.resultsJson?.conversionRule?.evidence
+            && !['no explicit conversion target', 'teamfight data unavailable'].includes(grade.resultsJson.conversionRule.evidence)
+        );
         const conversionPasses = conversionGrades.filter((grade) => grade.resultsJson?.conversionRule?.passed).length;
-        addFact('plans', `Plan compliance checks: ${totalPlanChecks} graded plans; item-rule pass ${itemPasses}/${totalPlanChecks}; fight-rule pass ${fightPasses}/${totalPlanChecks}; conversion-rule pass ${conversionPasses}/${conversionGrades.length}.`, { totalPlanChecks, itemPasses, fightPasses, conversionPasses, conversionChecks: conversionGrades.length });
+        addFact('plans', `Plan compliance checks: ${totalPlanChecks} graded plans; item-rule pass ${itemPasses}/${totalPlanChecks}; fight-rule pass ${fightPasses}/${fightGrades.length}; conversion-rule pass ${conversionPasses}/${conversionGrades.length}.`, { totalPlanChecks, itemPasses, fightPasses, fightChecks: fightGrades.length, conversionPasses, conversionChecks: conversionGrades.length });
 
         const notes = coachingDbService.getRecentPlayerNotes(user.steamId, 8);
         if (notes.length) {
