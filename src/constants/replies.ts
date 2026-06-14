@@ -6,7 +6,6 @@ export const HELP = `**Available Commands:**
 \`+profile [@user]\` - Show detailed player profile
 \`+rs [@user] [n] [filters]\` - Recent match image table
 \`+toggleauto\` - Toggle auto-showing of your matches
-\`+story <match_id>\` - Generate AI story for a match
 
 **🏆 Turbo Mode Commands:**
 \`+turbolb\` - Show turbo leaderboard
