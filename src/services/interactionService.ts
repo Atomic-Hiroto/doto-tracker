@@ -14,6 +14,7 @@ import { analyze } from '../commands/aiCommands';
 import { UserDataService } from './userDataService';
 import { TurboStatsService } from './turboStatsService';
 import * as commandHandlers from '../commands';
+import { createMatchDetailRow } from '../components/matchButtons';
 import { referenceService } from './referenceService';
 
 function asMessageAdapter(interaction: ButtonInteraction): any {
@@ -91,6 +92,8 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction, user
             return commandHandlers.profile(message, args, userDataService, turboStatsService);
         case 'rs':
             return commandHandlers.recentStats(message, args, userDataService);
+        case 'matches':
+            return commandHandlers.matches(message, args, userDataService);
         case 'analyze': {
             const matchOrFilter = interaction.options.getString('match_or_filter', true);
             const player = interaction.options.getString('player');
@@ -150,6 +153,7 @@ export async function registerSlashCommands(client: Client) {
             .addStringOption((option) => option.setName('steam_id').setDescription('Steam account id').setRequired(true)),
         queryOption(new SlashCommandBuilder().setName('profile').setDescription('Show player profile')),
         queryOption(new SlashCommandBuilder().setName('rs').setDescription('Show recent matches with optional filters')),
+        queryOption(new SlashCommandBuilder().setName('matches').setDescription('Pick a recent match to analyze from a list')),
         new SlashCommandBuilder().setName('analyze').setDescription('Fact-grounded match analysis or filtered latest match')
             .addStringOption((option) => option.setName('match_or_filter').setDescription('Match id or filter phrase').setRequired(true))
             .addStringOption((option) => option.setName('player').setDescription('Optional player/hero focus').setRequired(false).setAutocomplete(true)),
@@ -240,6 +244,48 @@ export function registerInteractionHandler(client: Client, userDataService: User
                     .setTimestamp(new Date(match.start_time * 1000));
 
                 await interaction.followUp({ embeds: [embed] });
+
+            } else if (customId.startsWith('pickmatch_')) {
+                const matchId = parseInt(customId.replace('pickmatch_', ''), 10);
+                // Ephemeral so the chooser detail stays private to the clicker and
+                // doesn't clutter the channel; the Analyze buttons post publicly.
+                await interaction.deferReply({ ephemeral: true });
+
+                const { data: match } = await opendotaClient.get<any>(`/matches/${matchId}`);
+                if (!match || !match.match_id) {
+                    return interaction.followUp({ content: 'Could not fetch that match.', ephemeral: true });
+                }
+
+                const clicker = userDataService.getUserByDiscordId(interaction.user.id);
+                const mine = clicker && match.players?.find((p: any) => String(p.account_id) === String(clicker.steamId));
+                const lines: string[] = [
+                    `**${match.radiant_win ? '🟢 Radiant Victory' : '🔴 Dire Victory'}** — ${match.radiant_score ?? '?'}–${match.dire_score ?? '?'} in ${formatDuration(match.duration)}`,
+                ];
+                if (mine) {
+                    const hero = await dotaDataService.getHeroName(mine.hero_id);
+                    lines.push(`You (**${hero}**): ${mine.kills}/${mine.deaths}/${mine.assists} • ${mine.gold_per_min} GPM`);
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor(match.radiant_win ? '#66bb6a' : '#ef5350')
+                    .setTitle(`Match #${matchId}`)
+                    .setDescription(lines.join('\n'))
+                    .setURL(`https://www.opendota.com/matches/${matchId}`);
+
+                await interaction.followUp({
+                    embeds: [embed],
+                    components: [createMatchDetailRow(matchId, { showAnalyzeMe: !!clicker })],
+                    ephemeral: true,
+                });
+
+            } else if (customId.startsWith('analyzeme_')) {
+                const matchId = parseInt(customId.replace('analyzeme_', ''), 10);
+                const clicker = userDataService.getUserByDiscordId(interaction.user.id);
+                if (!clicker) {
+                    return interaction.reply({ content: 'Register first with `+register <steam_id>` to analyze your own performance.', ephemeral: true });
+                }
+                await interaction.reply({ content: `🎓 Analyzing your game in match #${matchId}...`, ephemeral: false });
+                await analyze(asMessageAdapter(interaction), [String(matchId), clicker.steamId], userDataService);
 
             } else if (customId.startsWith('coachme_')) {
                 const [, matchIdRaw, steamId] = customId.split('_');

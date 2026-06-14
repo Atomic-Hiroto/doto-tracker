@@ -5,6 +5,7 @@ export const HELP = `**Available Commands:**
 \`+unregister\` - Unregister your Steam ID
 \`+profile [@user]\` - Show detailed player profile
 \`+rs [@user] [n] [filters]\` - Recent match image table
+\`+matches [@user] [n] [filters]\` - Pick a match to analyze from a list
 \`+toggleauto\` - Toggle auto-showing of your matches
 
 **🏆 Turbo Mode Commands:**

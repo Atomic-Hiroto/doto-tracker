@@ -57,6 +57,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.RECENT_STATS:
       await commandHandlers.recentStats(message, args, userDataService);
       break;
+    case Commands.MATCHES:
+      await commandHandlers.matches(message, args, userDataService);
+      break;
     case Commands.TOGGLE_AUTO:
       await commandHandlers.toggleAuto(message, userDataService);
       break;
