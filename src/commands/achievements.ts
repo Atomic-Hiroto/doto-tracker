@@ -16,7 +16,7 @@ export async function achievements(message: Message, args: string[], userDataSer
     }
 
     const user = userDataService.getUserByDiscordId(discordId);
-    if (!user) return message.reply(Replies.NEED_REGISTRATION);
+    if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
 
     try {
         const unlocked = achievementService.getUnlockedAchievements(discordId);

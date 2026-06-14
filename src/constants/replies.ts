@@ -52,5 +52,11 @@ export const REGISTER_SUCCESS = (steamId: string) => `Successfully registered St
 export const NOT_REGISTERED = 'You are not registered';
 export const UNREGISTER_SUCCESS = (steamId: string | undefined) => `Successfully unregistered Steam ID: ${steamId}`;
 export const NEED_REGISTRATION = 'You need to register first. Use +register <steam_id> to register.';
+export const NOT_REGISTERED_TARGET = (name: string) => `**${name}** isn't registered yet — they need to run \`+register <steam_id>\` first.`;
+// Picks the right "not registered" message depending on whether you're asking
+// about yourself or another user, so a query about an unregistered friend no
+// longer reads as if *you* need to register.
+export const notRegistered = (callerId: string, targetId: string, targetName: string) =>
+    callerId === targetId ? NEED_REGISTRATION : NOT_REGISTERED_TARGET(targetName);
 export const AUTO_SHOW_TOGGLED = (autoShow: boolean) => `Auto-show for your recent matches has been ${autoShow ? 'enabled' : 'disabled'}.`
 
