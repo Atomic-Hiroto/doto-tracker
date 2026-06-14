@@ -18,6 +18,47 @@ interface AbilityData {
 }
 
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const HERO_ALIASES: Record<string, string> = {
+    am: 'antimage',
+    aa: 'ancientapparition',
+    bh: 'bountyhunter',
+    bm: 'beastmaster',
+    bs: 'bloodseeker',
+    ck: 'chaosknight',
+    cm: 'crystalmaiden',
+    dp: 'deathprophet',
+    dk: 'dragonknight',
+    et: 'eldertitan',
+    gyro: 'gyrocopter',
+    invo: 'invoker',
+    jugg: 'juggernaut',
+    kotl: 'keeperofthelight',
+    lc: 'legioncommander',
+    ld: 'lonedruid',
+    ls: 'lifestealer',
+    mk: 'monkeyking',
+    np: 'naturesprophet',
+    od: 'outworlddestroyer',
+    pa: 'phantomassassin',
+    pl: 'phantomlancer',
+    potm: 'mirana',
+    qop: 'queenofpain',
+    sb: 'spiritbreaker',
+    sd: 'shadowdemon',
+    sf: 'shadowfiend',
+    sk: 'sandking',
+    spec: 'spectre',
+    ta: 'templarassassin',
+    tb: 'terrorblade',
+    timber: 'timbersaw',
+    treant: 'treantprotector',
+    venge: 'vengefulspirit',
+    vs: 'vengefulspirit',
+    void: 'facelessvoid',
+    wd: 'witchdoctor',
+    wk: 'wraithking',
+    wr: 'windranger',
+};
 
 class DotaDataService {
     private heroes: Map<number, HeroData> = new Map();
@@ -120,7 +161,8 @@ class DotaDataService {
 
     // Fuzzy hero name lookup for user input (e.g. "Anti-Mage", "antimage", "AM")
     findHeroByName(query: string): HeroData | undefined {
-        const q = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const raw = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const q = HERO_ALIASES[raw] || raw;
         for (const hero of this.heroes.values()) {
             const name = hero.localized_name.toLowerCase().replace(/[^a-z0-9]/g, '');
             const internalName = hero.name.replace('npc_dota_hero_', '').replace(/_/g, '');

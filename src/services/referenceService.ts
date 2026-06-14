@@ -91,6 +91,79 @@ export interface AghsEntry {
 }
 
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const ITEM_ALIASES: Record<string, string> = {
+    bkb: 'black king bar',
+    blink: 'blink dagger',
+    aghs: 'aghanim scepter',
+    aghanim: 'aghanim scepter',
+    shard: 'aghanim shard',
+    bots: 'boots of travel',
+    travels: 'boots of travel',
+    phase: 'phase boots',
+    treads: 'power treads',
+    mom: 'mask of madness',
+    deso: 'desolator',
+    ac: 'assault cuirass',
+    skadi: 'eye of skadi',
+    sheep: 'scythe of vyse',
+    hex: 'scythe of vyse',
+    linken: 'linken sphere',
+    linkens: 'linken sphere',
+    sny: 'sange and yasha',
+    kaya: 'kaya',
+    kns: 'kaya and sange',
+    ynk: 'yasha and kaya',
+    vessel: 'spirit vessel',
+    atos: 'rod of atos',
+    euls: 'eul scepter of divinity',
+    rapier: 'divine rapier',
+};
+
+const HERO_ALIASES: Record<string, string> = {
+    am: 'anti mage',
+    aa: 'ancient apparition',
+    bat: 'batrider',
+    bh: 'bounty hunter',
+    bm: 'beastmaster',
+    brew: 'brewmaster',
+    bs: 'bloodseeker',
+    ck: 'chaos knight',
+    cm: 'crystal maiden',
+    dp: 'death prophet',
+    dk: 'dragon knight',
+    drow: 'drow ranger',
+    et: 'elder titan',
+    gyro: 'gyrocopter',
+    invo: 'invoker',
+    jugg: 'juggernaut',
+    kotl: 'keeper of the light',
+    lc: 'legion commander',
+    ld: 'lone druid',
+    ls: 'lifestealer',
+    mk: 'monkey king',
+    np: 'natures prophet',
+    od: 'outworld destroyer',
+    pa: 'phantom assassin',
+    pl: 'phantom lancer',
+    potm: 'mirana',
+    qop: 'queen of pain',
+    sb: 'spirit breaker',
+    sd: 'shadow demon',
+    sf: 'shadow fiend',
+    sk: 'sand king',
+    spec: 'spectre',
+    ta: 'templar assassin',
+    tb: 'terrorblade',
+    timber: 'timbersaw',
+    tiny: 'tiny',
+    treant: 'treant protector',
+    venge: 'vengeful spirit',
+    vs: 'vengeful spirit',
+    void: 'faceless void',
+    wd: 'witch doctor',
+    wk: 'wraith king',
+    wr: 'windranger',
+};
 
 class ReferenceService {
     private items: Record<string, ItemConstant> = {};
@@ -134,7 +207,7 @@ class ReferenceService {
     /** Finds an item by display name or internal name, fuzzy and case-insensitive. */
     async findItem(query: string): Promise<{ key: string; item: ItemConstant } | null> {
         await this.ensureLoaded();
-        return this.fuzzyFind(this.items, (it) => it.dname, query);
+        return this.fuzzyFind(this.items, (it) => it.dname, ITEM_ALIASES[normalize(query)] || query);
     }
 
     /** Finds an ability by display name or internal name, fuzzy and case-insensitive. */
@@ -148,6 +221,8 @@ class ReferenceService {
     async findHero(query: string): Promise<HeroConstant | null> {
         await this.ensureLoaded();
         const q = normalize(query);
+        const alias = HERO_ALIASES[q];
+        if (alias) return this.findHero(alias);
         if (!q) return null;
         const heroes = this.heroes;
         let exact = heroes.find((h) => normalize(h.localized_name) === q);
