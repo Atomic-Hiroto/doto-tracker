@@ -130,6 +130,23 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.achievements(message, args, userDataService);
       break;
 
+    // --- Reference (Dota knowledge base) ---
+    case Commands.ITEM:
+      await commandHandlers.item(message, args);
+      break;
+    case Commands.ABILITY:
+      await commandHandlers.ability(message, args);
+      break;
+    case Commands.HERO:
+      await commandHandlers.hero(message, args);
+      break;
+    case Commands.AGHS:
+      await commandHandlers.aghs(message, args);
+      break;
+    case Commands.TALENTS:
+      await commandHandlers.talents(message, args);
+      break;
+
     // --- Admin ---
     case Commands.SET_CHANNEL:
       await commandHandlers.setChannel(message, channelDataService);

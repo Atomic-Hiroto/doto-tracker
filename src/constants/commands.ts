@@ -28,6 +28,12 @@ export enum Commands {
     DRAFT = "draft",
     META = "meta",
     ACHIEVEMENTS = "achievements",
+    // Reference (Dota knowledge base)
+    ITEM = "item",
+    ABILITY = "ability",
+    HERO = "hero",
+    AGHS = "aghs",
+    TALENTS = "talents",
     // Admin
     SET_CHANNEL = "setchannel",
     UNSET_CHANNEL = "unsetchannel",

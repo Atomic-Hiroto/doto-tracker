@@ -22,6 +22,13 @@ export const HELP = `**Available Commands:**
 \`+gpatclear\` - Clear your AI conversation history
 \`+togglesharedcontext <on/off>\` - Toggle shared AI context in channel
 
+**📚 Dota Knowledge Base:**
+\`+hero <name>\` - Hero overview: stats, abilities, Aghs
+\`+item <name>\` - Item cost, stats, recipe and effects
+\`+ability <name>\` - Ability details and values
+\`+aghs <hero>\` - Aghanim's Scepter & Shard upgrades
+\`+talents <hero>\` - Hero talent tree
+
 **ℹ️ Other Commands:**
 \`+caow\` - Fun command
 \`+help\` - Show this help message

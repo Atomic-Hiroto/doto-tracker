@@ -21,5 +21,7 @@ export { compare } from './compare';
 export { analyze, suggest, draft, meta } from './aiCommands';
 export { coach } from './coach';
 export { achievements } from './achievements';
+// Reference (Dota knowledge base)
+export { item, ability, hero, aghs, talents } from './reference';
 // Admin
 export { setChannel, unsetChannel } from './setChannel';
