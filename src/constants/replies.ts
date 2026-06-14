@@ -4,7 +4,7 @@ export const HELP = `**Available Commands:**
 \`+register <steam_id>\` - Register your Steam ID
 \`+unregister\` - Unregister your Steam ID
 \`+profile [@user]\` - Show detailed player profile
-\`+rs [@user]\` - Show recent match stats
+\`+rs [@user] [n] [filters]\` - Recent match image table
 \`+toggleauto\` - Toggle auto-showing of your matches
 \`+story <match_id>\` - Generate AI story for a match
 
@@ -18,23 +18,33 @@ export const HELP = `**Available Commands:**
 **🤖 AI Commands:**
 \`+gpat <message>\` - Chat with AI assistant (doto-chan)
 \`+analyze <match_id> [player]\` - Fact-grounded match recap or player coaching
-\`+coach [@user]\` - Persistent trend coach from recent matches and saved plans
+\`+analyze last lost as PA\` - Resolve filters to a match, then analyze
+\`+coach [@user] [filters]\` - Persistent trend coach from recent matches and saved plans
 \`+gpatclear\` - Clear your AI conversation history
 \`+togglesharedcontext <on/off>\` - Toggle shared AI context in channel
 
-**📚 Dota Knowledge Base:**
+**📚 Dota Knowledge Base & Visuals:**
 \`+hero <name>\` - Hero overview: stats, abilities, Aghs
 \`+item <name>\` - Item cost, stats, recipe and effects
 \`+ability <name>\` - Ability details and values
 \`+aghs <hero>\` - Aghanim's Scepter & Shard upgrades
 \`+talents <hero>\` - Hero talent tree
 \`+graph <match_id>\` - Gold/XP advantage graph for a match
+\`+skillbuild <match_id> <player|hero>\` - Ability level-up order image
+\`+inventory <match_id>\` - End-game inventory image for a match
+\`+inventory [@user] [filters]\` - Common end items over recent matches
+\`+roles [@user] [filters]\` - Role distribution graph
+\`+% [@user] [filters] with <item>\` - Deterministic item percentage query
+
+**🔎 Match Filters:**
+Use filters with \`+rs\`, \`+analyze\`, \`+coach\`, \`+inventory\`, \`+roles\`, and \`+%\`.
+Examples: \`won\`, \`lost\`, \`turbo\`, \`ranked\`, \`as invoker\`, \`against pudge\`, \`today\`, \`this week\`, \`last 30 days\`, \`since 7.41\`.
 
 **ℹ️ Other Commands:**
 \`+caow\` - Fun command
 \`+help\` - Show this help message
 
-*Need help with a specific command? Just ask!*`;
+Most commands are also available as slash commands.`;
 export const CAOW = 'Thrower hai!!';
 export const PROVIDE_STEAM_ID = 'Please provide your Steam ID. Usage: +register <steam_id>';
 export const ALREADY_REGISTERED = (steamId: string, discordId: string) => `SteamId: ${steamId} is already registed with DiscordId: ${discordId}.`;

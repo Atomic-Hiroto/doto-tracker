@@ -1,4 +1,4 @@
-import { Message, EmbedBuilder } from 'discord.js';
+import { Message, EmbedBuilder, AttachmentBuilder } from 'discord.js';
 import { AIConstants, ProcessConstants } from '../constants';
 import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
@@ -11,6 +11,9 @@ import { safeTyping, safeSend } from '../utils/channelHelpers';
 import axios from 'axios';
 import { coachingDbService, type AnalysisMode } from '../services/coachingDbService';
 import { registerAnalysisConversation } from '../services/aiService';
+import { UserDataService } from '../services/userDataService';
+import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
+import { renderMatchAdvantageGraph } from '../services/chartService';
 
 // Discord embed field values are capped at 1024 chars
 const trunc = (s: string, max = 1024) => s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -486,9 +489,10 @@ function buildAnalysisConversationContext(seed: {
     ].filter(Boolean).join('\n\n');
 }
 
-async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], seed?: AnalysisConversationSeed) {
+async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], seed?: AnalysisConversationSeed, files: AttachmentBuilder[] = []) {
     if (!embeds.length) return null;
     const [first, ...rest] = embeds;
+    if (files.length) first.setImage('attachment://analysis-advantage.png');
     const renderedPages = embeds.map(renderedTextFromEmbed);
     const context = seed
         ? buildAnalysisConversationContext({ structuredJson: seed.structuredJson, factPrompt: seed.factPrompt, renderedPages })
@@ -514,7 +518,7 @@ async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], seed
         });
     };
 
-    const reply = await message.reply({ embeds: [first] });
+    const reply = await message.reply({ embeds: [first], files });
     persist(reply.id, 0);
     register(reply.id);
     for (const [index, embed] of rest.entries()) {
@@ -527,9 +531,23 @@ async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], seed
     return reply;
 }
 
+async function buildAnalysisGraph(matchId: number): Promise<AttachmentBuilder | null> {
+    try {
+        const match = await opendotaClient.get<any>(`/matches/${matchId}`).then((res) => res.data);
+        const gold = Array.isArray(match?.radiant_gold_adv) ? match.radiant_gold_adv : [];
+        const xp = Array.isArray(match?.radiant_xp_adv) ? match.radiant_xp_adv : [];
+        if (gold.length < 2 && xp.length < 2) return null;
+        const buffer = renderMatchAdvantageGraph(gold, xp, { title: `Gold & XP Advantage — Match ${matchId}`, radiantWin: !!match.radiant_win });
+        return new AttachmentBuilder(buffer, { name: 'analysis-advantage.png' });
+    } catch (error: any) {
+        logger.debug(`[+analyze] Advantage graph unavailable for ${matchId}: ${error?.message || error}`);
+        return null;
+    }
+}
+
 const BOT_OWNER_ID = '78168838910246912';
 
-export async function analyze(message: Message, args: string[]) {
+export async function analyze(message: Message, args: string[], userDataService?: UserDataService) {
     // Parse flags: -model <model_name> (owner-only), -stratz
     let modelOverride: string | null = null;
     let useStratz = false;
@@ -566,9 +584,28 @@ export async function analyze(message: Message, args: string[]) {
         useStratz = true;
     }
 
-    const matchId = parseInt(cleanArgs[0], 10);
+    let matchId = parseInt(cleanArgs[0], 10);
+    if (cleanArgs[0] && isNaN(matchId) && userDataService) {
+        const user = userDataService.getUserByDiscordId(message.author.id);
+        if (!user) return message.reply('To use match filters with `+analyze`, register first with `+register <steamId>`.');
+        const filter = await parseMatchFilter(cleanArgs, message, userDataService);
+        if (!filter.consumedAny) {
+            return message.reply('Usage: `+analyze <match_id> [player]` or `+analyze last lost as PA`.');
+        }
+        const response = await opendotaClient.get<any[]>(
+            `/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: 50, significant: 0 })}`
+        );
+        const matches = applyResidualFilters(response.data || [], filter);
+        const match = matches[0];
+        if (!match?.match_id) {
+            return message.reply(`No match found for filter: ${filter.descriptionParts.join(' • ') || cleanArgs.join(' ')}`);
+        }
+        matchId = Number(match.match_id);
+        cleanArgs.length = 0;
+        cleanArgs.push(String(matchId));
+    }
     if (!cleanArgs[0] || isNaN(matchId)) {
-        return message.reply('Usage: `+analyze <match_id> [player]` — give me a match ID to dissect! 🔍\nOwner-only: `+analyze <match_id> -model <openrouter_model> -debug`');
+        return message.reply('Usage: `+analyze <match_id> [player]` or `+analyze last lost as PA` — give me a match to dissect! 🔍\nOwner-only: `+analyze <match_id> -model <openrouter_model> -debug`');
     }
     const focusPlayerQuery = cleanArgs.slice(1).join(' ').trim();
     const mode = focusPlayerQuery ? 'player' : 'match';
@@ -594,6 +631,7 @@ export async function analyze(message: Message, args: string[]) {
                 cached: true,
                 showModel: message.author.id === BOT_OWNER_ID,
             });
+            const graph = await buildAnalysisGraph(matchId);
             return sendAnalysisEmbeds(message, embeds, {
                 analysisId: cached.id,
                 matchId,
@@ -601,7 +639,7 @@ export async function analyze(message: Message, args: string[]) {
                 mode: cached.mode,
                 structuredJson: cached.structuredJson,
                 factPrompt: cached.factPrompt,
-            });
+            }, graph ? [graph] : []);
         }
     }
 
@@ -700,6 +738,7 @@ export async function analyze(message: Message, args: string[]) {
                             cached: true,
                             showModel: message.author.id === BOT_OWNER_ID,
                         });
+                        const graph = await buildAnalysisGraph(matchId);
                         return sendAnalysisEmbeds(message, embeds, {
                             analysisId: cached.id,
                             matchId,
@@ -707,7 +746,7 @@ export async function analyze(message: Message, args: string[]) {
                             mode: cached.mode,
                             structuredJson: cached.structuredJson,
                             factPrompt: cached.factPrompt,
-                        });
+                        }, graph ? [graph] : []);
                     }
                 }
             }
@@ -975,6 +1014,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
             showModel: message.author.id === BOT_OWNER_ID,
         });
+        const graph = await buildAnalysisGraph(matchId);
         await sendAnalysisEmbeds(message, embeds, {
             analysisId,
             matchId,
@@ -982,7 +1022,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             mode: analysisMode,
             structuredJson: analysisData,
             factPrompt: prompt,
-        });
+        }, graph ? [graph] : []);
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')

@@ -112,7 +112,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
 
     // --- Phase 4 ---
     case Commands.ANALYZE:
-      await commandHandlers.analyze(message, args);
+      await commandHandlers.analyze(message, args, userDataService);
       break;
     case Commands.COACH:
       await commandHandlers.coach(message, args, userDataService);
@@ -150,6 +150,18 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     // --- Match visuals ---
     case Commands.GRAPH:
       await commandHandlers.graph(message, args);
+      break;
+    case Commands.SKILLBUILD:
+      await commandHandlers.skillbuild(message, args);
+      break;
+    case Commands.INVENTORY:
+      await commandHandlers.matchInventory(message, args, userDataService);
+      break;
+    case Commands.PERCENT:
+      await commandHandlers.percent(message, args, userDataService);
+      break;
+    case Commands.ROLES:
+      await commandHandlers.roles(message, args, userDataService);
       break;
 
     // --- Admin ---

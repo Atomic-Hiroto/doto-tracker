@@ -157,6 +157,26 @@ class ReferenceService {
         return heroes.find((h) => normalize(h.localized_name).includes(q)) || null;
     }
 
+    async searchHeroes(query: string, limit = 25): Promise<HeroConstant[]> {
+        await this.ensureLoaded();
+        const q = normalize(query);
+        return this.heroes
+            .filter((hero) => !q || normalize(hero.localized_name).includes(q))
+            .slice(0, limit);
+    }
+
+    async searchItems(query: string, limit = 25): Promise<Array<{ key: string; item: ItemConstant }>> {
+        await this.ensureLoaded();
+        const q = normalize(query);
+        return Object.entries(this.items)
+            .filter(([key, item]) => {
+                const name = normalize(item.dname || key);
+                return !q || name.includes(q) || normalize(key).includes(q);
+            })
+            .slice(0, limit)
+            .map(([key, item]) => ({ key, item }));
+    }
+
     getHeroAbilities(npcName: string): HeroAbilities | undefined {
         return this.heroAbilities[npcName];
     }

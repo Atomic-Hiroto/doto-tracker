@@ -6,7 +6,7 @@ import { checkNewMatches } from './services/dotaService';
 import { ProcessConstants } from './constants';
 import { logger } from './services/loggerService';
 import { dotaDataService } from './services/dotaDataService';
-import { registerInteractionHandler } from './services/interactionService';
+import { registerInteractionHandler, registerSlashCommands } from './services/interactionService';
 import { closeDotabuffBrowser } from './services/dotabuffScraper';
 
 export async function initializeBot(client: Client) {
@@ -18,6 +18,7 @@ export async function initializeBot(client: Client) {
 
   client.once('ready', () => {
     logger.info(`Logged in as ${client.user!.tag}!`);
+    registerSlashCommands(client).catch((error) => logger.warn('Failed to register slash commands:', error));
     setTimeout(() => checkNewMatches(client, userDataService, turboStatsService), ProcessConstants.CHECK_INTERVAL);
   });
 
@@ -26,7 +27,7 @@ export async function initializeBot(client: Client) {
   });
 
   // Register button/component interaction handler
-  registerInteractionHandler(client);
+  registerInteractionHandler(client, userDataService, turboStatsService);
 
   // Graceful shutdown
   async function shutdown(signal: string) {
