@@ -27,7 +27,7 @@ export async function trend(message: Message, args: string[], userDataService: U
     }
 
     const user = userDataService.getUserByDiscordId(discordId);
-    if (!user) return message.reply(Replies.NEED_REGISTRATION);
+    if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
 
     const chartTypeArg = (parsed.positional[0] || 'kda').toLowerCase() as ChartType;
     const chartType: ChartType = CHART_TYPES.includes(chartTypeArg) ? chartTypeArg : 'kda';

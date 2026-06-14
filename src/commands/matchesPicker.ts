@@ -30,7 +30,7 @@ export async function matches(message: Message, args: string[], userDataService:
   }
 
   const user = userDataService.getUserByDiscordId(discordId);
-  if (!user) return message.reply(Replies.NEED_REGISTRATION);
+  if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
 
   const countArg = parsed.positional[0] && /^\d+$/.test(parsed.positional[0]) ? parsed.positional[0] : undefined;
   const count = Math.min(parseIntArg(countArg, 10), 10);

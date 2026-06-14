@@ -31,7 +31,7 @@ export async function tophero(
 
     const user = userDataService.getUserByDiscordId(discordId);
     if (!user) {
-        return message.reply(Replies.NEED_REGISTRATION);
+        return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
     }
 
     try {

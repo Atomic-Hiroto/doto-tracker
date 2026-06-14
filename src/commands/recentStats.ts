@@ -30,7 +30,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
 
   const user = userDataService.getUserByDiscordId(discordId);
   if (!user) {
-    return message.reply(Replies.NEED_REGISTRATION);
+    return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
   }
 
   // Parse count arg — +rs 5 or default 1. Keep the remaining words for the filter DSL.

@@ -114,7 +114,7 @@ export async function matchInventory(message: Message, args: string[], userDataS
             targetUser = message.mentions.users.first()!;
         }
         const user = userDataService.getUserByDiscordId(discordId);
-        if (!user) return message.reply(Replies.NEED_REGISTRATION);
+        if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
         const filter = await parseMatchFilter(parsed.positional, message, userDataService);
         const recent = await opendotaClient.get<any[]>(`/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: 30, significant: 0 })}`);
         const matches = applyResidualFilters(recent.data || [], filter).slice(0, 12);
@@ -150,7 +150,7 @@ export async function roles(message: Message, args: string[], userDataService: U
         targetUser = message.mentions.users.first()!;
     }
     const user = userDataService.getUserByDiscordId(discordId);
-    if (!user) return message.reply(Replies.NEED_REGISTRATION);
+    if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
     try {
         safeTyping(message.channel);
         const filter = await parseMatchFilter(parsed.positional, message, userDataService);
@@ -187,7 +187,7 @@ export async function percent(message: Message, args: string[], userDataService:
         targetUser = message.mentions.users.first()!;
     }
     const user = userDataService.getUserByDiscordId(discordId);
-    if (!user) return message.reply(Replies.NEED_REGISTRATION);
+    if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
     const words = parsed.positional.filter((word) => word.toLowerCase() !== 'of');
     const withIndex = words.findIndex((word) => word.toLowerCase() === 'with');
     const itemQuery = withIndex >= 0 ? words.slice(withIndex + 1).join(' ') : '';
