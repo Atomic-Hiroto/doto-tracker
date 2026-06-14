@@ -6,8 +6,6 @@ import {
     Interaction,
     SlashCommandBuilder,
 } from 'discord.js';
-import { getDetailedMatchData } from './dotaService';
-import { getMatchStory } from './aiService';
 import { logger } from './loggerService';
 import { opendotaClient } from './apiClient';
 import { dotaDataService } from './dotaDataService';
@@ -200,16 +198,12 @@ export function registerInteractionHandler(client: Client, userDataService: User
         const { customId, user } = interaction;
 
         try {
-            if (customId.startsWith('story_')) {
-                const matchId = parseInt(customId.replace('story_', ''), 10);
-                await interaction.reply({ content: `📖 Generating match story for match #${matchId}...`, ephemeral: false });
-
-                const matchData = await getDetailedMatchData(matchId);
-                if (!matchData) {
-                    return interaction.followUp({ content: 'Match data not available or not parsed yet.', ephemeral: true });
-                }
-
-                await getMatchStory(asMessageAdapter(interaction), matchData);
+            // 'analyze_' is the current button; 'story_' is kept so older posted
+            // messages keep working — both now run fact-grounded whole-match analysis.
+            if (customId.startsWith('analyze_') || customId.startsWith('story_')) {
+                const matchId = parseInt(customId.replace(/^(analyze|story)_/, ''), 10);
+                await interaction.reply({ content: `🔍 Analyzing match #${matchId}...`, ephemeral: false });
+                await analyze(asMessageAdapter(interaction), [String(matchId)], userDataService);
 
             } else if (customId.startsWith('details_')) {
                 const matchId = parseInt(customId.replace('details_', ''), 10);
