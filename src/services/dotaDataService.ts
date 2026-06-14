@@ -62,15 +62,21 @@ class DotaDataService {
 
     private async fetchAbilities(): Promise<void> {
         try {
-            const response = await opendotaClient.get<Record<string, any>>('/constants/abilities');
+            const [abilitiesResponse, abilityIdsResponse] = await Promise.all([
+                opendotaClient.get<Record<string, any>>('/constants/abilities'),
+                opendotaClient.get<Record<string, string>>('/constants/ability_ids'),
+            ]);
+            const abilities = abilitiesResponse.data || {};
+            const abilityIds = abilityIdsResponse.data || {};
             this.abilities.clear();
-            for (const ability of Object.values(response.data)) {
-                if (ability.id !== undefined) {
-                    this.abilities.set(ability.id, {
-                        id: ability.id,
-                        dname: ability.dname || ability.name || 'Unknown Ability'
-                    });
-                }
+            for (const [idText, internalName] of Object.entries(abilityIds)) {
+                const id = Number(idText);
+                if (!Number.isFinite(id)) continue;
+                const ability = abilities[internalName] || {};
+                this.abilities.set(id, {
+                    id,
+                    dname: ability.dname || internalName.replace(/^special_bonus_/, 'Talent: ').replace(/_/g, ' ')
+                });
             }
         } catch (error) {
             logger.error('Failed to fetch ability data:', error);
