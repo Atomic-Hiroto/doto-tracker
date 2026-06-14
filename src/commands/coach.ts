@@ -283,9 +283,9 @@ export async function coach(message: Message, args: string[], userDataService: U
         const conversionPasses = conversionGrades.filter((grade) => grade.resultsJson?.conversionRule?.passed).length;
         addFact('plans', `Plan compliance checks: ${totalPlanChecks} graded plans; item-rule pass ${itemPasses}/${totalPlanChecks}; fight-rule pass ${fightPasses}/${fightGrades.length}; conversion-rule pass ${conversionPasses}/${conversionGrades.length}.`, { totalPlanChecks, itemPasses, fightPasses, fightChecks: fightGrades.length, conversionPasses, conversionChecks: conversionGrades.length });
 
-        const notes = coachingDbService.getRecentPlayerNotes(user.steamId, 8);
+        const notes = coachingDbService.getRecentPlayerNotes(user.steamId, 10);
         if (notes.length) {
-            addFact('playerNotes', `Recent player-provided context notes: ${notes.map((note) => `${note.matchId ? `match #${note.matchId}: ` : ''}${note.text}`).join(' | ')}. Treat these as player claims, not API facts.`);
+            addFact('playerNotes', `Recent user-provided context notes from the last 30 days: ${notes.map((note) => `user-provided claim${note.matchId ? ` for match #${note.matchId}` : ''}: "${note.text}"`).join(' | ')}. Treat these as player claims, not API facts.`);
         }
 
         const coachFacts = {

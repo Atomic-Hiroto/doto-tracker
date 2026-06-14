@@ -5,10 +5,21 @@ import { formatDuration } from '../utils/formatters';
 import { logger } from './loggerService';
 import { ChannelDataService } from './channelDataService';
 import { safeTyping } from '../utils/channelHelpers';
-import { coachingDbService } from './coachingDbService';
+import { coachingDbService, type AnalysisMode, type StoredAnalysis } from './coachingDbService';
 
 const conversationHistory = new Map<string, any[]>();
-const analysisConversationHistory = new Map<string, { expiresAt: number; messages: any[] }>();
+type AnalysisThread = {
+  expiresAt: number;
+  messages: any[];
+  analysisId?: number;
+  matchId?: number;
+  steamId?: string | null;
+  mode?: AnalysisMode;
+};
+type AnalysisThreadMeta = Omit<AnalysisThread, 'expiresAt' | 'messages'>;
+type AnalysisContextSeed = { context: string; meta?: AnalysisThreadMeta };
+
+const analysisConversationHistory = new Map<string, AnalysisThread>();
 const channelDataService = new ChannelDataService();
 const BOT_OWNER_ID = '78168838910246912';
 
@@ -16,10 +27,10 @@ export { channelDataService };
 
 function stripEvidenceMarkers(text: string): string {
   return text
-    .replace(/\s*\[F\d+\]/g, '')
-    .replace(/\s*\[C\d+\]/g, '')
+    .replace(/[ \t]*\[F\d+\]/g, '')
+    .replace(/[ \t]*\[C\d+\]/g, '')
     .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\n\s+/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
     .trim();
 }
 
@@ -246,21 +257,22 @@ async function callOpenRouterAPI(systemPrompt: string, messages: any[], opts: { 
   return (messageContent || '').trimStart();
 }
 
-export function registerAnalysisConversation(messageId: string, context: string) {
+export function registerAnalysisConversation(messageId: string, context: string, meta: AnalysisThreadMeta = {}) {
   const now = Date.now();
   for (const [id, thread] of analysisConversationHistory.entries()) {
     if (thread.expiresAt <= now) analysisConversationHistory.delete(id);
   }
   analysisConversationHistory.set(messageId, {
     expiresAt: now + 30 * 60 * 1000,
+    ...meta,
     messages: [
       {
         role: 'user',
-        content: `Seed this Dota 2 analysis follow-up conversation with the exact analysis context below. Use only this context for match-specific claims.\nThe context has two kinds of sources: MATCH_FACTS_PROMPT is private background data the user has never seen; STRUCTURED_ANALYSIS (or embed text) is the write-up the user actually read in Discord.\n\n${context}`,
+        content: `Seed this Dota 2 analysis follow-up conversation with the exact analysis context below. Use only this context for match-specific claims.\nThe context has three possible sources: MATCH_FACTS_PROMPT is private background data the user has never seen; RENDERED_ANALYSIS is the exact Discord write-up the user saw; STRUCTURED_ANALYSIS is the parsed write-up data. If the user asks what the analysis said, prefer RENDERED_ANALYSIS.\n\n${context}`,
       },
       {
         role: 'assistant',
-        content: 'Understood. I will answer follow-up questions using only the seeded context, and I will keep clear that MATCH_FACTS is private background while only the structured analysis write-up was shown to users.',
+        content: 'Understood. I will answer follow-up questions using only the seeded context, and I will treat the rendered analysis as what users actually saw.',
       },
     ],
   });
@@ -277,40 +289,65 @@ function matchIdFromAnalysisEmbedTitle(title?: string | null): number | null {
   return Number.isFinite(matchId) ? matchId : null;
 }
 
-function buildStoredAnalysisContext(matchId: number): string | null {
-  const stored = coachingDbService.getLatestAnalysisForMatch(matchId);
-  if (!stored) return null;
+function buildStoredAnalysisContext(stored: StoredAnalysis, renderedPages: string[] = []): string {
+  const rendered = renderedPages.length
+    ? `RENDERED_ANALYSIS:\n${renderedPages.map((page, index) => `--- Page ${index + 1} ---\n${page}`).join('\n\n')}`
+    : '';
   const structured = `STRUCTURED_ANALYSIS:\n${JSON.stringify(stored.structuredJson, null, 2)}`;
-  return stored.factPrompt
-    ? `MATCH_FACTS_PROMPT:\n${stored.factPrompt}\n\n${structured}`
-    : structured;
-}
-
-function matchIdFromContextText(text: string): number | null {
-  const match = text.match(/Match #(\d+)|"matchId":\s*(\d+)|Match Analysis\s+—\s+#(\d+)/);
-  const value = match?.[1] || match?.[2] || match?.[3];
-  const matchId = Number(value);
-  return Number.isFinite(matchId) ? matchId : null;
+  return [
+    stored.factPrompt ? `MATCH_FACTS_PROMPT:\n${stored.factPrompt}` : '',
+    rendered,
+    structured,
+  ].filter(Boolean).join('\n\n');
 }
 
 function looksLikePlayerCorrection(text: string): boolean {
   return /\b(actually|btw|for context|to be clear|i was|i'm|im|we were|he was|she was|they were|was support|was core|pos\s*[1-5]|position\s*[1-5]|roaming|lagged|disconnected|tilted)\b/i.test(text);
 }
 
-function maybeStorePlayerNote(thread: { messages: any[] }, prompt: string) {
+function maybeStorePlayerNote(thread: AnalysisThread, prompt: string) {
   if (!looksLikePlayerCorrection(prompt)) return;
-  const contextText = thread.messages.map((entry) => typeof entry.content === 'string' ? entry.content : '').join('\n');
-  const matchId = matchIdFromContextText(contextText);
-  if (!matchId) return;
-  const stored = coachingDbService.getLatestAnalysisForMatch(matchId);
+  if (!thread.matchId) return;
   coachingDbService.savePlayerNote({
-    steamId: stored?.steamId ?? null,
-    matchId,
+    steamId: thread.mode === 'player' ? thread.steamId ?? null : null,
+    matchId: thread.matchId,
     text: prompt,
   });
 }
 
-async function buildAnalysisEmbedFallbackContext(message: Message, messageId: string): Promise<string | null> {
+function renderedTextFromDiscordEmbed(embed: any): string {
+  const fields = (embed.fields || [])
+    .map((field: any) => `${field.name}\n${field.value}`)
+    .join('\n\n');
+  return [
+    embed.title ? `TITLE: ${embed.title}` : '',
+    embed.description ? `BODY:\n${embed.description}` : '',
+    fields ? `FIELDS:\n${fields}` : '',
+    embed.footer?.text ? `FOOTER: ${embed.footer.text}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+function buildExactAnalysisMessageContext(messageId: string): AnalysisContextSeed | null {
+  const stored = coachingDbService.getAnalysisMessage(messageId);
+  if (!stored) return null;
+  const renderedPages = stored.renderedPages.length
+    ? stored.renderedPages.map((page) => page.renderedText)
+    : [stored.renderedText].filter(Boolean);
+  return {
+    context: buildStoredAnalysisContext(stored.analysis, renderedPages),
+    meta: {
+      analysisId: stored.analysisId,
+      matchId: stored.matchId,
+      steamId: stored.steamId,
+      mode: stored.mode,
+    },
+  };
+}
+
+async function buildAnalysisEmbedFallbackContext(message: Message, messageId: string): Promise<AnalysisContextSeed | null> {
+  const exact = buildExactAnalysisMessageContext(messageId);
+  if (exact) return exact;
+
   try {
     const botId = message.client.user?.id;
     const cached = message.channel.messages.cache.get(messageId);
@@ -321,10 +358,6 @@ async function buildAnalysisEmbedFallbackContext(message: Message, messageId: st
 
     const referencedEmbed = referenced.embeds.find(embed => embed.title?.startsWith('🔍 Match Analysis'));
     if (!referencedEmbed?.title) return null;
-
-    const matchId = matchIdFromAnalysisEmbedTitle(referencedEmbed.title);
-    const storedContext = matchId == null ? null : buildStoredAnalysisContext(matchId);
-    if (storedContext) return storedContext;
 
     const baseTitle = normalizeAnalysisTitle(referencedEmbed.title);
     const nearby = await Promise.allSettled([
@@ -348,22 +381,28 @@ async function buildAnalysisEmbedFallbackContext(message: Message, messageId: st
 
     if (!analysisPages.length) return null;
 
-    const pageText = analysisPages.map(({ embed }) => {
-      const fields = embed.fields
-        .map(field => `${field.name}\n${field.value}`)
-        .join('\n\n');
-      return [
-        `TITLE: ${embed.title}`,
-        embed.description ? `BODY:\n${embed.description}` : '',
-        fields ? `FIELDS:\n${fields}` : '',
-        embed.footer?.text ? `FOOTER: ${embed.footer.text}` : '',
-      ].filter(Boolean).join('\n\n');
-    }).join('\n\n---\n\n');
+    const renderedPages = analysisPages.map(({ embed }) => renderedTextFromDiscordEmbed(embed));
+    const matchId = matchIdFromAnalysisEmbedTitle(referencedEmbed.title);
+    const stored = matchId == null ? null : coachingDbService.getLatestAnalysisForMatch(matchId);
+    if (stored) {
+      return {
+        context: buildStoredAnalysisContext(stored, renderedPages),
+        meta: {
+          analysisId: stored.id,
+          matchId: stored.matchId,
+          steamId: stored.steamId,
+          mode: stored.mode,
+        },
+      };
+    }
 
-    return `ANALYSIS_EMBED_CONTEXT_ONLY:
+    return {
+      context: `ANALYSIS_EMBED_CONTEXT_ONLY:
 This context was reconstructed from the rendered Discord analysis embed because the full MATCH_FACTS thread was unavailable. Answer only from this embed text. If the user asks for details not visible here, say the analysis context does not contain enough data.
 
-${pageText}`;
+${renderedPages.map((page, index) => `--- Page ${index + 1} ---\n${page}`).join('\n\n')}`,
+      meta: matchId == null ? undefined : { matchId, steamId: null, mode: 'match' },
+    };
   } catch (error) {
     logger.debug('Could not reconstruct analysis follow-up context from referenced embed');
     return null;
@@ -375,20 +414,20 @@ export async function handleAnalysisFollowUp(message: Message): Promise<boolean>
   if (!messageId) return false;
   let thread = analysisConversationHistory.get(messageId);
   if (!thread) {
-    const fallbackContext = await buildAnalysisEmbedFallbackContext(message, messageId);
-    if (!fallbackContext) return false;
-    registerAnalysisConversation(messageId, fallbackContext);
+    const fallback = await buildAnalysisEmbedFallbackContext(message, messageId);
+    if (!fallback) return false;
+    registerAnalysisConversation(messageId, fallback.context, fallback.meta);
     thread = analysisConversationHistory.get(messageId);
   }
   if (!thread) return false;
   if (Date.now() > thread.expiresAt) {
     analysisConversationHistory.delete(messageId);
-    const fallbackContext = await buildAnalysisEmbedFallbackContext(message, messageId);
-    if (!fallbackContext) {
+    const fallback = await buildAnalysisEmbedFallbackContext(message, messageId);
+    if (!fallback) {
       await message.reply('That analysis follow-up context expired. Re-run `+analyze` and reply to the fresh analysis embed.');
       return true;
     }
-    registerAnalysisConversation(messageId, fallbackContext);
+    registerAnalysisConversation(messageId, fallback.context, fallback.meta);
     thread = analysisConversationHistory.get(messageId);
   }
   if (!thread) return false;
@@ -400,13 +439,13 @@ export async function handleAnalysisFollowUp(message: Message): Promise<boolean>
   maybeStorePlayerNote(thread, prompt);
 
   const system = `You are doto-chan answering follow-up questions about one Dota 2 analysis.
-Use only the seeded MATCH_FACTS and structured analysis for match-specific claims.
-The two sources are not the same thing: MATCH_FACTS is private background data the user has never seen; the structured analysis is the write-up the user actually read in Discord.
-If the user asks what the analysis said, mentioned, or covered, answer only from the structured analysis write-up. You may bring in MATCH_FACTS details, but label them as match data that was not in the write-up (e.g. "the write-up only named you in MVP, but the match data shows..."). Never claim the write-up said something it did not.
+Use only the seeded MATCH_FACTS, RENDERED_ANALYSIS, and structured analysis for match-specific claims.
+The sources are not the same thing: MATCH_FACTS is private background data the user has never seen; RENDERED_ANALYSIS is the exact write-up the user saw in Discord; STRUCTURED_ANALYSIS is parsed write-up data.
+If the user asks what the analysis said, mentioned, or covered, answer only from RENDERED_ANALYSIS when present, otherwise from the structured analysis write-up. You may bring in MATCH_FACTS details, but label them as match data that was not in the write-up (e.g. "the write-up only named you in MVP, but the match data shows..."). Never claim the write-up said something it did not.
 If the answer is not in the context, say the analysis data does not contain it.
 You may use general Dota knowledge for item or strategy recommendations, but phrase those as recommendations, never as things that happened in this match.
 Answer directly. Do not use openers like "Great question" or address the user by name unless needed for clarity.
-Be concise, factual, and cite evidence ids when present. Never use internal pipeline terms like "leverage-ranked", "MATCH_FACTS", "fact sheet", or "structured analysis" in replies; say "the analysis" or "the match data" instead.`;
+Be concise, factual, and cite evidence ids when present. Never use internal pipeline terms like "leverage-ranked", "MATCH_FACTS", "RENDERED_ANALYSIS", "fact sheet", or "structured analysis" in replies; say "the analysis" or "the match data" instead.`;
 
   try {
     const response = await callOpenRouterAPI(system, thread.messages, {

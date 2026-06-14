@@ -9,7 +9,7 @@ import { fetchDotabuffTurboMeta } from '../services/dotabuffScraper';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping, safeSend } from '../utils/channelHelpers';
 import axios from 'axios';
-import { coachingDbService } from '../services/coachingDbService';
+import { coachingDbService, type AnalysisMode } from '../services/coachingDbService';
 import { registerAnalysisConversation } from '../services/aiService';
 
 // Discord embed field values are capped at 1024 chars
@@ -163,7 +163,7 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Clean-game refinements to check before reaching for weak ones: Roshan never taken despite the player's team holding kill/tower momentum (Aegis would have de-risked the close-out); a decided game extended for extra farm instead of ending; a power-spike window (item timing fact) not converted into a tower or objective shortly after.
 
 ## Length Budget
-- Whole-match mode: write a complete but compact recap that fits one Discord embed. Use 2 sentences for narrative, draft/laning, items/damage, and map control; use exactly 2 keyMistakes unless the third is truly decisive.
+- Whole-match mode: write a complete but compact recap that fits one Discord embed. Use 2 sentences for narrative, draft/laning, items/damage, and map control; use 1-2 keyMistakes based on real evidence. In clean stomps, prefer one role-valid refinement over forced blame.
 - Personal coaching mode: you may be more detailed, especially in keyMistakes and whatToImprove, but stay focused on the target player. Use 1-3 keyMistakes based on how many real mistakes MATCH_FACTS supports.
 - Do not list every stat that appears in MATCH_FACTS. Pick the facts that explain the result.
 
@@ -209,7 +209,7 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 keyMistakes: {
                     type: 'array',
-                    description: 'The 2-3 biggest mistakes ranked by game impact. Each mistake must be role-valid for the player it names per the role-signal facts; never flag role-normal behavior such as ward counts for farm-priority 1-2 players or CS for farm-priority 4-5 players.',
+                    description: 'The 1-2 biggest real mistakes or role-valid refinements ranked by game impact. Do not force blame in clean stomps. Each entry must be role-valid for the player it names per the role-signal facts; never flag role-normal behavior such as ward counts for farm-priority 1-2 players or CS for farm-priority 4-5 players.',
                     items: {
                         type: 'object',
                         properties: {
@@ -300,7 +300,11 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
 };
 
 function stripEvidenceMarkers(text: string): string {
-    return normalizeDisplayMarkdown(text.replace(/\s*\[F\d+\]/g, '').replace(/\s{2,}/g, ' ').trim());
+    return normalizeDisplayMarkdown(text
+        .replace(/[ \t]*\[F\d+\]/g, '')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+\n/g, '\n')
+        .trim());
 }
 
 function normalizeDisplayMarkdown(text: string): string {
@@ -444,27 +448,83 @@ function formatAnalysis(data: any, matchId: number, model: string, source: strin
         : [makeEmbed(first)];
 }
 
-async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], context?: string) {
+type AnalysisConversationSeed = {
+    analysisId: number;
+    matchId: number;
+    steamId?: string | null;
+    mode: AnalysisMode;
+    structuredJson: any;
+    factPrompt?: string | null;
+};
+
+function renderedTextFromEmbed(embed: EmbedBuilder): string {
+    const data = embed.toJSON();
+    const fields = (data.fields || [])
+        .map((field) => `${field.name}\n${field.value}`)
+        .join('\n\n');
+    return [
+        data.title ? `TITLE: ${data.title}` : '',
+        data.description ? `BODY:\n${data.description}` : '',
+        fields ? `FIELDS:\n${fields}` : '',
+        data.footer?.text ? `FOOTER: ${data.footer.text}` : '',
+    ].filter(Boolean).join('\n\n');
+}
+
+function buildAnalysisConversationContext(seed: {
+    structuredJson: any;
+    factPrompt?: string | null;
+    renderedPages?: string[];
+}): string {
+    const rendered = seed.renderedPages?.length
+        ? `RENDERED_ANALYSIS:\n${seed.renderedPages.map((page, index) => `--- Page ${index + 1} ---\n${page}`).join('\n\n')}`
+        : '';
+    const structured = `STRUCTURED_ANALYSIS:\n${JSON.stringify(seed.structuredJson, null, 2)}`;
+    return [
+        seed.factPrompt ? `MATCH_FACTS_PROMPT:\n${seed.factPrompt}` : '',
+        rendered,
+        structured,
+    ].filter(Boolean).join('\n\n');
+}
+
+async function sendAnalysisEmbeds(message: Message, embeds: EmbedBuilder[], seed?: AnalysisConversationSeed) {
     if (!embeds.length) return null;
     const [first, ...rest] = embeds;
+    const renderedPages = embeds.map(renderedTextFromEmbed);
+    const context = seed
+        ? buildAnalysisConversationContext({ structuredJson: seed.structuredJson, factPrompt: seed.factPrompt, renderedPages })
+        : undefined;
+    const register = (messageId: string) => {
+        if (!seed || !context) return;
+        registerAnalysisConversation(messageId, context, {
+            analysisId: seed.analysisId,
+            matchId: seed.matchId,
+            steamId: seed.steamId ?? null,
+            mode: seed.mode,
+        });
+    };
+    const persist = (messageId: string, pageIndex: number) => {
+        if (!seed) return;
+        coachingDbService.saveAnalysisMessage({
+            messageId,
+            analysisId: seed.analysisId,
+            pageNumber: pageIndex + 1,
+            steamId: seed.steamId ?? null,
+            mode: seed.mode,
+            renderedText: renderedPages[pageIndex],
+        });
+    };
+
     const reply = await message.reply({ embeds: [first] });
-    if (context) {
-        registerAnalysisConversation(reply.id, context);
-    }
-    for (const embed of rest) {
+    persist(reply.id, 0);
+    register(reply.id);
+    for (const [index, embed] of rest.entries()) {
         const sent = await safeSend(message.channel, { embeds: [embed] });
-        if (context && sent?.id) {
-            registerAnalysisConversation(sent.id, context);
+        if (sent?.id) {
+            persist(sent.id, index + 1);
+            register(sent.id);
         }
     }
     return reply;
-}
-
-function buildStoredAnalysisConversationContext(cached: { structuredJson: any; factPrompt?: string | null }): string {
-    const structured = `STRUCTURED_ANALYSIS:\n${JSON.stringify(cached.structuredJson, null, 2)}`;
-    return cached.factPrompt
-        ? `MATCH_FACTS_PROMPT:\n${cached.factPrompt}\n\n${structured}`
-        : structured;
 }
 
 const BOT_OWNER_ID = '78168838910246912';
@@ -534,7 +594,14 @@ export async function analyze(message: Message, args: string[]) {
                 cached: true,
                 showModel: message.author.id === BOT_OWNER_ID,
             });
-            return sendAnalysisEmbeds(message, embeds, buildStoredAnalysisConversationContext(cached));
+            return sendAnalysisEmbeds(message, embeds, {
+                analysisId: cached.id,
+                matchId,
+                steamId: cached.steamId,
+                mode: cached.mode,
+                structuredJson: cached.structuredJson,
+                factPrompt: cached.factPrompt,
+            });
         }
     }
 
@@ -633,7 +700,14 @@ export async function analyze(message: Message, args: string[]) {
                             cached: true,
                             showModel: message.author.id === BOT_OWNER_ID,
                         });
-                        return sendAnalysisEmbeds(message, embeds, buildStoredAnalysisConversationContext(cached));
+                        return sendAnalysisEmbeds(message, embeds, {
+                            analysisId: cached.id,
+                            matchId,
+                            steamId: cached.steamId,
+                            mode: cached.mode,
+                            structuredJson: cached.structuredJson,
+                            factPrompt: cached.factPrompt,
+                        });
                     }
                 }
             }
@@ -872,7 +946,7 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
 
         const source = useStratz ? 'Stratz' : 'OpenDota';
         const analysisMode = resolvedFocusPlayer ? 'player' : 'match';
-        coachingDbService.saveAnalysis({
+        const analysisId = coachingDbService.saveAnalysis({
             matchId,
             steamId: analysisMode === 'player' ? resolvedFocusSteamId ?? null : null,
             mode: analysisMode,
@@ -901,7 +975,14 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
             focusPlayer: resolvedFocusPlayer || focusPlayerQuery || undefined,
             showModel: message.author.id === BOT_OWNER_ID,
         });
-        await sendAnalysisEmbeds(message, embeds, `MATCH_FACTS_PROMPT:\n${prompt}\n\nSTRUCTURED_ANALYSIS:\n${JSON.stringify(analysisData, null, 2)}`);
+        await sendAnalysisEmbeds(message, embeds, {
+            analysisId,
+            matchId,
+            steamId: analysisMode === 'player' ? resolvedFocusSteamId ?? null : null,
+            mode: analysisMode,
+            structuredJson: analysisData,
+            factPrompt: prompt,
+        });
     } catch (error: any) {
         logger.error('Error in analyze command:', error);
         const reason = error?.message?.includes('HTTP 402')
@@ -2024,9 +2105,9 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
     if (focusPlayerLabel) {
         addFact('focus', `Personal coaching mode target: ${focusPlayerLabel}. Prioritize this player's choices, deaths, item timings, damage, objectives, and counterfactual improvements.`);
         if (focusSteamId) {
-            const notes = coachingDbService.getRecentPlayerNotes(focusSteamId, 5);
+            const notes = coachingDbService.getRecentPlayerNotes(focusSteamId, 10);
             if (notes.length) {
-                addFact('playerNotes', `Player-provided context notes for ${focusPlayerLabel}; treat as claims from the player, not API facts: ${notes.map((note) => `${note.matchId ? `match #${note.matchId}: ` : ''}${note.text}`).join(' | ')}.`);
+                addFact('playerNotes', `Recent user-provided context notes from the last 30 days for ${focusPlayerLabel}; treat as claims from the player, not API facts: ${notes.map((note) => `user-provided claim${note.matchId ? ` for match #${note.matchId}` : ''}: "${note.text}"`).join(' | ')}.`);
             }
         }
     }
@@ -2349,7 +2430,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         : '';
     const lengthRules = focusPlayerLabel
         ? `\nLength target:\n- Personal coaching mode can be richer than the default recap, but stay under two Discord embeds.\n- Use 1-3 keyMistakes based on actual evidence. Keep each claim and fix to one compact sentence.\n`
-        : `\nLength target:\n- Whole-match recap must fit one Discord embed.\n- Use exactly 2 keyMistakes unless a third is essential to explain the result.\n- Keep every section concise: usually 2 sentences, with no stat listing unless it explains the game.\n`;
+        : `\nLength target:\n- Whole-match recap must fit one Discord embed.\n- Use 1-2 keyMistakes or role-valid refinements based on real evidence; do not manufacture blame in clean stomps.\n- Keep every section concise: usually 2 sentences, with no stat listing unless it explains the game.\n`;
 
     const isTurbo = gameModeLabel.toLowerCase().includes('turbo');
     const modeContext = isTurbo
