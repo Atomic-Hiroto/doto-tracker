@@ -11,3 +11,4 @@ export const COACHING_DB_FILE = process.env.COACHING_DB_FILE || 'coaching.sqlite
 export const CHECK_INTERVAL = parseInt(process.env.CHECK_INTERVAL || '1200000', 10);
 export const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 export const STRATZ_API_KEY = process.env.STRATZ_API_KEY;
+export const BOT_OWNER_ID = process.env.BOT_OWNER_ID || '78168838910246912';

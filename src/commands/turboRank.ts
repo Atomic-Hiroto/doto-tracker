@@ -8,8 +8,19 @@ import { fetchStratzPlayerProfile } from '../services/stratzClient';
 import { TurboRankObservation } from '../models/TurboRank';
 import { UserDataService } from '../services/userDataService';
 import { logger } from '../services/loggerService';
+import { ProcessConstants } from '../constants';
 
-const BOT_OWNER_ID = '78168838910246912';
+const BULK_CALIBRATE_SUBCOMMANDS = new Set([
+  'calibrateall',
+  'calibrate-all',
+  'calibrate_all',
+  'recalibrateall',
+  'recalibrate-all',
+  'recalibrate_all',
+  'recalc-all',
+  'recalc_all',
+  'caliball',
+]);
 
 /**
  * +turborank [@user | steamId]   — view hidden turbo rank estimate
@@ -28,7 +39,10 @@ export async function turboRank(
   if (subcommand === 'all' || subcommand === 'leaderboard' || subcommand === 'lb') {
     return turboRankAll(message);
   }
-  if (subcommand === 'calibrateall' || subcommand === 'calibrate-all' || subcommand === 'recalibrateall' || subcommand === 'recalc-all') {
+  if (
+    (subcommand && BULK_CALIBRATE_SUBCOMMANDS.has(subcommand))
+    || ((subcommand === 'calibrate' || subcommand === 'recalc' || subcommand === 'recalibrate') && args[1]?.toLowerCase() === 'all')
+  ) {
     return turboRankCalibrateAll(message, userDataService);
   }
   if (subcommand === 'calibrate' || subcommand === 'recalc') {
@@ -407,82 +421,115 @@ function getBulkCalibrationTargets(userDataService: UserDataService): BulkRankTa
 // ── Bulk Calibrate ───────────────────────────────────────────────────────────
 
 async function turboRankCalibrateAll(message: Message, userDataService: UserDataService) {
-  if (message.author.id !== BOT_OWNER_ID) {
+  if (message.author.id !== ProcessConstants.BOT_OWNER_ID) {
     return message.reply('❌ Only the bot owner can bulk recalibrate Turbo ranks.');
   }
 
-  const targets = getBulkCalibrationTargets(userDataService);
-  if (targets.length === 0) {
-    return message.reply('No registered or manually calibrated players found to recalibrate.');
-  }
+  let progressMsg: Message | null = null;
 
-  const progressMsg = await message.reply(
-    `🔮 Bulk recalibrating Turbo ranks for **${targets.length}** players...\n` +
-    `Includes registered users and Steam-ID-only manual calibrations. This can take several minutes.`,
-  );
+  try {
+    const targets = getBulkCalibrationTargets(userDataService);
+    if (targets.length === 0) {
+      return message.reply('No registered or manually calibrated players found to recalibrate.');
+    }
 
-  const successes: Array<{ target: BulkRankTarget; medal: string; confidence: number }> = [];
-  const failures: BulkRankTarget[] = [];
+    logger.info(`Bulk Turbo rank recalibration requested by ${message.author.tag} (${message.author.id}) for ${targets.length} players`);
 
-  for (let i = 0; i < targets.length; i++) {
-    const target = targets[i];
-    await progressMsg.edit(
-      `🔮 Bulk recalibrating Turbo ranks... **${i + 1}/${targets.length}**\n` +
-      `Now: **${target.name}** (${target.steamId}, ${target.source})\n` +
-      `Done: ${successes.length} ok, ${failures.length} failed`,
-    ).catch(() => {});
-
-    const estimate = await turboRankService.calibratePlayer(
-      target.discordId,
-      target.steamId,
-      100,
+    progressMsg = await message.reply(
+      `🔮 Bulk recalibrating Turbo ranks for **${targets.length}** players...\n` +
+      `Includes registered users and Steam-ID-only manual calibrations. This can take several minutes.`,
     );
 
-    const refreshedName = turboRankService.getSteamName(target.steamId);
-    if (refreshedName) target.name = refreshedName;
+    const successes: Array<{ target: BulkRankTarget; medal: string; confidence: number }> = [];
+    const failures: BulkRankTarget[] = [];
 
-    if (estimate) {
-      successes.push({ target, medal: estimate.medal, confidence: estimate.confidence });
-    } else {
-      failures.push(target);
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i];
+      let lastProgressEdit = 0;
+      await progressMsg.edit(
+        `🔮 Bulk recalibrating Turbo ranks... **${i + 1}/${targets.length}**\n` +
+        `Now: **${target.name}** (${target.steamId}, ${target.source})\n` +
+        `Done: ${successes.length} ok, ${failures.length} failed`,
+      ).catch(() => {});
+
+      try {
+        logger.info(`Bulk Turbo rank recalibrating ${target.name} (${target.steamId}, ${target.source})`);
+        const estimate = await turboRankService.calibratePlayer(
+          target.discordId,
+          target.steamId,
+          100,
+          (fetched, total, phase) => {
+            const now = Date.now();
+            if (now - lastProgressEdit < 5000 && fetched !== total) return;
+            lastProgressEdit = now;
+            let text =
+              `🔮 Bulk recalibrating Turbo ranks... **${i + 1}/${targets.length}**\n` +
+              `Now: **${target.name}** (${target.steamId}, ${target.source})\n` +
+              `Status: ${phase ?? 'fetching match history'}`;
+            if (total > 0) text += ` (${fetched}/${total})`;
+            text += `\nDone: ${successes.length} ok, ${failures.length} failed`;
+            progressMsg?.edit(text).catch(() => {});
+          },
+        );
+
+        const refreshedName = turboRankService.getSteamName(target.steamId);
+        if (refreshedName) target.name = refreshedName;
+
+        if (estimate) {
+          successes.push({ target, medal: estimate.medal, confidence: estimate.confidence });
+        } else {
+          failures.push(target);
+        }
+      } catch (error) {
+        logger.error(`Bulk Turbo rank calibration failed for ${target.name} (${target.steamId})`, error);
+        failures.push(target);
+      }
+
+      if (i < targets.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
     }
 
-    if (i < targets.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
+    const topLines = successes
+      .slice()
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 10)
+      .map((entry) => `**${entry.target.name}** — ${entry.medal}, ${entry.confidence}% conf`);
+    const failureLines = failures.map((target) => `**${target.name}** (${target.steamId})`);
+
+    const embed = new EmbedBuilder()
+      .setColor(failures.length ? '#eab308' : '#10b981')
+      .setTitle('✅ Bulk Turbo Rank Recalibration Complete')
+      .setDescription(`Processed **${targets.length}** players: **${successes.length}** updated, **${failures.length}** failed.`)
+      .addFields(
+        {
+          name: 'Updated',
+          value: fitLines(topLines, '_No successful calibrations_'),
+          inline: false,
+        },
+        {
+          name: 'Failed / No Usable Rank Data',
+          value: fitLines(failureLines, '_None_'),
+          inline: false,
+        },
+        {
+          name: 'Next',
+          value: 'Run `+turbostudy` to compare the refreshed estimates, or `+turborank audit <steamId>` for suspicious outliers.',
+          inline: false,
+        },
+      )
+      .setTimestamp();
+
+    await progressMsg.edit({ content: null, embeds: [embed] });
+  } catch (error) {
+    logger.error('Error in turborank calibrateall:', error);
+    const text = '❌ Bulk recalibration failed before it could finish. Check the bot logs, then try again.';
+    if (progressMsg) {
+      await progressMsg.edit(text).catch(() => message.reply(text).catch(() => {}));
+    } else {
+      await message.reply(text).catch(() => {});
     }
   }
-
-  const topLines = successes
-    .slice()
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 10)
-    .map((entry) => `**${entry.target.name}** — ${entry.medal}, ${entry.confidence}% conf`);
-  const failureLines = failures.map((target) => `**${target.name}** (${target.steamId})`);
-
-  const embed = new EmbedBuilder()
-    .setColor(failures.length ? '#eab308' : '#10b981')
-    .setTitle('✅ Bulk Turbo Rank Recalibration Complete')
-    .setDescription(`Processed **${targets.length}** players: **${successes.length}** updated, **${failures.length}** failed.`)
-    .addFields(
-      {
-        name: 'Updated',
-        value: fitLines(topLines, '_No successful calibrations_'),
-        inline: false,
-      },
-      {
-        name: 'Failed / No Usable Rank Data',
-        value: fitLines(failureLines, '_None_'),
-        inline: false,
-      },
-      {
-        name: 'Next',
-        value: 'Run `+turbostudy` to compare the refreshed estimates, or `+turborank audit <steamId>` for suspicious outliers.',
-        inline: false,
-      },
-    )
-    .setTimestamp();
-
-  await progressMsg.edit({ content: null, embeds: [embed] });
 }
 
 // ── Audit ────────────────────────────────────────────────────────────────────
