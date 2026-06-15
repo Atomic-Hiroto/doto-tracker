@@ -1,8 +1,7 @@
 import { Message, EmbedBuilder } from 'discord.js';
 import {
   turboRankService,
-  tierToEmoji,
-  mmrToEmoji,
+  rankTierToMedal,
   mmrToMedal,
 } from '../services/turboRankService';
 import { fetchStratzPlayerProfile } from '../services/stratzClient';
@@ -90,14 +89,10 @@ async function resolveTarget(
 
 // ── Shared rendering helpers ─────────────────────────────────────────────────
 
-/** "2 Immortal · 1 Divine · 4 unranked" composition from an observation's tiers. */
-function lobbyComposition(obs: TurboRankObservation): string {
+/** "2 Immortal, 1 Divine, 6 unranked" — readable lobby make-up. Null if tiers weren't stored. */
+function lobbyComposition(obs: TurboRankObservation): string | null {
   const tiers = obs.tiers ?? []; // older persisted observations may lack tiers
-  const visible = obs.visibleRanks ?? tiers.length;
-  if (tiers.length === 0) {
-    // Fall back to the lobby-average medal if per-player tiers weren't stored.
-    return `avg ${mmrToEmoji(obs.lobbyMMR)} ${mmrToMedal(obs.lobbyMMR).medal}`;
-  }
+  if (tiers.length === 0) return null;
   const counts = new Map<number, number>(); // tier int → count
   for (const t of tiers) {
     const tier = Math.floor(t / 10);
@@ -106,19 +101,19 @@ function lobbyComposition(obs: TurboRankObservation): string {
   const parts: string[] = [];
   for (const tier of [8, 7, 6, 5, 4, 3, 2, 1]) {
     const c = counts.get(tier);
-    if (c) parts.push(`${c}× ${tierToEmoji(tier)}`);
+    if (c) parts.push(`${c} ${rankTierToMedal(tier * 10)}`);
   }
-  const unranked = 9 - visible;
-  if (unranked > 0) parts.push(`${unranked}× ⚫`);
-  return parts.join(' ');
+  const unranked = 9 - (obs.visibleRanks ?? tiers.length);
+  if (unranked > 0) parts.push(`${unranked} unranked`);
+  return parts.join(', ');
 }
 
 function confidenceBar(confidence: number): string {
   const filled = Math.round(confidence / 10);
-  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+  return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
 }
 
-function recentProofMatches(observations: TurboRankObservation[], partyFallback: boolean): string {
+function recentLobbies(observations: TurboRankObservation[], partyFallback: boolean): string {
   const targets = partyFallback ? observations : observations.filter(o => o.partySize === 1);
   const recent = targets.sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
   if (recent.length === 0) return '_No games on record_';
@@ -126,59 +121,59 @@ function recentProofMatches(observations: TurboRankObservation[], partyFallback:
     .map(o => {
       const date = new Date(o.timestamp * 1000).toLocaleDateString();
       const type = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
-      const outcome = o.won === true ? '🟩 W' : o.won === false ? '🟥 L' : '';
-      return `${mmrToEmoji(o.lobbyMMR)} **${lobbyComposition(o)}**\n   └ ${type}${outcome ? ` · ${outcome}` : ''} · ${date}`;
+      const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '—';
+      const head = `**${mmrToMedal(o.lobbyMMR).medal}** lobby · ${type} · ${outcome} · ${date}`;
+      const comp = lobbyComposition(o);
+      return comp ? `${head}\n${comp}` : head;
     })
-    .join('\n');
+    .join('\n\n');
 }
 
 const HOW_TEXT =
-  'Estimated from the **actual ranked medals of the other players** in your lobbies.\n' +
-  '• **Solo only:** only your solo-queue games count — party games distort it, so they\'re ignored unless you *never* solo.\n' +
-  '• **Recency (60-day half-life):** recent games prove current skill and weigh the most.\n' +
-  '• **Lobby completeness:** lobbies where more players are ranked count more than thin, mostly-unranked ones.';
+  'Dota balances every lobby around your hidden MMR, so the average rank of the other 9 players is a read on your own level. To keep that read accurate, each game is weighted by how trustworthy it is:\n' +
+  '• **Solo only** — party games match you to your *stack\'s* average, not yours, so they\'re excluded entirely (used only if you never solo-queue).\n' +
+  '• **Recency** — a 60-day half-life means recent games dominate, so the estimate tracks your *current* form rather than old skill.\n' +
+  '• **Lobby completeness** — a lobby where 8 players are ranked is far more reliable than one with 3, so thin, mostly-unranked lobbies are down-weighted instead of trusted blindly.\n' +
+  '• **Honest uncertainty** — the confidence % and likely range scale with how much solid data backs the estimate, so a 3-game read shows low confidence and a wider range rather than false precision.';
 
 function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typeof turboRankService.getEstimateBySteamId>>, observations: TurboRankObservation[]): EmbedBuilder {
-  const confEmoji = estimate.confidence >= 80 ? '🟢' : estimate.confidence >= 50 ? '🟡' : '🔴';
   const confLabel = estimate.confidence >= 80 ? 'High confidence'
     : estimate.confidence >= 50 ? 'Moderate confidence'
     : 'Low confidence — needs more solo games';
 
+  const desc: string[] = [`**${estimate.medal}**  ·  est. ~${estimate.estimatedMMR} MMR`];
+  if (estimate.rangeLow && estimate.rangeHigh && estimate.rangeLow !== estimate.rangeHigh) {
+    desc.push(`Likely range: ${estimate.rangeLow} – ${estimate.rangeHigh}`);
+  }
+  if (estimate.partyFallback) {
+    desc.push('_Party-based estimate — this player never solo-queues, so it may be skewed by stackmates._');
+  }
+
   const embed = new EmbedBuilder()
     .setColor(estimate.confidence >= 50 ? '#8b5cf6' : '#6b7280')
-    .setTitle(`${tierToEmoji(estimate.medalTier)} Hidden Turbo Rank — ${target.name}`)
-    .setDescription(
-      `# ${estimate.medal}\n` +
-      `est. **~${estimate.estimatedMMR} MMR**` +
-      (estimate.rangeLow && estimate.rangeHigh ? `  ·  range **${estimate.rangeLow} – ${estimate.rangeHigh}**` : '') +
-      (estimate.partyFallback ? '\n⚠️ _Party-based estimate — this player never solo-queues, so it may be skewed by stackmates._' : ''),
-    )
+    .setTitle(`🔮 Hidden Turbo Rank — ${target.name}`)
+    .setDescription(desc.join('\n'))
     .addFields(
       {
-        name: `${confEmoji} Confidence`,
-        value: `\`${confidenceBar(estimate.confidence)}\` ${estimate.confidence}%\n${confLabel}`,
+        name: 'Confidence',
+        value: `${confidenceBar(estimate.confidence)}  ${estimate.confidence}% · ${confLabel}`,
         inline: false,
       },
       {
-        name: '📊 Sample',
+        name: 'Based on',
         value: estimate.partyFallback
-          ? `**${estimate.sampleSize}** party matches (no solo games found)`
-          : `**${estimate.soloSampleSize}** solo matches used`,
-        inline: true,
-      },
-      {
-        name: '⚖️ Effective weight',
-        value: `${estimate.effectiveSample.toFixed(1)}`,
-        inline: true,
-      },
-      {
-        name: estimate.partyFallback ? '🎯 Recent lobbies' : '🎯 Recent solo lobbies (proof)',
-        value: recentProofMatches(observations, estimate.partyFallback),
+          ? `${estimate.sampleSize} party matches (no solo games found)`
+          : `${estimate.soloSampleSize} solo matches`,
         inline: false,
       },
-      { name: '🧠 How is this calculated?', value: HOW_TEXT, inline: false },
+      {
+        name: estimate.partyFallback ? 'Recent Lobbies' : 'Recent Solo Lobbies',
+        value: recentLobbies(observations, estimate.partyFallback),
+        inline: false,
+      },
+      { name: 'How this is calculated', value: HOW_TEXT, inline: false },
     )
-    .setFooter({ text: `updated ${new Date(estimate.lastUpdated).toLocaleDateString()} • medals: ⚫ unranked` })
+    .setFooter({ text: `updated ${new Date(estimate.lastUpdated).toLocaleDateString()}` })
     .setTimestamp();
 
   if (target.avatarURL) embed.setThumbnail(target.avatarURL);
@@ -275,8 +270,8 @@ async function turboRankAll(message: Message) {
       const fallback = estimate.partyFallback ? ' · _party-est_' : '';
 
       lines.push(
-        `${place} ${tierToEmoji(estimate.medalTier)} **${name}** — ${estimate.medal}\n` +
-        ` ~${estimate.estimatedMMR} MMR · \`${confidenceBar(estimate.confidence)}\` ${estimate.confidence}% ${conf} · ${estimate.soloSampleSize} solo${fallback}`,
+        `${place}  **${name}** — ${estimate.medal}\n` +
+        ` ~${estimate.estimatedMMR} MMR · ${estimate.confidence}% conf · ${estimate.soloSampleSize} solo${fallback}`,
       );
     }
 

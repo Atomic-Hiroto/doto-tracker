@@ -527,7 +527,7 @@ export class TurboRankService {
   static formatShort(estimate: TurboRankEstimate | null): string {
     if (!estimate) return '🔮 Uncalibrated';
     const conf = estimate.confidence >= 70 ? '✅' : estimate.confidence >= 40 ? '⚠️' : '❓';
-    return `${tierToEmoji(estimate.medalTier)} ${estimate.medal}${starString(estimate.stars)} ${conf}`;
+    return `🔮 ${estimate.medal}${starString(estimate.stars)} ${conf}`;
   }
 
   /** Detailed string for the turborank command. */
