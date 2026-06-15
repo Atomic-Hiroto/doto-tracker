@@ -312,12 +312,13 @@ export async function waitForStratzParse(
   return false;
 }
 
-// ── Turbo rank calibration query ────────────────────────────────────────────
+// ── Turbo rank calibration query ─────────────────────────────────────────────
 
+/** Fetches turbo matches with support for take, skip, and startDateTime date filtering. */
 const PLAYER_TURBO_MATCHES_QUERY = `
-query ($steamAccountId: Long!, $take: Int!) {
+query ($steamAccountId: Long!, $take: Int!, $skip: Int, $startDateTime: Long) {
   player(steamAccountId: $steamAccountId) {
-    matches(request: { gameModeIds: [23], take: $take, orderBy: DESC }) {
+    matches(request: { gameModeIds: [23], take: $take, skip: $skip, orderBy: DESC, startDateTime: $startDateTime }) {
       id
       startDateTime
       averageRank
@@ -334,12 +335,13 @@ query ($steamAccountId: Long!, $take: Int!) {
 `;
 
 /**
- * Fetches a player's recent Turbo matches with rank data for all 10 players.
- * Used for retroactive turbo rank calibration.
+ * Fetches a player's Turbo matches with rank data, supporting pagination and date filter.
  */
-export async function fetchPlayerTurboMatchesWithRanks(
+export async function fetchPlayerTurboMatches(
   steamAccountId: number,
-  take = 50,
+  take = 100,
+  skip = 0,
+  startDateTime: number | null = null,
 ): Promise<any[]> {
   if (!STRATZ_API_KEY) {
     logger.warn('STRATZ_API_KEY not set — cannot fetch turbo rank data');
@@ -351,7 +353,7 @@ export async function fetchPlayerTurboMatchesWithRanks(
       STRATZ_GQL,
       {
         query: PLAYER_TURBO_MATCHES_QUERY,
-        variables: { steamAccountId, take },
+        variables: { steamAccountId, take, skip, startDateTime },
       },
       {
         headers: {
@@ -382,3 +384,4 @@ export async function fetchPlayerTurboMatchesWithRanks(
     return [];
   }
 }
+

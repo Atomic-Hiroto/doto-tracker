@@ -128,20 +128,22 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
     }
 
     const progressMsg = await message.reply(
-      '🔮 Calibrating your hidden Turbo rank… fetching up to 50 recent Turbo matches.\n' +
-      'This may take a minute.',
+      '🔮 Calibrating your hidden Turbo rank…\n' +
+      'Analyzing match history, this may take a minute.',
     );
 
     const estimate = await turboRankService.calibratePlayer(
       message.author.id,
       user.steamId,
-      50,
-      (fetched, total) => {
-        // Update progress every 10 matches
-        if (fetched % 10 === 0 || fetched === total) {
-          progressMsg.edit(
-            `🔮 Calibrating… processed ${fetched}/${total} matches.`,
-          ).catch(() => {});
+      100, // Fetch up to 100 matches overall if we fall back
+      (fetched, total, phase) => {
+        // Update progress dynamically
+        if (fetched === 0 || fetched % 10 === 0 || fetched === total) {
+          let text = `🔮 Calibrating… **${phase}**`;
+          if (total > 0) {
+            text += ` (${fetched}/${total})`;
+          }
+          progressMsg.edit(text).catch(() => {});
         }
       },
     );
