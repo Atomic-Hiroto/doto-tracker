@@ -75,6 +75,11 @@ async function turboRankView(message: Message, userDataService: UserDataService)
           .join('\n')
       : '_No solo games on record_';
 
+    const isSoloOnly = estimate.soloSampleSize >= 5;
+    const sampleValue = isSoloOnly
+      ? `**${estimate.soloSampleSize}** solo matches used\n*(ignored ${estimate.sampleSize - estimate.soloSampleSize} party)*`
+      : `**${estimate.sampleSize}** matches\n*(${estimate.soloSampleSize} solo, ${estimate.sampleSize - estimate.soloSampleSize} party)*`;
+
     const embed = new EmbedBuilder()
       .setColor(estimate.confidence >= 50 ? '#8b5cf6' : '#6b7280')
       .setTitle(`🔮 Hidden Turbo Rank — ${target.username}`)
@@ -89,8 +94,8 @@ async function turboRankView(message: Message, userDataService: UserDataService)
           inline: true,
         },
         {
-          name: '📊 Sample Size',
-          value: `${estimate.sampleSize} matches (${estimate.soloSampleSize} solo)`,
+          name: '📊 Matches Used',
+          value: sampleValue,
           inline: true,
         },
         {
@@ -130,24 +135,29 @@ async function turboRankView(message: Message, userDataService: UserDataService)
 
 async function turboRankCalibrate(message: Message, userDataService: UserDataService) {
   try {
-    const user = userDataService.getUserByDiscordId(message.author.id);
+    const target = message.mentions.users.first() || message.author;
+    const user = userDataService.getUserByDiscordId(target.id);
     if (!user) {
-      return message.reply("You're not registered. Use `+register <steamId>` first.");
+      return message.reply(
+        target.id === message.author.id
+          ? "You're not registered. Use `+register <steamId>` first."
+          : `**${target.username}** is not registered.`,
+      );
     }
 
     const progressMsg = await message.reply(
-      '🔮 Calibrating your hidden Turbo rank…\n' +
+      `🔮 Calibrating hidden Turbo rank for **${target.username}**…\n` +
       'Analyzing match history, this may take a minute.',
     );
 
     const estimate = await turboRankService.calibratePlayer(
-      message.author.id,
+      target.id,
       user.steamId,
       100, // Fetch up to 100 matches overall if we fall back
       (fetched, total, phase) => {
         // Update progress dynamically
         if (fetched === 0 || fetched % 10 === 0 || fetched === total) {
-          let text = `🔮 Calibrating… **${phase}**`;
+          let text = `🔮 Calibrating **${target.username}**… **${phase}**`;
           if (total > 0) {
             text += ` (${fetched}/${total})`;
           }
@@ -158,7 +168,7 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
 
     if (!estimate) {
       return progressMsg.edit(
-        '❌ Calibration failed — not enough matches with visible rank data. ' +
+        `❌ Calibration failed for **${target.username}** — not enough matches with visible rank data. ` +
         'Play more Turbo matches (especially solo queue) and try again.',
       );
     }
@@ -166,16 +176,21 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
     const confEmoji =
       estimate.confidence >= 80 ? '🟢' : estimate.confidence >= 50 ? '🟡' : '🔴';
 
+    const isSoloOnly = estimate.soloSampleSize >= 5;
+    const matchesUsedDesc = isSoloOnly
+      ? `Based on **${estimate.soloSampleSize}** solo matches *(ignored ${estimate.sampleSize - estimate.soloSampleSize} party matches to prevent stack distortion)*`
+      : `Based on **${estimate.sampleSize}** matches *(${estimate.soloSampleSize} solo, ${estimate.sampleSize - estimate.soloSampleSize} party)*`;
+
     const embed = new EmbedBuilder()
       .setColor('#8b5cf6')
-      .setTitle(`🔮 Calibration Complete — ${message.author.username}`)
+      .setTitle(`🔮 Calibration Complete — ${target.username}`)
       .setDescription(
         `**Hidden Turbo Rank: ${estimate.medal}**\n` +
         `Estimated MMR: **~${estimate.estimatedMMR}**\n\n` +
-        `${confEmoji} ${estimate.confidence}% confidence\n` +
-        `Based on ${estimate.sampleSize} matches (${estimate.soloSampleSize} solo)`,
+        `${confEmoji} **${estimate.confidence}% confidence**\n` +
+        `${matchesUsedDesc}`,
       )
-      .setThumbnail(message.author.displayAvatarURL())
+      .setThumbnail(target.displayAvatarURL())
       .addFields(
         {
           name: '🧠 How is this calculated?',
