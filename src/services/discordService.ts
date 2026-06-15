@@ -10,11 +10,21 @@ export async function handleMessage(message: Message, userDataService: UserDataS
   // Ignore bot messages
   if (message.author.bot) return;
 
+  const rawParts = message.content.startsWith(ProcessConstants.PREFIX)
+    ? message.content.slice(ProcessConstants.PREFIX.length).trim().split(/\s+/).filter(Boolean)
+    : [];
+  const rawCmd = rawParts[0]?.toLowerCase() ?? null;
+  const rawSubcommand = rawParts[1]?.toLowerCase();
+  const isOwnerBulkTurboRank =
+    message.author.id === ProcessConstants.BOT_OWNER_ID
+    && rawCmd === Commands.TURBO_RANK
+    && (
+      ['calibrateall', 'calibrate-all', 'calibrate_all', 'recalibrateall', 'recalibrate-all', 'recalibrate_all', 'recalc-all', 'recalc_all', 'caliball'].includes(rawSubcommand ?? '')
+      || ((rawSubcommand === 'calibrate' || rawSubcommand === 'recalc' || rawSubcommand === 'recalibrate') && rawParts[2]?.toLowerCase() === 'all')
+    );
+
   // Allow setchannel/unsetchannel to work in any channel so the owner can manage the allowlist
-  const rawCmd = message.content.startsWith(ProcessConstants.PREFIX)
-    ? message.content.slice(ProcessConstants.PREFIX.length).trim().split(/\s+/)[0]?.toLowerCase()
-    : null;
-  const isChannelAdmin = rawCmd === Commands.SET_CHANNEL || rawCmd === Commands.UNSET_CHANNEL;
+  const isChannelAdmin = rawCmd === Commands.SET_CHANNEL || rawCmd === Commands.UNSET_CHANNEL || isOwnerBulkTurboRank;
 
   // Block all activity in non-allowed channels (except channel admin commands)
   if (!isChannelAdmin && !channelDataService.isAllowed(message.channel.id)) return;
@@ -38,7 +48,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
 
   if (!message.content.startsWith(ProcessConstants.PREFIX)) return;
 
-  const args: string[] = message.content.slice(ProcessConstants.PREFIX.length).trim().split(ProcessConstants.SPACE);
+  const args: string[] = rawParts;
   const command: string | undefined = args.shift()?.toLowerCase();
 
   logger.debug(`Command ${command} called with args ${args} by author ${message.author}`);
