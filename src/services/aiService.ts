@@ -6,6 +6,7 @@ import { logger } from './loggerService';
 import { ChannelDataService } from './channelDataService';
 import { safeTyping } from '../utils/channelHelpers';
 import { coachingDbService, type AnalysisMode, type StoredAnalysis } from './coachingDbService';
+import type { UserDataService } from './userDataService';
 
 const conversationHistory = new Map<string, any[]>();
 type AnalysisThread = {
@@ -305,14 +306,28 @@ function looksLikePlayerCorrection(text: string): boolean {
   return /\b(actually|btw|for context|to be clear|i was|i'm|im|we were|he was|she was|they were|was support|was core|pos\s*[1-5]|position\s*[1-5]|roaming|lagged|disconnected|tilted)\b/i.test(text);
 }
 
-function maybeStorePlayerNote(thread: AnalysisThread, prompt: string) {
-  if (!looksLikePlayerCorrection(prompt)) return;
-  if (!thread.matchId) return;
+// Persist a free-text "player note" that gets re-injected into future analyses/coach
+// reports — but ONLY when the author is annotating their OWN game (or is the owner).
+// This closes the cross-user poisoning hole: previously anyone could reply to anyone's
+// analysis with a correction-shaped sentence and bias that player's future coaching.
+// Returns true if a note was stored (so the caller can confirm it to the user).
+function maybeStorePlayerNote(message: Message, thread: AnalysisThread, prompt: string, userDataService?: UserDataService): boolean {
+  if (!looksLikePlayerCorrection(prompt)) return false;
+  if (!thread.matchId) return false;
+  // Notes only make sense in player (focus) mode, where we know whose profile they attach to.
+  if (thread.mode !== 'player' || !thread.steamId) return false;
+
+  const authorSteamId = userDataService?.getUserByDiscordId(message.author.id)?.steamId;
+  const isOwner = message.author.id === BOT_OWNER_ID;
+  const isSelfAnnotation = !!authorSteamId && String(authorSteamId) === String(thread.steamId);
+  if (!isOwner && !isSelfAnnotation) return false;
+
   coachingDbService.savePlayerNote({
-    steamId: thread.mode === 'player' ? thread.steamId ?? null : null,
+    steamId: thread.steamId,
     matchId: thread.matchId,
     text: prompt,
   });
+  return true;
 }
 
 function renderedTextFromDiscordEmbed(embed: any): string {
@@ -409,7 +424,7 @@ ${renderedPages.map((page, index) => `--- Page ${index + 1} ---\n${page}`).join(
   }
 }
 
-export async function handleAnalysisFollowUp(message: Message): Promise<boolean> {
+export async function handleAnalysisFollowUp(message: Message, userDataService?: UserDataService): Promise<boolean> {
   const messageId = message.reference?.messageId;
   if (!messageId) return false;
   let thread = analysisConversationHistory.get(messageId);
@@ -436,14 +451,17 @@ export async function handleAnalysisFollowUp(message: Message): Promise<boolean>
   if (!prompt) return false;
   safeTyping(message.channel);
   thread.messages.push({ role: 'user', content: `${displayNameFor(message)}: ${prompt}` });
-  maybeStorePlayerNote(thread, prompt);
+  const noteStored = maybeStorePlayerNote(message, thread, prompt, userDataService);
+  if (noteStored) {
+    message.react('📝').catch(() => { /* ignore */ });
+  }
 
   const system = `You are doto-chan answering follow-up questions about one Dota 2 analysis.
 Use only the seeded MATCH_FACTS, RENDERED_ANALYSIS, and structured analysis for match-specific claims.
 The sources are not the same thing: MATCH_FACTS is private background data the user has never seen; RENDERED_ANALYSIS is the exact write-up the user saw in Discord; STRUCTURED_ANALYSIS is parsed write-up data.
 If the user asks what the analysis said, mentioned, or covered, answer only from RENDERED_ANALYSIS when present, otherwise from the structured analysis write-up. You may bring in MATCH_FACTS details, but label them as match data that was not in the write-up (e.g. "the write-up only named you in MVP, but the match data shows..."). Never claim the write-up said something it did not.
 If the answer is not in the context, say the analysis data does not contain it.
-You may use general Dota knowledge for item or strategy recommendations, but phrase those as recommendations, never as things that happened in this match.
+When the seeded context includes item descriptions, treat those as the authoritative current-patch behavior and never contradict them. For items without a provided description you may use general Dota knowledge, but item mechanics change between patches, so do not assert a specific mechanic you are unsure of — describe the item's general role instead. You may give item/strategy recommendations, but phrase those as recommendations, never as things that happened in this match. Never compute a new time gap yourself; if the analysis does not state an interval, describe the timings separately.
 Answer directly. Do not use openers like "Great question" or address the user by name unless needed for clarity.
 Be concise, factual, and cite evidence ids when present. Never use internal pipeline terms like "leverage-ranked", "MATCH_FACTS", "RENDERED_ANALYSIS", "fact sheet", or "structured analysis" in replies; say "the analysis" or "the match data" instead.`;
 

@@ -20,7 +20,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
   if (!isChannelAdmin && !channelDataService.isAllowed(message.channel.id)) return;
 
   if (!message.content.startsWith(ProcessConstants.PREFIX) && message.reference?.messageId) {
-    if (await handleAnalysisFollowUp(message)) return;
+    if (await handleAnalysisFollowUp(message, userDataService)) return;
   }
 
   // Check if the bot was mentioned
