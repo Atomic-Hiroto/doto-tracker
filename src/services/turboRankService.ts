@@ -182,6 +182,9 @@ export class TurboRankService {
     const lobbyMMR = mmrValues.reduce((s, v) => s + v, 0) / mmrValues.length;
     const partyWeight = PARTY_WEIGHTS[Math.min(partySize, 5)] ?? 0.1;
 
+    const isRadiant = trackedPlayer.player_slot < 128;
+    const won = typeof matchData.radiant_win === 'boolean' ? (isRadiant === matchData.radiant_win) : undefined;
+
     return {
       matchId: matchData.match_id,
       lobbyMMR: Math.round(lobbyMMR),
@@ -189,6 +192,7 @@ export class TurboRankService {
       partyWeight,
       timestamp: matchData.start_time || Math.floor(Date.now() / 1000),
       visibleRanks: mmrValues.length,
+      won,
     };
   }
 
@@ -234,6 +238,8 @@ export class TurboRankService {
     const lobbyMMR = mmrValues.reduce((s, v) => s + v, 0) / mmrValues.length;
     const partyWeight = PARTY_WEIGHTS[Math.min(partySize, 5)] ?? 0.1;
 
+    const won = typeof match.didRadiantWin === 'boolean' ? (trackedPlayer.isRadiant === match.didRadiantWin) : undefined;
+
     return {
       matchId: match.id,
       lobbyMMR: Math.round(lobbyMMR),
@@ -241,6 +247,7 @@ export class TurboRankService {
       partyWeight,
       timestamp: match.startDateTime || Math.floor(Date.now() / 1000),
       visibleRanks: mmrValues.length,
+      won,
     };
   }
 
@@ -286,7 +293,14 @@ export class TurboRankService {
       
       // If we are filtering to solo-only, party weight is always 1.0 (since they are solo)
       const w = (useSoloOnly ? 1.0 : obs.partyWeight) * recencyWeight;
-      weightedSum += obs.lobbyMMR * w;
+      
+      // Factoring wins/losses into account:
+      // A win against a lobby suggests player's skill is higher (+100 MMR)
+      // A loss suggests their skill is lower (-100 MMR)
+      const winAdjustment = obs.won === true ? 100 : (obs.won === false ? -100 : 0);
+      const adjustedLobbyMMR = obs.lobbyMMR + winAdjustment;
+
+      weightedSum += adjustedLobbyMMR * w;
       totalWeight += w;
     }
 

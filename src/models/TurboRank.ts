@@ -11,6 +11,8 @@ export interface TurboRankObservation {
   timestamp: number;
   /** How many of the 10 players had visible rank data. */
   visibleRanks: number;
+  /** Whether the tracked player won the match. */
+  won?: boolean;
 }
 
 /** Computed rank estimate for a player. */
