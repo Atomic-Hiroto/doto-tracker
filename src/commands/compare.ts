@@ -99,7 +99,7 @@ export async function compare(
         const fmtSide = (p: SidePlayer, heroLines: string[]) => [
             `📊 **${(p.wr * 100).toFixed(1)}%** WR · ${p.totalGames.toLocaleString()} games`,
             `⭐ ${p.rank}`,
-            `⚡ Turbo: ${p.turboRating != null ? `**${p.turboRating}**` : '—'}`,
+            `⚡ Turbo score: ${p.turboRating != null ? `**${p.turboRating}**` : '—'}`,
             heroLines.length ? `🦸 ${heroLines.join('\n     ')}` : '🦸 No hero data',
         ].join('\n');
 
@@ -119,7 +119,7 @@ export async function compare(
             const wr = ((pairing.wins / games) * 100).toFixed(1);
             embed.addFields({
                 name: '🔗 As a Duo (turbo)',
-                value: `**${games}** games together · **${wr}%** WR (${pairing.wins}W/${pairing.losses}L) · rating ${pairing.rating}`,
+                value: `**${games}** games together · **${wr}%** WR (${pairing.wins}W/${pairing.losses}L) · score ${pairing.rating}`,
                 inline: false,
             });
         } else {
@@ -131,15 +131,15 @@ export async function compare(
         let verdict: string;
         if (p1.turboRating != null && p2.turboRating != null && p1.turboRating !== p2.turboRating) {
             const higher = p1.turboRating > p2.turboRating ? p1 : p2;
-            verdict = `On the shared **turbo ladder**, **${higher.name}** rates higher (${p1.turboRating} vs ${p2.turboRating}). Win rates aren't directly comparable — they're relative to each player's own rank bracket.`;
+            verdict = `On the shared **turbo score** (conservative win-rate estimate), **${higher.name}** is ahead (${p1.turboRating} vs ${p2.turboRating}). Win rates aren't directly comparable — they're relative to each player's own rank bracket.`;
         } else if (p1.turboRating != null && p2.turboRating != null) {
-            verdict = `Dead even on the turbo ladder (${p1.turboRating} each). Win rates sit in different brackets, so they're not directly comparable.`;
+            verdict = `Dead even on turbo score (${p1.turboRating} each). Win rates sit in different brackets, so they're not directly comparable.`;
         } else {
             verdict = 'Not enough shared turbo data to rank them fairly — win rates are relative to each player\'s own rank bracket, so they aren\'t directly comparable.';
         }
         embed.addFields({ name: '🧭 Read', value: verdict, inline: false });
 
-        embed.setFooter({ text: 'Turbo rating is the only shared ladder • WR is bracket-relative' }).setTimestamp();
+        embed.setFooter({ text: 'Turbo score is the only shared ladder • WR is bracket-relative' }).setTimestamp();
 
         await message.reply({ embeds: [embed] });
     } catch (error) {

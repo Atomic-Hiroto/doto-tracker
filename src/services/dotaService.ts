@@ -1,4 +1,4 @@
-import { Client, TextBasedChannel, EmbedBuilder } from 'discord.js';
+import { Client, TextBasedChannel, EmbedBuilder, AttachmentBuilder } from 'discord.js';
 import axios from 'axios';
 import { Match } from '../models/Match';
 import { UserDataService } from './userDataService';
@@ -10,6 +10,71 @@ import { opendotaClient } from './apiClient';
 import { dotaDataService } from './dotaDataService';
 import { safeSend } from '../utils/channelHelpers';
 import { gradeActivePlanForMatch } from './coachingPlanService';
+import { renderScoreboardFromMatch } from './chartService';
+import { achievementService } from './achievementService';
+import { streakService } from './streakService';
+
+const GAME_MODE_NAMES: Record<number, string> = {
+  0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
+  4: 'Single Draft', 5: 'All Random', 8: 'Reverse Captains Mode',
+  16: 'Captains Draft', 22: 'All Draft', 23: 'Turbo', 24: 'Mutation',
+};
+
+// Records streak/achievement progress for one registered player on a newly
+// detected match, and announces any milestones. Safe against double counting
+// because the caller only enqueues a match once (via user.lastCheckedMatch).
+async function trackMatchForPlayer(
+  player: { discordId: string; steamId: string; match: any },
+  channel: TextBasedChannel,
+  userDataService: UserDataService,
+  turboStatsService?: TurboStatsService,
+) {
+  try {
+    const summary = player.match;
+    const isRadiant = summary.player_slot < 128;
+    const won = (isRadiant && summary.radiant_win) || (!isRadiant && !summary.radiant_win);
+
+    // Persisted tracked-match counter for the count-based achievements.
+    let totalMatches: number | undefined;
+    const user = userDataService.getUserByDiscordId(player.discordId);
+    if (user) {
+      user.matchesTracked = (user.matchesTracked || 0) + 1;
+      userDataService.updateUser(user);
+      totalMatches = user.matchesTracked;
+    }
+
+    const streakEvent = streakService.updateStreak(player.discordId, won);
+    const streakInfo = streakService.getStreakInfo(player.discordId);
+    const winStreak = streakInfo && streakInfo.current > 0 ? streakInfo.current : 0;
+
+    // Turbo stats were already updated for this match (turbo games) before this call.
+    const turbo = turboStatsService?.getPlayerStats(player.discordId);
+
+    const username = (await channel.client.users.fetch(player.discordId)).username;
+    const newAchievements = achievementService.checkAchievements(player.discordId, {
+      kills: summary.kills,
+      deaths: summary.deaths,
+      assists: summary.assists,
+      won,
+      matchId: summary.match_id,
+      isRadiant,
+      gameMode: summary.game_mode,
+      totalMatches,
+      winStreak,
+      turboRating: turbo?.rating,
+      turboGames: turbo ? turbo.wins + turbo.losses : undefined,
+    });
+
+    if (streakEvent) {
+      await safeSend(channel, streakService.getStreakAnnouncement(streakEvent, username));
+    }
+    for (const ach of newAchievements) {
+      await safeSend(channel, `🎉 **Achievement Unlocked!** ${ach.emoji}\n**${username}** earned **${ach.name}** — *${ach.description}*`);
+    }
+  } catch (error) {
+    logger.error(`Error tracking match for ${player.discordId}:`, error);
+  }
+}
 
 export async function checkNewMatches(client: Client, userDataService: UserDataService, turboStatsService?: TurboStatsService) {
   const guild = client.guilds.cache.first();
@@ -63,10 +128,16 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
       }
     }
 
+    // Streaks + achievements run after turbo stats so score-based achievements
+    // see this match's updated turbo numbers.
+    for (const player of players) {
+      await trackMatchForPlayer(player, channel, userDataService, turboStatsService);
+    }
+
     if (players.length > 1) {
       await displayCombinedScoreboard(matchId, players, channel);
     } else {
-      await displayMatchStats(players[0].discordId, players[0].match, channel);
+      await displayMatchStats(players[0].discordId, players[0].steamId, players[0].match, channel);
     }
   }
 
@@ -79,7 +150,7 @@ export async function getRecentStats(discordId: string, steamId: string, channel
     const recentMatch = response.data[0];
 
     if (recentMatch) {
-      await displayMatchStats(discordId, recentMatch, channel);
+      await displayMatchStats(discordId, steamId, recentMatch, channel);
     } else {
       await safeSend(channel, 'No recent matches found for the user.');
     }
@@ -89,13 +160,16 @@ export async function getRecentStats(discordId: string, steamId: string, channel
   }
 }
 
-async function displayMatchStats(discordId: string, match: Match, channel: TextBasedChannel) {
+async function displayMatchStats(discordId: string, steamId: string, match: Match, channel: TextBasedChannel) {
   try {
     const user = await channel.client.users.fetch(discordId);
     const heroName = await dotaDataService.getHeroName(match.hero_id);
 
     const detailedMatch = await opendotaClient.get(`/matches/${match.match_id}`);
-    const playerData = detailedMatch.data.players.find((p: { hero_id: number; player_slot: number }) => p.hero_id === match.hero_id);
+    // Match by account_id first; hero_id alone is wrong when both teams ran the
+    // same hero (mirror) — it could surface an enemy's stats as yours.
+    const playerData = detailedMatch.data.players.find((p: any) => String(p.account_id) === String(steamId))
+      || detailedMatch.data.players.find((p: { hero_id: number; player_slot: number }) => p.hero_id === match.hero_id);
     const isRadiant = playerData.player_slot < 128;
     const didWin = (isRadiant && detailedMatch.data.radiant_win) || (!isRadiant && !detailedMatch.data.radiant_win);
 
@@ -122,8 +196,7 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
         { name: 'Team', value: isRadiant ? 'Radiant' : 'Dire', inline: true },
         { name: 'Match ID', value: `[${match.match_id}](https://www.opendota.com/matches/${match.match_id})`, inline: true },
         { name: 'Duration', value: formatDuration(detailedMatch.data.duration), inline: true },
-        { name: 'Game Mode', value: (detailedMatch.data.game_mode || 'Unknown').toString(), inline: true },
-        { name: 'Region', value: (detailedMatch.data.region || 'Unknown').toString(), inline: true }
+        { name: 'Game Mode', value: GAME_MODE_NAMES[Number(detailedMatch.data.game_mode)] || `Mode ${detailedMatch.data.game_mode ?? '?'}`, inline: true }
       )
       .setTimestamp(new Date(detailedMatch.data.start_time * 1000))
       .setFooter({ text: `Match played on ${new Date(detailedMatch.data.start_time * 1000).toLocaleString()}` })
@@ -132,7 +205,18 @@ async function displayMatchStats(discordId: string, match: Match, channel: TextB
       embed.addFields({ name: 'Coach Check-In', value: planGrade.slice(0, 1024), inline: false });
     }
 
-    await safeSend(channel, { embeds: [embed] });
+    // Attach the full visual scoreboard so the auto-feed matches the on-demand
+    // Details view instead of being a plain text card.
+    const files: AttachmentBuilder[] = [];
+    try {
+      const board = await renderScoreboardFromMatch(detailedMatch.data, [steamId]);
+      files.push(new AttachmentBuilder(board, { name: 'scoreboard.png' }));
+      embed.setImage('attachment://scoreboard.png');
+    } catch (boardError) {
+      logger.error(`Failed to render scoreboard for match ${match.match_id}:`, boardError);
+    }
+
+    await safeSend(channel, { embeds: [embed], files });
   } catch (error) {
     logger.error('Error sending match stats:', error);
     safeSend(channel, 'An error occurred while fetching the detailed match stats. Please try again later.');
@@ -144,26 +228,11 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
     const response = await opendotaClient.get<Match>(`/matches/${matchId}`);
     const match = response.data;
 
-    const radiantPlayers = match.players.filter(p => p.isRadiant);
-    const direPlayers = match.players.filter(p => !p.isRadiant);
-
-    const formatPlayer = async (player: Match['players'][number]) => {
-      const isRegisteredUser = players.some(p => p.steamId === (player.account_id ? player.account_id.toString() : null));
-      const heroName = await dotaDataService.getHeroName(player.hero_id);
-      const playerName = isRegisteredUser ? `**${player.personaname || 'Unknown'}**` : (player.personaname || 'Unknown');
-      return `${playerName} (${heroName}): ${player.kills}/${player.deaths}/${player.assists} | LH: ${player.last_hits} | GPM: ${player.gold_per_min} | XPM: ${player.xp_per_min}`;
-    };
-
-    const radiantScoreboard = await Promise.all(radiantPlayers.map(formatPlayer));
-    const direScoreboard = await Promise.all(direPlayers.map(formatPlayer));
     const planGrades = (await Promise.all(players.map(async (tracked) => {
       const player = match.players.find(p => tracked.steamId === (p.account_id ? p.account_id.toString() : null));
       if (!player) return null;
       return gradeActivePlanForMatch(tracked.steamId, matchId, match);
     }))).filter((line): line is string => !!line);
-
-    const radiantKills = radiantPlayers.reduce((sum, player) => sum + (player.kills || 0), 0);
-    const direKills = direPlayers.reduce((sum, player) => sum + (player.kills || 0), 0);
 
     const registeredPlayerWon = match.players.some(player =>
       players.some(p => p.steamId === (player.account_id ? player.account_id.toString() : null)) &&
@@ -174,13 +243,6 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
       .setColor(registeredPlayerWon ? '#66bb6a' : '#ef5350')
       .setTitle(`Match ${matchId} Summary`)
       .setDescription(`**${match.radiant_win ? 'Radiant' : 'Dire'} Victory**`)
-      .addFields(
-        { name: 'Radiant', value: radiantScoreboard.join('\n'), inline: false },
-        { name: 'Dire', value: direScoreboard.join('\n'), inline: false },
-        { name: 'Score', value: `Radiant ${radiantKills} - ${direKills} Dire`, inline: true },
-        { name: 'Duration', value: formatDuration(match.duration), inline: true },
-        { name: 'Game Mode', value: match.game_mode?.toString() || 'Unknown', inline: true }
-      )
       .setTimestamp(new Date(match.start_time * 1000))
       .setFooter({ text: `Match ID: ${matchId}` })
       .setURL(`https://www.opendota.com/matches/${matchId}`);
@@ -188,7 +250,17 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
       embed.addFields({ name: 'Coach Check-In', value: planGrades.join('\n').slice(0, 1024), inline: false });
     }
 
-    await safeSend(channel, { embeds: [embed] });
+    // Visual scoreboard (header carries score/duration/mode); registered players highlighted.
+    const files: AttachmentBuilder[] = [];
+    try {
+      const board = await renderScoreboardFromMatch(match, players.map(p => p.steamId));
+      files.push(new AttachmentBuilder(board, { name: 'scoreboard.png' }));
+      embed.setImage('attachment://scoreboard.png');
+    } catch (boardError) {
+      logger.error(`Failed to render combined scoreboard for match ${matchId}:`, boardError);
+    }
+
+    await safeSend(channel, { embeds: [embed], files });
   } catch (error) {
     logger.error('Error displaying combined scoreboard:', error);
     await safeSend(channel, 'An error occurred while fetching the combined scoreboard. Please try again later.');
@@ -397,7 +469,7 @@ export async function getDetailedMatchData(matchId: number) {
           level: p.level ?? 0,
           buybacks: p.buyback_count ?? 0,
           buybackLog: (p.buyback_log || []).map((bb: any) => ({ time: bb.time })),
-          
+
           // Map Control
           obsPlaced: p.obs_placed ?? 0,
           senPlaced: p.sen_placed ?? 0,
@@ -405,10 +477,10 @@ export async function getDetailedMatchData(matchId: number) {
           senLog: (p.sen_log || []).map((l: any) => l.time),
           obsKilled: p.observer_kills ?? 0,
           senKilled: p.sentry_kills ?? 0,
-          
+
           runePickups: p.rune_pickups ?? 0,
           runesLog: (p.runes_log || []).map((r: any) => ({ time: r.time, key: r.key })),
-          
+
           benchmarks,
           permanentBuffs: (p.permanent_buffs || []).map((b: any) => b.name || `buff_${b.permanent_buff}`),
 
@@ -592,12 +664,12 @@ export async function getDetailedMatchData(matchId: number) {
         // Collect deaths by checking hero_id in players who died
         const radiantDeaths: string[] = [];
         const direDeaths: string[] = [];
-        
+
         for (const p of (fight.players || [])) {
           if (p.deaths > 0) {
             const playerInfo = match.players.find((mp: any) => mp.player_slot === p.player_slot);
             if (playerInfo) {
-               const name = playerInfo.hero_id 
+               const name = playerInfo.hero_id
                  ? dotaDataService.getHeroById(playerInfo.hero_id)?.localized_name || `Hero ${playerInfo.hero_id}`
                  : `Slot ${p.player_slot}`;
                if (p.player_slot < 128) {
@@ -612,7 +684,7 @@ export async function getDetailedMatchData(matchId: number) {
         const countKills = (p: any) =>
           Object.values(p?.killed || {}).reduce((s: number, v: any) => s + (typeof v === 'number' ? v : 0), 0);
         const players = fight.players || [];
-        
+
         return {
           start: fight.start,
           end: fight.end,
