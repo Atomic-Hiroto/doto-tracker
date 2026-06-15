@@ -43,15 +43,15 @@ const MMR_PER_STAR = 77;
 /** Party-size to observation weight. Solo = strongest signal.
  *  Spread is aggressive: a single solo game is worth 50× a 5-stack game. */
 const PARTY_WEIGHTS: Record<number, number> = {
-  1: 1.0,
-  2: 0.45,
-  3: 0.15,
-  4: 0.05,
-  5: 0.02,
+  1: 1.0,      // Solo: 100% weight
+  2: 0.1,      // Duo: 10% weight
+  3: 0.02,     // Trio: 2% weight
+  4: 0.005,    // 4-stack: 0.5% weight
+  5: 0.001,    // 5-stack: 0.1% weight
 };
 
 /** Half-life for recency decay in days. */
-const RECENCY_HALF_LIFE_DAYS = 45;
+const RECENCY_HALF_LIFE_DAYS = 60;
 
 /** Minimum visible ranks in a match to consider it a useful observation. */
 const MIN_VISIBLE_RANKS = 3;
