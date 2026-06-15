@@ -51,7 +51,7 @@ const PARTY_WEIGHTS: Record<number, number> = {
 };
 
 /** Half-life for recency decay in days. */
-const RECENCY_HALF_LIFE_DAYS = 90;
+const RECENCY_HALF_LIFE_DAYS = 45;
 
 /** Minimum visible ranks in a match to consider it a useful observation. */
 const MIN_VISIBLE_RANKS = 3;
@@ -270,17 +270,24 @@ export class TurboRankService {
     const now = Date.now() / 1000; // current time in seconds
     const decayLambda = Math.LN2 / (RECENCY_HALF_LIFE_DAYS * 86400);
 
+    // Filter to solo games
+    const soloObs = observations.filter(o => o.partySize === 1);
+    
+    // Prioritize solo games if we have a reasonable sample (>= 5)
+    const useSoloOnly = soloObs.length >= 5;
+    const targets = useSoloOnly ? soloObs : observations;
+
     let weightedSum = 0;
     let totalWeight = 0;
-    let soloCount = 0;
 
-    for (const obs of observations) {
+    for (const obs of targets) {
       const ageSec = Math.max(0, now - obs.timestamp);
       const recencyWeight = Math.exp(-decayLambda * ageSec);
-      const w = obs.partyWeight * recencyWeight;
+      
+      // If we are filtering to solo-only, party weight is always 1.0 (since they are solo)
+      const w = (useSoloOnly ? 1.0 : obs.partyWeight) * recencyWeight;
       weightedSum += obs.lobbyMMR * w;
       totalWeight += w;
-      if (obs.partySize === 1) soloCount++;
     }
 
     if (totalWeight === 0) return null;
@@ -288,12 +295,17 @@ export class TurboRankService {
     const estimatedMMR = Math.round(weightedSum / totalWeight);
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
-    // Confidence is a blend of effective sample weight AND solo-game presence.
-    // Without solo games, confidence is capped at 35% because party games
-    // heavily distort the signal.
-    const rawConf = Math.min(100, Math.round((totalWeight / 15) * 100));
-    const soloBonus = soloCount >= 10 ? 1.0 : soloCount >= 5 ? 0.85 : soloCount >= 1 ? 0.6 : 0.35;
-    const confidence = Math.min(100, Math.round(rawConf * soloBonus));
+    // Confidence calculation
+    const totalSoloCount = soloObs.length;
+    let confidence = 0;
+    if (useSoloOnly) {
+      // 10+ solo games with decay weight provides 100% confidence
+      confidence = Math.min(100, Math.round((totalWeight / 6) * 100));
+    } else {
+      const rawConf = Math.min(100, Math.round((totalWeight / 15) * 100));
+      const soloBonus = totalSoloCount >= 10 ? 1.0 : totalSoloCount >= 5 ? 0.85 : totalSoloCount >= 1 ? 0.6 : 0.35;
+      confidence = Math.min(100, Math.round(rawConf * soloBonus));
+    }
 
     return {
       estimatedMMR,
@@ -302,7 +314,7 @@ export class TurboRankService {
       medal,
       confidence,
       sampleSize: observations.length,
-      soloSampleSize: soloCount,
+      soloSampleSize: totalSoloCount,
       effectiveSample: Math.round(totalWeight * 100) / 100,
       lastUpdated: Date.now(),
     };
