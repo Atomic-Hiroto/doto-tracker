@@ -14,9 +14,18 @@ import { registerAnalysisConversation } from '../services/aiService';
 import { UserDataService } from '../services/userDataService';
 import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
 import { renderMatchAdvantageGraph } from '../services/chartService';
+import { describeItemFunction } from '../constants/itemSemantics';
+import { referenceService } from '../services/referenceService';
 
 // Discord embed field values are capped at 1024 chars
-const trunc = (s: string, max = 1024) => s.length > max ? s.slice(0, max - 1) + '…' : s;
+const trunc = (s: string, max = 1024) => {
+    if (s.length <= max) return s;
+    let cut = max - 1;
+    // Don't slice between a UTF-16 surrogate pair (e.g. mid-emoji), which renders as � �.
+    const code = s.charCodeAt(cut - 1);
+    if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+    return s.slice(0, cut) + '…';
+};
 const ANALYZE_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 async function callAI(
@@ -96,10 +105,12 @@ const COACH_SYSTEM = `You are doto-chan, a Dota 2 expert who is a spicy but genu
 const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a MATCH_FACTS JSON object produced by deterministic code. Your job is to explain those facts, not to invent new ones.
 
 ## Source Of Truth
-- Use ONLY facts from MATCH_FACTS.
-- Major claims must include at least one evidence id like [F12].
+There are two different kinds of knowledge. Keep them separate:
+- MATCH EVENTS, stats, timings, draft, who-did-what: use ONLY MATCH_FACTS. Never assert that something happened in this match unless a fact states it. If data is absent or marked unavailable, say it is unavailable instead of guessing.
+- GAME-RULE SEMANTICS (what an item or ability fundamentally does): when an ITEM_SEMANTICS fact is present, it is the authoritative current-patch description — use it and never contradict it. For items without a semantics fact you may use your own general Dota knowledge, but do not assert a specific mechanic you are unsure of; describe the item's general role instead. Item mechanics change between patches, so prefer the provided descriptions over memory.
+- STRATEGY / META JUDGMENTS ("good timing", "strong into that lineup", patch tier): allowed only as a general recommendation, never stated as a fact about this match, and never as a match event.
+- Major claims about match events must include at least one evidence id like [F12]. Item-function statements drawn from semantics do not need an [F] id but must be correct.
 - Do not mention a player, hero, item, objective, timing, draft event, or stat unless it appears in MATCH_FACTS.
-- If data is absent or marked unavailable, say it is unavailable instead of guessing.
 
 ## Reasoning Style
 - Write like an analyst, not a stat dump: every section should explain what the facts meant for how the game played out.
@@ -123,7 +134,8 @@ const ANALYZE_SYSTEM = `You are doto-chan, a Dota 2 match analyst. You receive a
 - Do not invent structure language like "all structures" or "24 structures"; use the exact tower/barracks wording from MATCH_FACTS.
 - Do not mix tower clusters with barracks or Ancient damage. Objective-cluster facts are towers only unless they explicitly say otherwise.
 - Do not say "Ancient fell" or name a final building unless MATCH_FACTS explicitly contains that building event.
-- Do not use web/meta knowledge for match facts. Patch context may explain broad strategic context only if MATCH_FACTS.patchContext is present.
+- Do not use outside knowledge to invent MATCH EVENTS (do not claim a fight, pickoff, smoke, Roshan, or rotation happened unless a fact says so). You MAY use general knowledge of what items/abilities do. Patch/meta judgments stay as recommendations only.
+- Never compute a new duration, gap, or "N seconds before/after" yourself. If a fact already states a gap or relationship, cite it; otherwise describe the two timings separately and do not assert the interval between them.
 - Economy and XP time-series facts are team differentials only when the fact explicitly says "differential"; never treat them as team totals or individual net worth.
 - If an item timing is before an event, do not claim the team lacked that item for the event; critique death, positioning, cooldown, usage, or lateness relative to earlier pressure instead.
 - When OpenDota teamfight facts exist, prefer those exact fight windows over inferred death-cluster language.
@@ -317,6 +329,72 @@ function normalizeDisplayMarkdown(text: string): string {
         return value.replace(/\*\*/g, '');
     }
     return value;
+}
+
+function cleanCitationsInString(text: string, validIds: Set<string>, phantom: string[]): string {
+    return text
+        .replace(/\[F\d+\]/g, (marker) => {
+            const id = marker.replace(/[[\]]/g, '');
+            if (validIds.has(id)) return marker;
+            phantom.push(id);
+            return '';
+        })
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/[ \t]+([.,;])/g, '$1');
+}
+
+// Walks the structured analysis and removes any [F#] citation (in prose or in an
+// `evidence` array) that does not correspond to a real fact id. Returns the phantom
+// ids found. Mutates in place so both the saved and rendered output are clean.
+function pruneInvalidCitations(node: any, validIds: Set<string>, phantom: string[] = []): string[] {
+    if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i++) {
+            if (typeof node[i] === 'string') node[i] = cleanCitationsInString(node[i], validIds, phantom);
+            else pruneInvalidCitations(node[i], validIds, phantom);
+        }
+    } else if (node && typeof node === 'object') {
+        for (const key of Object.keys(node)) {
+            if (key === 'evidence' && Array.isArray(node[key])) {
+                node[key] = node[key].filter((id: any) => {
+                    const norm = String(id).replace(/[[\]]/g, '');
+                    if (validIds.has(norm)) return true;
+                    phantom.push(norm);
+                    return false;
+                });
+            } else if (typeof node[key] === 'string') {
+                node[key] = cleanCitationsInString(node[key], validIds, phantom);
+            } else {
+                pruneInvalidCitations(node[key], validIds, phantom);
+            }
+        }
+    }
+    return phantom;
+}
+
+// Detection-only: flag bolded names in the output that never appear anywhere in the
+// fact sheet (garbled/cross-team names like "PewPewPew's counterparts"). Logged, not mutated.
+function auditPlayerNames(data: any, prompt: string): string[] {
+    const factsBlob = prompt.toLowerCase();
+    const bad: string[] = [];
+    const visit = (node: any) => {
+        if (typeof node === 'string') {
+            for (const match of node.matchAll(/\*\*(.+?)\*\*/g)) {
+                const name = match[1]
+                    .replace(/^(MVP|LVP|Honorable Mention)\s*:?\s*/i, '')
+                    .split('—')[0]
+                    .split(' - ')[0]
+                    .trim();
+                if (name.length < 3) continue;
+                if (!factsBlob.includes(name.toLowerCase())) bad.push(name);
+            }
+        } else if (Array.isArray(node)) {
+            node.forEach(visit);
+        } else if (node && typeof node === 'object') {
+            Object.values(node).forEach(visit);
+        }
+    };
+    visit(data);
+    return bad;
 }
 
 function maybeStripEvidence(value: any, debug: boolean): any {
@@ -650,6 +728,7 @@ export async function analyze(message: Message, args: string[], userDataService?
         let prompt = '';
         let resolvedFocusPlayer: string | undefined;
         let resolvedFocusSteamId: string | undefined;
+        let validFactIds: Set<string> | null = null;
         if (useStratz) {
             let stratzMatch = await fetchStratzMatch(matchId);
 
@@ -722,6 +801,10 @@ export async function analyze(message: Message, args: string[], userDataService?
                 prompt = built.prompt;
                 resolvedFocusPlayer = built.focusPlayerLabel;
                 resolvedFocusSteamId = built.focusSteamId;
+                validFactIds = new Set(built.factIds);
+                if (focusPlayerQuery && !resolvedFocusPlayer) {
+                    await message.reply(`⚠️ I couldn't find a player matching "${focusPlayerQuery}" in match #${matchId}, so here's the whole-match analysis instead. Check the spelling, or use their exact in-game name / hero.`);
+                }
                 if (!forceRedo && resolvedFocusSteamId) {
                     const cached = coachingDbService.getFreshAnalysis({
                         matchId,
@@ -981,6 +1064,19 @@ Analyze this match. Fill each schema field with CONCISE, data-backed analysis. R
                 .setFooter({ text: message.author.id === BOT_OWNER_ID ? `doto-chan coaching • ${useModel}` : 'doto-chan coaching' })
                 .setTimestamp();
             return message.reply({ embeds: [fallbackEmbed] });
+        }
+
+        // Strip phantom evidence ids the model cited but that never existed in the fact sheet,
+        // and log a quality signal. Only runs on the Stratz path, which uses [F#] facts.
+        if (validFactIds) {
+            const phantom = pruneInvalidCitations(analysisData, validFactIds);
+            if (phantom.length) {
+                logger.warn(`[+analyze] Model cited ${phantom.length} non-existent evidence id(s) for match ${matchId}: ${[...new Set(phantom)].join(', ')}`);
+            }
+            const badNames = auditPlayerNames(analysisData, prompt);
+            if (badNames.length) {
+                logger.warn(`[+analyze] Output referenced ${badNames.length} name(s) not in the fact sheet for match ${matchId}: ${[...new Set(badNames)].slice(0, 10).join(', ')}`);
+            }
         }
 
         const source = useStratz ? 'Stratz' : 'OpenDota';
@@ -1365,6 +1461,7 @@ type BuiltAnalyzePrompt = {
     prompt: string;
     focusPlayerLabel?: string;
     focusSteamId?: string;
+    factIds: string[];
 };
 
 function finiteNumber(value: any): number | null {
@@ -1963,13 +2060,26 @@ function formatOpenDotaBenchmarks(odPlayer: any): string[] {
 async function findFocusPlayer(players: any[], query?: string): Promise<any | null> {
     const needle = query?.trim().toLowerCase();
     if (!needle) return null;
+    // Score every player and pick the strongest match, instead of the first substring hit.
+    // Higher score = more specific match. Ties break toward the earlier player slot deterministically.
+    let best: { player: any; score: number } | null = null;
     for (const p of players) {
         const heroName = (p.hero?.displayName || await dotaDataService.getHeroName(p.heroId)).toLowerCase();
         const playerName = String(p.steamAccount?.name || 'Anonymous').toLowerCase();
         const steamId = String(p.steamAccountId || '').toLowerCase();
-        if (playerName.includes(needle) || heroName.includes(needle) || (steamId && steamId === needle)) return p;
+
+        let score = 0;
+        if (steamId && steamId === needle) score = 100;
+        else if (playerName === needle) score = 90;
+        else if (heroName === needle) score = 80;
+        else if (playerName.startsWith(needle)) score = 60;
+        else if (heroName.startsWith(needle)) score = 50;
+        else if (playerName.includes(needle)) score = 30;
+        else if (heroName.includes(needle)) score = 20;
+
+        if (score > 0 && (!best || score > best.score)) best = { player: p, score };
     }
-    return null;
+    return best?.player ?? null;
 }
 
 function eventLeverageScore(time: number, player: any, economyPoints: Array<{ minute: number; value: number }>, towerEvents: TowerDeathEvent[]): number {
@@ -2286,6 +2396,14 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         addFact('teamfight', fact.text, fact.data);
     }
 
+    // Collect item names actually present so we can attach a function glossary (Edit: item semantics).
+    const matchItemNames = new Set<string>();
+    const towerClusterStarts = summarizeTowerClusters(towerEvents).map((cluster) => ({
+        team: cluster.teamLost,
+        start: cluster.start,
+        count: cluster.count,
+    }));
+
     for (const p of players) {
         const heroName = p.hero?.displayName || await dotaDataService.getHeroName(p.heroId);
         const playerName = p.steamAccount?.name || 'Anonymous';
@@ -2379,6 +2497,7 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
 
         const inventory = await resolveFinalInventory(p);
         if (inventory.length) addFact('items', `${playerLabel} final inventory: ${inventory.join(', ')}.`);
+        for (const item of inventory) matchItemNames.add(item);
         const importantPurchases = await resolveImportantPurchases(p);
         if (importantPurchases.length) {
             addFact('items', `${playerLabel} important item timings: ${importantPurchases.map((item) => `${item.item} at ${formatFactTime(item.time)}`).join('; ')}.`, {
@@ -2386,6 +2505,27 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
                 heroName,
                 purchases: importantPurchases,
             });
+            for (const item of importantPurchases) matchItemNames.add(item.item);
+        }
+
+        // Precompute timing gaps for the focus player so the model never does the arithmetic itself.
+        if (isFocus && importantPurchases.length) {
+            const relations: string[] = [];
+            for (const purchase of importantPurchases) {
+                const toEnd = durationSeconds - purchase.time;
+                if (Number.isFinite(toEnd) && toEnd >= 0) {
+                    relations.push(`${purchase.item} at ${formatFactTime(purchase.time)} was ${formatDuration(toEnd)} before game end (${formatFactTime(durationSeconds)})`);
+                }
+                const nextCluster = towerClusterStarts
+                    .filter((cluster) => cluster.start >= purchase.time)
+                    .sort((a, b) => a.start - b.start)[0];
+                if (nextCluster) {
+                    relations.push(`${purchase.item} (${formatFactTime(purchase.time)}) came ${formatDuration(nextCluster.start - purchase.time)} before the next tower cluster (${nextCluster.team} lost ${nextCluster.count}, starting ${formatFactTime(nextCluster.start)})`);
+                }
+            }
+            if (relations.length) {
+                addFact('timingGaps', `${playerLabel} precomputed item-timing relationships (use these exact gaps; do not compute your own): ${relations.join('; ')}.`);
+            }
         }
 
         const buybacks = Number(odPlayer?.buyback_count || 0);
@@ -2442,6 +2582,25 @@ async function buildAnalyzeFactPrompt(matchData: any, odMatch?: any, options: An
         }
     }
 
+    // Item-function reference for items present in this match, sourced from the LIVE
+    // Dota 2 game constants (Valve's own tooltips, refreshed every 24h) — NOT from a
+    // hand-written list, so it stays patch-current and never launders model recall.
+    // This keeps item MEANING inside the fact sheet so the model never has to guess
+    // function from adjacent numbers (the Nullifier-vs-magic-damage error).
+    const semanticsLines: string[] = [];
+    for (const name of matchItemNames) {
+        try {
+            const hit = await referenceService.findItem(name);
+            const description = hit?.item ? describeItemFunction(hit.item) : null;
+            if (description) semanticsLines.push(`${hit!.item.dname || name} — ${description}`);
+        } catch {
+            // Reference lookup is best-effort; a missing item just omits its description.
+        }
+    }
+    if (semanticsLines.length) {
+        addFact('itemSemantics', `Item function reference (sourced from current Dota 2 game constants; these are the authoritative descriptions of what each item actually does in the live patch — use them instead of recalling item behavior from memory): ${semanticsLines.join(' || ')}.`);
+    }
+
     const factSheet = {
         source: 'Stratz + OpenDota merge',
         generatedAt: new Date().toISOString(),
@@ -2492,7 +2651,8 @@ Rules for this response:
 - Major claims need evidence ids like [F12].
 - If a fact is not present, do not mention it.
 - Do not discuss bans unless MATCH_FACTS.draft.reliableDraft is true.
-- Do not use web/meta knowledge for match facts.
+- Do not use outside knowledge to invent match events. You MAY use general knowledge of what items/abilities do; when ITEM_SEMANTICS facts are present, treat them as the authoritative description of item function.
+- Never compute a new gap or "N seconds before/after" yourself; use a stated relationship fact, or describe the two timings separately.
 - You may reason about why the game played out that way, but exact numbers/timings/counts must be copied from facts.
 - Do not calculate new structure totals, damage totals, or approximate objective windows. Use the provided damage and objective-cluster facts.
 - Prefer concrete player, item, timing, objective, and economy facts over generic advice.
@@ -2505,6 +2665,7 @@ MATCH_FACTS:
 ${JSON.stringify(factSheet, null, 2)}`,
         focusPlayerLabel,
         focusSteamId,
+        factIds: facts.map((fact) => fact.id),
     };
 }
 
