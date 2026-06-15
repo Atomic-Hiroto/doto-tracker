@@ -5,6 +5,24 @@ import { achievementService, ACHIEVEMENTS } from '../services/achievementService
 import { logger } from '../services/loggerService';
 import { parseArgs } from '../utils/argParser';
 
+function fitField(lines: string[], emptyText: string): string {
+    if (lines.length === 0) return emptyText;
+
+    const maxLen = 1000;
+    const selected: string[] = [];
+    let used = 0;
+    for (let i = 0; i < lines.length; i++) {
+        const nextLen = lines[i].length + (selected.length > 0 ? 1 : 0);
+        if (used + nextLen > maxLen) {
+            selected.push(`…and ${lines.length - i} more.`);
+            break;
+        }
+        selected.push(lines[i]);
+        used += nextLen;
+    }
+    return selected.join('\n');
+}
+
 export async function achievements(message: Message, args: string[], userDataService: UserDataService) {
     const parsed = parseArgs(args, message);
 
@@ -26,13 +44,13 @@ export async function achievements(message: Message, args: string[], userDataSer
 
         // Unlocked achievements
         const unlockedLines = unlocked.length > 0
-            ? unlocked.map(({ def }) => `${def.emoji} **${def.name}** — *${def.description}*`).join('\n')
+            ? fitField(unlocked.map(({ def }) => `${def.emoji} **${def.name}** — *${def.description}*`), '_No achievements yet — go play some games!_')
             : '_No achievements yet — go play some games!_';
 
         // Locked achievements (show as a teaser)
         const locked = ACHIEVEMENTS.filter(a => !unlockedIds.has(a.id));
         const lockedLines = locked.length > 0
-            ? locked.map(a => `🔒 ~~${a.name}~~ — *${a.description}*`).join('\n')
+            ? fitField(locked.map(a => `🔒 ~~${a.name}~~ — *${a.description}*`), '🎊 All achievements unlocked! You are GOATED!')
             : '🎊 All achievements unlocked! You are GOATED!';
 
         const completionBar = (() => {

@@ -7,6 +7,7 @@ export { gpat, gpatClear } from './gpat';
 export { caow } from './caow';
 export { story } from './story';
 export { turboLeaderboard, turboStats } from './turboLeaderboard';
+export { turboStudy } from './turboStudy';
 export { turboPairings, myTurboPairings } from './turboPairings';
 export { turboRank } from './turboRank';
 export { toggleSharedContext } from './toggleSharedContext';
