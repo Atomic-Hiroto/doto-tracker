@@ -831,28 +831,63 @@ function formatClock(seconds?: number): string {
 
 export interface TurboStudyPoint {
     label: string;
-    x: number;
-    y: number;
+    x: number;            // ranked-medal MMR
+    y: number;            // hidden turbo estimate
     confidence: number;
+    sampleSize?: number;
     partyFallback?: boolean;
     stale?: boolean;
+    outlier?: boolean;
+}
+
+// Medal ladder shared by the turbo-study charts.
+const STUDY_MEDALS = [
+    { name: 'Herald', floor: 0, color: '#8a6d5a' },
+    { name: 'Guardian', floor: 770, color: '#5f9e63' },
+    { name: 'Crusader', floor: 1540, color: '#5a82a8' },
+    { name: 'Archon', floor: 2310, color: '#9070b8' },
+    { name: 'Legend', floor: 3080, color: '#d4b24a' },
+    { name: 'Ancient', floor: 3850, color: '#cf7d36' },
+    { name: 'Divine', floor: 4620, color: '#d65a6e' },
+    { name: 'Immortal', floor: 5420, color: '#e6c84f' },
+];
+const STUDY_TOP_MMR = 6000;
+
+function studyMedalColor(mmr: number): string {
+    let c = STUDY_MEDALS[0].color;
+    for (const m of STUDY_MEDALS) if (mmr >= m.floor) c = m.color;
+    return c;
+}
+
+function studyPointColor(p: { partyFallback?: boolean; stale?: boolean; confidence: number }): string {
+    return p.partyFallback ? '#ef4444' : p.stale ? '#f59e0b' : p.confidence < 50 ? '#9ca3af' : '#a78bfa';
+}
+
+function roundRectPath(ctx: any, x: number, y: number, w: number, h: number, r: number) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
 }
 
 export function renderTurboStudyScatter(
     points: TurboStudyPoint[],
-    opts: { title: string; xLabel: string; yLabel: string },
+    opts: { title: string; xLabel: string; yLabel: string; fit?: { slope: number; intercept: number } },
 ): Buffer {
-    const W = 920;
-    const H = 560;
-    const P = 72;
+    const W = 980;
+    const H = 600;
+    const P = 78;
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
 
-    ctx.fillStyle = '#15151f';
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#181826');
+    bg.addColorStop(1, '#101019');
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = '#2d2d4e';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, W - 2, H - 2);
 
     if (points.length < 2) {
         ctx.fillStyle = '#ffffff';
@@ -862,109 +897,250 @@ export function renderTurboStudyScatter(
         return canvas.toBuffer('image/png');
     }
 
-    const minX = Math.min(...points.map((p) => p.x));
-    const maxX = Math.max(...points.map((p) => p.x));
-    const minY = Math.min(...points.map((p) => p.y));
-    const maxY = Math.max(...points.map((p) => p.y));
-    const low = Math.floor((Math.min(minX, minY) - 250) / 500) * 500;
-    const high = Math.ceil((Math.max(maxX, maxY) + 250) / 500) * 500;
+    const maxVal = Math.max(...points.map((p) => Math.max(p.x, p.y)));
+    const low = 0;
+    const high = Math.ceil((maxVal + 350) / 500) * 500;
     const range = Math.max(1, high - low);
     const plotW = W - P * 2;
     const plotH = H - P * 2;
-
     const sx = (x: number) => P + ((x - low) / range) * plotW;
     const sy = (y: number) => H - P - ((y - low) / range) * plotH;
 
+    // Medal bands (horizontal, keyed to the Turbo / Y axis).
+    for (let i = 0; i < STUDY_MEDALS.length; i++) {
+        const m = STUDY_MEDALS[i];
+        const top = i + 1 < STUDY_MEDALS.length ? STUDY_MEDALS[i + 1].floor : STUDY_TOP_MMR;
+        if (m.floor > high) continue;
+        const yTop = sy(Math.min(top, high));
+        const yBot = sy(m.floor);
+        ctx.fillStyle = m.color + '1f';
+        ctx.fillRect(P, yTop, plotW, yBot - yTop);
+        ctx.fillStyle = m.color + 'cc';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'right';
+        if (yBot - yTop > 12) ctx.fillText(m.name, W - P - 6, (yTop + yBot) / 2 + 4);
+    }
+
+    // Grid + axis ticks.
     ctx.font = '12px sans-serif';
     for (let v = low; v <= high; v += 500) {
         const x = sx(v);
         const y = sy(v);
-        ctx.strokeStyle = '#2d2d4e';
+        ctx.strokeStyle = '#ffffff10';
         ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x, P);
-        ctx.lineTo(x, H - P);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(P, y);
-        ctx.lineTo(W - P, y);
-        ctx.stroke();
-
-        ctx.fillStyle = '#8b8ba8';
+        ctx.beginPath(); ctx.moveTo(x, P); ctx.lineTo(x, H - P); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(W - P, y); ctx.stroke();
+        ctx.fillStyle = '#7b7b96';
         ctx.textAlign = 'center';
-        ctx.fillText(String(v), x, H - P + 22);
+        ctx.fillText(String(v), x, H - P + 20);
         ctx.textAlign = 'right';
-        ctx.fillText(String(v), P - 10, y + 4);
+        ctx.fillText(String(v), P - 8, y + 4);
     }
 
+    // Identity line (perfect agreement).
     ctx.strokeStyle = '#f59e0b';
     ctx.lineWidth = 2;
     ctx.setLineDash([8, 6]);
-    ctx.beginPath();
-    ctx.moveTo(sx(low), sy(low));
-    ctx.lineTo(sx(high), sy(high));
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx(low), sy(low)); ctx.lineTo(sx(high), sy(high)); ctx.stroke();
     ctx.setLineDash([]);
 
+    // Regression fit line.
+    if (opts.fit) {
+        const y0 = opts.fit.slope * low + opts.fit.intercept;
+        const y1 = opts.fit.slope * high + opts.fit.intercept;
+        ctx.strokeStyle = '#22d3ee';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(sx(low), sy(y0)); ctx.lineTo(sx(high), sy(y1)); ctx.stroke();
+    }
+
+    // Points: radius by sample size, colour by status, red ring for outliers.
     for (const point of points) {
         const x = sx(point.x);
         const y = sy(point.y);
-        const radius = 5 + Math.min(5, Math.max(0, point.confidence - 40) / 15);
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = point.partyFallback ? '#ef4444'
-            : point.stale ? '#f59e0b'
-                : point.confidence < 50 ? '#9ca3af'
-                    : point.y >= point.x ? '#8b5cf6' : '#60a5fa';
-        ctx.fill();
-        ctx.strokeStyle = '#ffffffcc';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
+        const radius = 5 + Math.min(7, Math.sqrt(Math.max(0, point.sampleSize ?? 0)));
+        if (point.outlier) {
+            ctx.beginPath(); ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
+            ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.stroke();
+        }
+        ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = studyPointColor(point); ctx.fill();
+        ctx.strokeStyle = '#ffffffdd'; ctx.lineWidth = 1.5; ctx.stroke();
         ctx.font = '11px sans-serif';
-        ctx.fillStyle = '#e5e7eb';
+        ctx.fillStyle = '#e8e8f0';
         ctx.textAlign = 'left';
-        ctx.fillText(point.label.slice(0, 12), x + radius + 4, y + 4);
+        ctx.fillText(point.label.slice(0, 14), x + radius + 4, y + 4);
     }
 
+    // Title + axis labels.
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 20px sans-serif';
+    ctx.font = 'bold 21px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(opts.title, W / 2, 34);
-
+    ctx.fillText(opts.title, W / 2, 32);
     ctx.font = '13px sans-serif';
     ctx.fillStyle = '#a5a5c0';
-    ctx.fillText(opts.xLabel, W / 2, H - 20);
-    ctx.save();
-    ctx.translate(22, H / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillText(opts.yLabel, 0, 0);
-    ctx.restore();
+    ctx.fillText(opts.xLabel, W / 2, H - 18);
+    ctx.save(); ctx.translate(20, H / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText(opts.yLabel, 0, 0); ctx.restore();
 
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#f59e0b';
-    ctx.fillRect(P, 48, 16, 3);
-    ctx.fillStyle = '#c7c7d9';
+    // Legend row.
+    let lx = P; const ly = 50;
+    ctx.textAlign = 'left'; ctx.font = '12px sans-serif';
+    const legendLine = (color: string, dashed: boolean, label: string) => {
+        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.setLineDash(dashed ? [6, 4] : []);
+        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 18, ly); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#c7c7d9'; ctx.fillText(label, lx + 24, ly + 4); lx += 30 + ctx.measureText(label).width + 16;
+    };
+    const legendDot = (color: string, label: string) => {
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx + 5, ly, 5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#c7c7d9'; ctx.fillText(label, lx + 14, ly + 4); lx += 14 + ctx.measureText(label).width + 16;
+    };
+    legendLine('#f59e0b', true, 'equal');
+    if (opts.fit) legendLine('#22d3ee', false, 'trend');
+    legendDot('#a78bfa', 'solid');
+    legendDot('#9ca3af', 'low conf');
+    legendDot('#ef4444', 'party');
+    ctx.fillStyle = '#8b8ba8'; ctx.fillText('(size = solo games)', lx, ly + 4);
+
+    return canvas.toBuffer('image/png');
+}
+
+/** Bias/residual plot: gap (turbo − ranked) vs ranked MMR, with a zero line and trend line. */
+export function renderTurboStudyResidual(
+    points: Array<{ label: string; rankedMMR: number; gap: number; confidence: number; partyFallback?: boolean; stale?: boolean }>,
+    fit: { slope: number; intercept: number } | null,
+): Buffer {
+    const W = 980, H = 420, P = 70;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#101019'; ctx.fillRect(0, 0, W, H);
+
+    if (points.length < 2) {
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('Not enough data', W / 2, H / 2); return canvas.toBuffer('image/png');
+    }
+
+    const maxX = Math.ceil((Math.max(...points.map((p) => p.rankedMMR)) + 350) / 500) * 500;
+    const maxAbs = Math.max(600, ...points.map((p) => Math.abs(p.gap)));
+    const yTop = Math.ceil((maxAbs + 150) / 250) * 250;
+    const plotW = W - P * 2, plotH = H - P * 2;
+    const sx = (x: number) => P + (x / Math.max(1, maxX)) * plotW;
+    const sy = (g: number) => P + plotH / 2 - (g / yTop) * (plotH / 2);
+
+    // Shaded over/under regions.
+    ctx.fillStyle = '#a78bfa10'; ctx.fillRect(P, P, plotW, plotH / 2);
+    ctx.fillStyle = '#60a5fa10'; ctx.fillRect(P, P + plotH / 2, plotW, plotH / 2);
+
+    // Grid.
     ctx.font = '12px sans-serif';
-    ctx.fillText('Equal ranked and Turbo estimate', P + 24, 53);
-    ctx.fillStyle = '#ef4444';
-    ctx.beginPath();
-    ctx.arc(P + 292, 51, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#c7c7d9';
-    ctx.fillText('party fallback', P + 304, 54);
-    ctx.fillStyle = '#f59e0b';
-    ctx.beginPath();
-    ctx.arc(P + 410, 51, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#c7c7d9';
-    ctx.fillText('stale', P + 422, 54);
-    ctx.fillStyle = '#9ca3af';
-    ctx.beginPath();
-    ctx.arc(P + 470, 51, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#c7c7d9';
-    ctx.fillText('low confidence', P + 482, 54);
+    for (let g = -yTop; g <= yTop; g += 250) {
+        const y = sy(g);
+        ctx.strokeStyle = g === 0 ? '#ffffff55' : '#ffffff10';
+        ctx.lineWidth = g === 0 ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(W - P, y); ctx.stroke();
+        ctx.fillStyle = '#7b7b96'; ctx.textAlign = 'right';
+        ctx.fillText((g > 0 ? '+' : '') + g, P - 8, y + 4);
+    }
+    for (let v = 0; v <= maxX; v += 500) {
+        const x = sx(v);
+        ctx.fillStyle = '#7b7b96'; ctx.textAlign = 'center';
+        ctx.fillText(String(v), x, H - P + 20);
+    }
+
+    // Trend line of the gap itself (slope-1 minus identity already baked into fit).
+    if (fit) {
+        const g0 = (fit.slope * 0 + fit.intercept) - 0;
+        const g1 = (fit.slope * maxX + fit.intercept) - maxX;
+        ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(sx(0), sy(g0)); ctx.lineTo(sx(maxX), sy(g1)); ctx.stroke();
+    }
+
+    for (const p of points) {
+        const x = sx(p.rankedMMR), y = sy(p.gap);
+        ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = studyPointColor(p); ctx.fill();
+        ctx.strokeStyle = '#ffffffdd'; ctx.lineWidth = 1.3; ctx.stroke();
+        if (Math.abs(p.gap) >= 700) {
+            ctx.fillStyle = '#e8e8f0'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+            ctx.fillText(p.label.slice(0, 12), x + 9, y + 3);
+        }
+    }
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Estimate Bias — gap (Turbo − Ranked) vs Ranked', W / 2, 28);
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#a5a5c0';
+    ctx.fillText('Ranked medal estimate (MMR)', W / 2, H - 16);
+    ctx.textAlign = 'left'; ctx.fillStyle = '#a78bfa'; ctx.font = '11px sans-serif';
+    ctx.fillText('▲ Turbo over ranked', P + 6, P + 16);
+    ctx.fillStyle = '#60a5fa';
+    ctx.fillText('▼ Turbo under ranked', P + 6, H - P - 8);
+
+    return canvas.toBuffer('image/png');
+}
+
+/** Squad rank ladder: every calibrated player placed on the medal ladder by Turbo MMR. */
+export function renderTurboLadder(
+    players: Array<{ label: string; mmr: number; confidence: number; partyFallback?: boolean; stale?: boolean }>,
+): Buffer {
+    const W = 880;
+    const rowTop = 64, rowBot = 60;
+    const H = Math.max(360, rowTop + rowBot + STUDY_MEDALS.length * 44);
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#101019'; ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Squad Turbo Rank Ladder', W / 2, 36);
+
+    const laneX = 150, laneW = W - laneX - 40;
+    const bandH = (H - rowTop - rowBot) / STUDY_MEDALS.length;
+
+    // Draw medal bands high→low.
+    const ordered = [...STUDY_MEDALS].reverse();
+    for (let i = 0; i < ordered.length; i++) {
+        const m = ordered[i];
+        const y = rowTop + i * bandH;
+        ctx.fillStyle = m.color + '22';
+        roundRectPath(ctx, laneX, y + 3, laneW, bandH - 6, 8); ctx.fill();
+        ctx.fillStyle = m.color; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'right';
+        ctx.fillText(m.name, laneX - 12, y + bandH / 2 + 5);
+    }
+
+    const tierIndexFromTop = (mmr: number) => {
+        let idx = 0;
+        for (let i = 0; i < STUDY_MEDALS.length; i++) if (mmr >= STUDY_MEDALS[i].floor) idx = i;
+        return STUDY_MEDALS.length - 1 - idx; // 0 = Immortal at top
+    };
+
+    // Group players by band, lay them out horizontally within their band.
+    const byBand = new Map<number, typeof players>();
+    for (const p of players) {
+        const b = tierIndexFromTop(p.mmr);
+        if (!byBand.has(b)) byBand.set(b, []);
+        byBand.get(b)!.push(p);
+    }
+    for (const [b, group] of byBand) {
+        group.sort((a, z) => z.mmr - a.mmr);
+        const y = rowTop + b * bandH + bandH / 2;
+        const slotW = laneW / Math.max(group.length, 1);
+        for (let i = 0; i < group.length; i++) {
+            const p = group[i];
+            const x = laneX + slotW * (i + 0.5);
+            const r = 8;
+            ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fillStyle = studyPointColor(p); ctx.fill();
+            ctx.strokeStyle = '#ffffffdd'; ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.fillStyle = '#e8e8f0'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText(p.label.slice(0, 12), x, y + r + 13);
+        }
+    }
+
+    ctx.textAlign = 'left'; ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#a78bfa'; ctx.beginPath(); ctx.arc(laneX + 6, H - 28, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c7c7d9'; ctx.fillText('solid estimate', laneX + 16, H - 24);
+    ctx.fillStyle = '#9ca3af'; ctx.beginPath(); ctx.arc(laneX + 136, H - 28, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c7c7d9'; ctx.fillText('low confidence', laneX + 146, H - 24);
+    ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(laneX + 266, H - 28, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c7c7d9'; ctx.fillText('party fallback', laneX + 276, H - 24);
 
     return canvas.toBuffer('image/png');
 }

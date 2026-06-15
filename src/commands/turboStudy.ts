@@ -1,10 +1,11 @@
+import fs from 'fs';
 import { AttachmentBuilder, EmbedBuilder, Message } from 'discord.js';
 import { turboRankService, rankTierToMMR, rankTierToMedal } from '../services/turboRankService';
 import { TurboRankEstimate } from '../models/TurboRank';
 import { TurboStatsService } from '../services/turboStatsService';
 import { UserDataService } from '../services/userDataService';
 import { opendotaClient } from '../services/apiClient';
-import { renderTurboStudyScatter } from '../services/chartService';
+import { renderTurboStudyScatter, renderTurboStudyResidual, renderTurboLadder } from '../services/chartService';
 import { logger } from '../services/loggerService';
 
 interface StudyCandidate {
@@ -215,6 +216,29 @@ function toCsv(candidates: StudyCandidate[]): Buffer {
   return Buffer.from([header.join(','), ...rows].join('\n'), 'utf8');
 }
 
+const STUDY_HISTORY_FILE = 'turboStudyHistory.json';
+interface StudySnapshot { ts: number; n: number; mae: number; rmse: number; avgGap: number; slope: number | null; intercept: number | null; }
+function loadStudyHistory(): StudySnapshot[] {
+  try { return JSON.parse(fs.readFileSync(STUDY_HISTORY_FILE, 'utf8')); } catch { return []; }
+}
+function saveStudySnapshot(snap: StudySnapshot) {
+  const hist = loadStudyHistory();
+  hist.push(snap);
+  try { fs.writeFileSync(STUDY_HISTORY_FILE, JSON.stringify(hist.slice(-50), null, 2)); } catch { /* ignore */ }
+}
+function trendArrow(curr: number, prev: number | undefined, lowerIsBetter = true): string {
+  if (prev == null) return ' _(first run)_';
+  const delta = curr - prev;
+  if (Math.abs(delta) < 1) return ' (=)';
+  const better = lowerIsBetter ? delta < 0 : delta > 0;
+  return ` (${delta < 0 ? '▼' : '▲'}${Math.abs(Math.round(delta))} ${better ? '✅' : '⚠️'})`;
+}
+const STUDY_BRACKETS = [
+  { name: 'Herald–Crusader (<2310)', lo: 0, hi: 2310 },
+  { name: 'Archon–Legend (2310–3850)', lo: 2310, hi: 3850 },
+  { name: 'Ancient+ (3850+)', lo: 3850, hi: Infinity },
+];
+
 export async function turboStudy(message: Message, userDataService: UserDataService, turboStatsService: TurboStatsService) {
   try {
     const estimates = turboRankService.getAllEstimates();
@@ -309,22 +333,79 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       'Use the CSV attachment to track whether future formula changes reduce MAE/RMSE and outlier count.',
     ].filter((line): line is string => !!line);
 
-    const chart = renderTurboStudyScatter(
+    // Bias by ranked bracket (reveals the MMR-dependent gap).
+    const bracketLines = STUDY_BRACKETS.map((b) => {
+      const inB = rows.filter((r) => r.visibleMMR >= b.lo && r.visibleMMR < b.hi);
+      if (inB.length === 0) return `${b.name}: _no players_`;
+      const g = inB.reduce((s, r) => s + (r.estimate.estimatedMMR - r.visibleMMR), 0) / inB.length;
+      return `${b.name}: **${fmtMmr(g)}** avg gap _(${inB.length})_`;
+    });
+
+    // Calibration extremes (closest / furthest from ranked).
+    const byGap = [...rows].sort((a, z) => Math.abs(a.estimate.estimatedMMR - a.visibleMMR) - Math.abs(z.estimate.estimatedMMR - z.visibleMMR));
+    const best = byGap[0];
+    const worst = byGap[byGap.length - 1];
+    const extremesLine =
+      `Tightest: **${best.name}** (${fmtMmr(best.estimate.estimatedMMR - best.visibleMMR)})\n` +
+      `Loosest: **${worst.name}** (${fmtMmr(worst.estimate.estimatedMMR - worst.visibleMMR)})`;
+
+    // Fit interpretation.
+    let fitNote = 'n/a';
+    if (fit) {
+      if (fit.slope < 0.9) fitNote = `Slope ${fit.slope.toFixed(2)} < 1 → low ranks over-estimated, high ranks compressed (classic unranked-drop bias).`;
+      else if (fit.slope > 1.1) fitNote = `Slope ${fit.slope.toFixed(2)} > 1 → estimates fan out vs ranked.`;
+      else fitNote = `Slope ${fit.slope.toFixed(2)} ≈ 1 → roughly uniform offset of ${fmtMmr(fit.intercept)}.`;
+    }
+
+    // Trend vs the previous run (persisted), then record this run.
+    const prevSnap = loadStudyHistory().slice(-1)[0];
+    const trendLine =
+      `MAE: **${Math.round(mae)}**${trendArrow(mae, prevSnap?.mae)}\n` +
+      `RMSE: **${Math.round(rmse)}**${trendArrow(rmse, prevSnap?.rmse)}\n` +
+      `|Avg gap|: **${Math.round(Math.abs(avgGap))}**${trendArrow(Math.abs(avgGap), prevSnap ? Math.abs(prevSnap.avgGap) : undefined)}`;
+    saveStudySnapshot({ ts: Date.now(), n: rows.length, mae, rmse, avgGap, slope: fit?.slope ?? null, intercept: fit?.intercept ?? null });
+
+    const scatter = renderTurboStudyScatter(
       rows.map((r) => ({
         label: r.name,
         x: r.visibleMMR,
         y: r.estimate.estimatedMMR,
         confidence: r.estimate.confidence,
+        sampleSize: r.estimate.soloSampleSize,
         partyFallback: r.estimate.partyFallback,
         stale: daysSince(r.estimate.lastUpdated) > 30,
+        outlier: Math.abs(r.estimate.estimatedMMR - r.visibleMMR) >= 900,
       })),
       {
         title: 'Hidden Turbo Rank vs Visible Ranked Medal',
-        xLabel: 'Visible ranked medal estimate',
-        yLabel: 'Hidden Turbo estimate',
+        xLabel: 'Visible ranked medal estimate (MMR)',
+        yLabel: 'Hidden Turbo estimate (MMR)',
+        fit: fit ? { slope: fit.slope, intercept: fit.intercept } : undefined,
       },
     );
-    const chartAttachment = new AttachmentBuilder(chart, { name: 'turbo-study.png' });
+    const residual = renderTurboStudyResidual(
+      rows.map((r) => ({
+        label: r.name,
+        rankedMMR: r.visibleMMR,
+        gap: r.estimate.estimatedMMR - r.visibleMMR,
+        confidence: r.estimate.confidence,
+        partyFallback: r.estimate.partyFallback,
+        stale: daysSince(r.estimate.lastUpdated) > 30,
+      })),
+      fit ? { slope: fit.slope, intercept: fit.intercept } : null,
+    );
+    const ladder = renderTurboLadder(
+      candidates.map((c) => ({
+        label: c.name,
+        mmr: c.estimate.estimatedMMR,
+        confidence: c.estimate.confidence,
+        partyFallback: c.estimate.partyFallback,
+        stale: daysSince(c.estimate.lastUpdated) > 30,
+      })),
+    );
+    const scatterAttachment = new AttachmentBuilder(scatter, { name: 'turbo-study.png' });
+    const residualAttachment = new AttachmentBuilder(residual, { name: 'turbo-bias.png' });
+    const ladderAttachment = new AttachmentBuilder(ladder, { name: 'turbo-ladder.png' });
     const csvAttachment = new AttachmentBuilder(toCsv(candidates), { name: 'turbo-study.csv' });
 
     const embed = new EmbedBuilder()
@@ -358,6 +439,10 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
           inline: false,
         },
         { name: 'Estimator Health', value: healthLines.join('\n'), inline: false },
+        { name: '📈 Bias by Ranked Bracket', value: bracketLines.join('\n'), inline: false },
+        { name: '🔬 Fit Read', value: fitNote, inline: false },
+        { name: '🎯 Calibration Extremes', value: extremesLine, inline: true },
+        { name: '⏱️ Trend vs Last Run', value: trendLine, inline: true },
         { name: 'Largest Gaps', value: fitLines(largestGaps, 'No large gaps found.'), inline: false },
         { name: 'Next Actions', value: fitLines(actionLines, 'No immediate study actions.'), inline: false },
         {
@@ -369,7 +454,7 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       .setImage('attachment://turbo-study.png')
       .setTimestamp();
 
-    await progress.edit({ content: null, embeds: [embed], files: [chartAttachment, csvAttachment] });
+    await progress.edit({ content: null, embeds: [embed], files: [scatterAttachment, residualAttachment, ladderAttachment, csvAttachment] });
   } catch (error) {
     logger.error('Error in turbo study command:', error);
     await message.reply('An error occurred while building the Turbo study. Please try again later.');
