@@ -65,10 +65,19 @@ export async function trend(message: Message, args: string[], userDataService: U
         const avgKDA = (matches.reduce((sum: number, m: any) =>
             sum + (m.kills + m.assists) / (m.deaths || 1), 0) / matches.length).toFixed(2);
 
+        // recentMatches mixes modes; turbo GPM/KDA run far higher than ranked, so a
+        // mixed sample makes the GPM line in particular swing for reasons that aren't
+        // form. Call it out honestly when the sample spans turbo + non-turbo.
+        const turboCount = matches.filter((m: any) => m.game_mode === 23).length;
+        const mixedModes = turboCount > 0 && turboCount < matches.length;
+        const modeNote = mixedModes
+            ? `\n⚠️ Mixed modes (${turboCount} turbo / ${matches.length - turboCount} other) — turbo inflates GPM & KDA, so read swings with that in mind.`
+            : '';
+
         const embed = new EmbedBuilder()
             .setColor(config.color as `#${string}`)
             .setTitle(`📈 ${config.label} — ${targetUser.username}`)
-            .setDescription(`${config.description}\n**Last ${matches.length} matches**`)
+            .setDescription(`${config.description}\n**Last ${matches.length} matches**${modeNote}`)
             .setThumbnail(targetUser.displayAvatarURL())
             .addFields(
                 { name: 'W/L', value: `${wins}/${matches.length - wins}`, inline: true },
