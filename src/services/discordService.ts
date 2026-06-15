@@ -81,6 +81,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_STATS:
       await commandHandlers.turboStats(message, turboStatsService);
       break;
+    case Commands.TURBO_STUDY:
+      await commandHandlers.turboStudy(message, turboStatsService);
+      break;
     case Commands.TURBO_PAIRINGS:
       await commandHandlers.turboPairings(message, turboStatsService);
       break;

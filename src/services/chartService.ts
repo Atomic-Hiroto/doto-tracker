@@ -828,3 +828,120 @@ function formatClock(seconds?: number): string {
     const abs = Math.abs(value);
     return `${sign}${Math.floor(abs / 60)}:${Math.floor(abs % 60).toString().padStart(2, '0')}`;
 }
+
+export interface TurboStudyPoint {
+    label: string;
+    x: number;
+    y: number;
+    confidence: number;
+}
+
+export function renderTurboStudyScatter(
+    points: TurboStudyPoint[],
+    opts: { title: string; xLabel: string; yLabel: string },
+): Buffer {
+    const W = 920;
+    const H = 560;
+    const P = 72;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#15151f';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#2d2d4e';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+
+    if (points.length < 2) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Not enough data', W / 2, H / 2);
+        return canvas.toBuffer('image/png');
+    }
+
+    const minX = Math.min(...points.map((p) => p.x));
+    const maxX = Math.max(...points.map((p) => p.x));
+    const minY = Math.min(...points.map((p) => p.y));
+    const maxY = Math.max(...points.map((p) => p.y));
+    const low = Math.floor((Math.min(minX, minY) - 250) / 500) * 500;
+    const high = Math.ceil((Math.max(maxX, maxY) + 250) / 500) * 500;
+    const range = Math.max(1, high - low);
+    const plotW = W - P * 2;
+    const plotH = H - P * 2;
+
+    const sx = (x: number) => P + ((x - low) / range) * plotW;
+    const sy = (y: number) => H - P - ((y - low) / range) * plotH;
+
+    ctx.font = '12px sans-serif';
+    for (let v = low; v <= high; v += 500) {
+        const x = sx(v);
+        const y = sy(v);
+        ctx.strokeStyle = '#2d2d4e';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, P);
+        ctx.lineTo(x, H - P);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(P, y);
+        ctx.lineTo(W - P, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#8b8ba8';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(v), x, H - P + 22);
+        ctx.textAlign = 'right';
+        ctx.fillText(String(v), P - 10, y + 4);
+    }
+
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(sx(low), sy(low));
+    ctx.lineTo(sx(high), sy(high));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (const point of points) {
+        const x = sx(point.x);
+        const y = sy(point.y);
+        const radius = 5 + Math.min(5, Math.max(0, point.confidence - 40) / 15);
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = point.y >= point.x ? '#8b5cf6' : '#60a5fa';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffffcc';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#e5e7eb';
+        ctx.textAlign = 'left';
+        ctx.fillText(point.label.slice(0, 12), x + radius + 4, y + 4);
+    }
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(opts.title, W / 2, 34);
+
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = '#a5a5c0';
+    ctx.fillText(opts.xLabel, W / 2, H - 20);
+    ctx.save();
+    ctx.translate(22, H / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(opts.yLabel, 0, 0);
+    ctx.restore();
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(P, 48, 16, 3);
+    ctx.fillStyle = '#c7c7d9';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('Equal ranked and Turbo estimate', P + 24, 53);
+
+    return canvas.toBuffer('image/png');
+}

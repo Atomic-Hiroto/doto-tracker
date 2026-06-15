@@ -70,8 +70,11 @@ async function trackMatchForPlayer(
     if (shouldAnnounce && streakEvent) {
       await safeSend(channel, streakService.getStreakAnnouncement(streakEvent, username));
     }
-    for (const ach of shouldAnnounce ? newAchievements : []) {
-      await safeSend(channel, `🎉 **Achievement Unlocked!** ${ach.emoji}\n**${username}** earned **${ach.name}** — *${ach.description}*`);
+    if (shouldAnnounce && newAchievements.length > 0) {
+      await safeSend(
+        channel,
+        achievementService.formatAnnouncement(newAchievements, player.discordId, username),
+      );
     }
   } catch (error) {
     logger.error(`Error tracking match for ${player.discordId}:`, error);

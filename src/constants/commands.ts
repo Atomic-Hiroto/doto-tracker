@@ -11,6 +11,7 @@ export enum Commands {
     STORY = "story",
     TURBO_LEADERBOARD = "turbolb",
     TURBO_STATS = "turbostats",
+    TURBO_STUDY = "turbostudy",
     TURBO_PAIRINGS = "turbopairs",
     MY_TURBO_PAIRINGS = "myturbopairs",
     TURBO_RANK = "turborank",

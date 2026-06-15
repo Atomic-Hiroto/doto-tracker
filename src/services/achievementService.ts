@@ -18,14 +18,25 @@ export interface UnlockedAchievement {
 
 export const ACHIEVEMENTS: AchievementDefinition[] = [
     { id: 'century_club', name: 'Century Club', emoji: '💯', description: 'Play 100 tracked matches' },
+    { id: 'marathoner', name: 'Marathoner', emoji: '🏃', description: 'Play 250 tracked matches' },
     { id: 'on_fire', name: 'On Fire', emoji: '🔥', description: 'Win 5 games in a row' },
+    { id: 'inferno_streak', name: 'Inferno Streak', emoji: '🌪️', description: 'Win 10 games in a row' },
     { id: 'feeder_redeemed', name: 'Feeder Redeemed', emoji: '🔄', description: 'Win a game with 10+ deaths' },
+    { id: 'unkillable_feeder', name: 'Unkillable Feeder', emoji: '🧟', description: 'Win a game with 15+ deaths' },
     { id: 'turbo_addict', name: 'Turbo Addict', emoji: '⚡', description: 'Play 50 turbo games' },
+    { id: 'turbo_lifer', name: 'Turbo Lifer', emoji: '🌀', description: 'Play 250 turbo games' },
+    { id: 'turbo_maniac', name: 'Turbo Maniac', emoji: '🚀', description: 'Play 500 turbo games' },
     { id: 'clean_sweep', name: 'Clean Sweep', emoji: '🧹', description: 'Win a game with 0 deaths' },
+    { id: 'flawless_execution', name: 'Flawless Execution', emoji: '💎', description: 'Win with 10+ kills and 0 deaths' },
     { id: 'carry_enjoyer', name: 'Carry Enjoyer', emoji: '👑', description: 'Win with 15+ kills in one game' },
+    { id: 'massacre', name: 'Massacre', emoji: '🩸', description: 'Win with 25+ kills in one game' },
+    { id: 'thirty_bomb', name: 'Thirty Bomb', emoji: '💣', description: 'Win with 30+ kills in one game' },
     { id: 'support_god', name: 'Support God', emoji: '💚', description: 'Win a game with 20+ assists' },
+    { id: 'battle_medic', name: 'Battle Medic', emoji: '🚑', description: 'Win a game with 35+ assists' },
+    { id: 'raid_boss', name: 'Raid Boss', emoji: '🛡️', description: 'Win with 20+ kills and 20+ assists' },
     { id: 'climbing', name: 'Mountain Climber', emoji: '🏔️', description: 'Reach turbo score 40+' },
     { id: 'overlord', name: 'Overlord', emoji: '🌋', description: 'Reach turbo score 55+' },
+    { id: 'apex_predator', name: 'Apex Predator', emoji: '👹', description: 'Reach turbo score 65+' },
     { id: 'first_blood', name: 'First Steps', emoji: '🎮', description: 'Play your first tracked match' },
 ];
 
@@ -115,22 +126,37 @@ class AchievementService {
         if (ctx.totalMatches !== undefined) {
             if (ctx.totalMatches >= 1) tryUnlock('first_blood');
             if (ctx.totalMatches >= 100) tryUnlock('century_club');
+            if (ctx.totalMatches >= 250) tryUnlock('marathoner');
         }
 
         if (ctx.winStreak !== undefined && ctx.winStreak >= 5) tryUnlock('on_fire');
+        if (ctx.winStreak !== undefined && ctx.winStreak >= 10) tryUnlock('inferno_streak');
 
         if (ctx.won && ctx.deaths === 0) tryUnlock('clean_sweep');
+        if (ctx.won && ctx.deaths === 0 && (ctx.kills || 0) >= 10) tryUnlock('flawless_execution');
         if (ctx.won && (ctx.deaths || 0) >= 10) tryUnlock('feeder_redeemed');
+        if (ctx.won && (ctx.deaths || 0) >= 15) tryUnlock('unkillable_feeder');
         if (ctx.won && (ctx.kills || 0) >= 15) tryUnlock('carry_enjoyer');
+        if (ctx.won && (ctx.kills || 0) >= 25) tryUnlock('massacre');
+        if (ctx.won && (ctx.kills || 0) >= 30) tryUnlock('thirty_bomb');
         if (ctx.won && (ctx.assists || 0) >= 20) tryUnlock('support_god');
+        if (ctx.won && (ctx.assists || 0) >= 35) tryUnlock('battle_medic');
+        if (ctx.won && (ctx.kills || 0) >= 20 && (ctx.assists || 0) >= 20) tryUnlock('raid_boss');
 
         if (ctx.turboRating !== undefined) {
             if (ctx.turboRating >= 40) tryUnlock('climbing');
             if (ctx.turboRating >= 55) tryUnlock('overlord');
+            if (ctx.turboRating >= 65) tryUnlock('apex_predator');
         }
 
         if (ctx.turboGames !== undefined && ctx.turboGames >= 50) {
             tryUnlock('turbo_addict');
+        }
+        if (ctx.turboGames !== undefined && ctx.turboGames >= 250) {
+            tryUnlock('turbo_lifer');
+        }
+        if (ctx.turboGames !== undefined && ctx.turboGames >= 500) {
+            tryUnlock('turbo_maniac');
         }
 
         return newlyUnlocked;
@@ -145,12 +171,23 @@ class AchievementService {
         }).filter(x => x.def && x.unlock);
     }
 
-    async announceNewAchievements(achievements: AchievementDefinition[], username: string, channel: TextChannel) {
-        for (const ach of achievements) {
-            await channel.send(
-                `🎉 **Achievement Unlocked!** ${ach.emoji}\n**${username}** earned **${ach.name}** — *${ach.description}*`
-            );
+    formatAnnouncement(achievements: AchievementDefinition[], discordId: string, username: string): string {
+        const mention = `<@${discordId}>`;
+        const subject = `${mention} (${username})`;
+        if (achievements.length === 1) {
+            const ach = achievements[0];
+            return `🎉 **Achievement Unlocked!** ${ach.emoji}\n${subject} earned **${ach.name}** — *${ach.description}*`;
         }
+
+        const lines = achievements
+            .map((ach) => `${ach.emoji} **${ach.name}** — *${ach.description}*`)
+            .join('\n');
+        return `🎉 **Achievements Unlocked!**\n${subject} earned **${achievements.length}** achievements:\n${lines}`;
+    }
+
+    async announceNewAchievements(achievements: AchievementDefinition[], discordId: string, username: string, channel: TextChannel) {
+        if (achievements.length === 0) return;
+        await channel.send(this.formatAnnouncement(achievements, discordId, username));
     }
 }
 
