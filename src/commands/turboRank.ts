@@ -103,6 +103,14 @@ async function turboRankView(message: Message, userDataService: UserDataService)
           value: soloBreakdown,
           inline: false,
         },
+        {
+          name: '🧠 How is this calculated?',
+          value: 'Your hidden rank is estimated by analyzing the **actual ranked medals of other players** (enemies and teammates) in your matches.\n' +
+                 '• **Solo Priority:** Solo matches are the purest signal. If you have $\\ge 5$ solo games, party matches are **completely ignored** so your friends\' ranks do not distort your calibration.\n' +
+                 '• **Recency Decay:** Newer matches carry higher weight (60-day half-life) to reflect your current skill level.\n' +
+                 '• **Win/Loss Adjustment:** Winning in a lobby shifts the estimated matchmaking level up by +100 MMR; losing shifts it down by -100 MMR.',
+          inline: false,
+        },
       )
       .setFooter({
         text:
@@ -168,6 +176,16 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
         `Based on ${estimate.sampleSize} matches (${estimate.soloSampleSize} solo)`,
       )
       .setThumbnail(message.author.displayAvatarURL())
+      .addFields(
+        {
+          name: '🧠 How is this calculated?',
+          value: 'Your hidden rank is estimated by analyzing the **actual ranked medals of other players** (enemies and teammates) in your matches.\n' +
+                 '• **Solo Priority:** Solo matches are the purest signal. If you have $\\ge 5$ solo games, party matches are **completely ignored** so your friends\' ranks do not distort your calibration.\n' +
+                 '• **Recency Decay:** Newer matches carry higher weight (60-day half-life) to reflect your current skill level.\n' +
+                 '• **Win/Loss Adjustment:** Winning in a lobby shifts the estimated matchmaking level up by +100 MMR; losing shifts it down by -100 MMR.',
+          inline: false,
+        },
+      )
       .setFooter({ text: 'Solo games carry the most weight • party games are discounted' })
       .setTimestamp();
 

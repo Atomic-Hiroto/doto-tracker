@@ -322,6 +322,7 @@ query ($steamAccountId: Long!, $take: Int!, $skip: Int, $startDateTime: Long, $i
       id
       startDateTime
       averageRank
+      didRadiantWin
       players {
         steamAccountId
         playerSlot
