@@ -82,7 +82,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.turboStats(message, turboStatsService);
       break;
     case Commands.TURBO_STUDY:
-      await commandHandlers.turboStudy(message, turboStatsService);
+      await commandHandlers.turboStudy(message, userDataService, turboStatsService);
       break;
     case Commands.TURBO_PAIRINGS:
       await commandHandlers.turboPairings(message, turboStatsService);

@@ -834,6 +834,8 @@ export interface TurboStudyPoint {
     x: number;
     y: number;
     confidence: number;
+    partyFallback?: boolean;
+    stale?: boolean;
 }
 
 export function renderTurboStudyScatter(
@@ -910,7 +912,10 @@ export function renderTurboStudyScatter(
         const radius = 5 + Math.min(5, Math.max(0, point.confidence - 40) / 15);
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = point.y >= point.x ? '#8b5cf6' : '#60a5fa';
+        ctx.fillStyle = point.partyFallback ? '#ef4444'
+            : point.stale ? '#f59e0b'
+                : point.confidence < 50 ? '#9ca3af'
+                    : point.y >= point.x ? '#8b5cf6' : '#60a5fa';
         ctx.fill();
         ctx.strokeStyle = '#ffffffcc';
         ctx.lineWidth = 1.5;
@@ -942,6 +947,24 @@ export function renderTurboStudyScatter(
     ctx.fillStyle = '#c7c7d9';
     ctx.font = '12px sans-serif';
     ctx.fillText('Equal ranked and Turbo estimate', P + 24, 53);
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(P + 292, 51, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c7c7d9';
+    ctx.fillText('party fallback', P + 304, 54);
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.arc(P + 410, 51, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c7c7d9';
+    ctx.fillText('stale', P + 422, 54);
+    ctx.fillStyle = '#9ca3af';
+    ctx.beginPath();
+    ctx.arc(P + 470, 51, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c7c7d9';
+    ctx.fillText('low confidence', P + 482, 54);
 
     return canvas.toBuffer('image/png');
 }
