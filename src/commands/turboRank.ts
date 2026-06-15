@@ -156,9 +156,15 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
   }
 
   const embed = new EmbedBuilder()
-    .setColor(estimate.confidence >= 50 ? '#8b5cf6' : '#6b7280')
+    .setColor(estimate.partyFallback || estimate.confidence < 40 ? '#9ca3af' : estimate.confidence < 60 ? '#eab308' : '#8b5cf6')
     .setTitle(`🔮 Hidden Turbo Rank — ${target.name}`)
-    .setDescription(desc.join('\n'))
+    .setDescription(
+      (estimate.partyFallback
+        ? "⚠️ **Rough, party-based estimate — don't trust this as a real rank.**\n\n"
+        : estimate.confidence < 40
+          ? '⚠️ **Low-confidence estimate — treat as a rough guess, not a verified rank.**\n\n'
+          : '') + desc.join('\n'),
+    )
     .addFields(
       {
         name: 'Confidence',
