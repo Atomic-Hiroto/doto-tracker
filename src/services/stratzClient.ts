@@ -387,3 +387,33 @@ export async function fetchPlayerTurboMatches(
   }
 }
 
+/** Resolves a Steam account's display name + current ranked medal via Stratz. */
+export async function fetchStratzPlayerProfile(
+  steamAccountId: number,
+): Promise<{ name: string | null; seasonRank: number | null }> {
+  if (!STRATZ_API_KEY) return { name: null, seasonRank: null };
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: `query ($id: Long!) { player(steamAccountId: $id) { steamAccount { name seasonRank } } }`,
+        variables: { id: steamAccountId },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${STRATZ_API_KEY}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'STRATZ_API',
+          Accept: 'application/json',
+        },
+        timeout: 15000,
+      },
+    );
+    const acc = response.data?.data?.player?.steamAccount;
+    return { name: acc?.name ?? null, seasonRank: acc?.seasonRank ?? null };
+  } catch (error: any) {
+    logger.warn(`Stratz player profile fetch failed for ${steamAccountId}:`, error?.message ?? error);
+    return { name: null, seasonRank: null };
+  }
+}
+
