@@ -49,7 +49,7 @@ export async function achievements(message: Message, args: string[], userDataSer
                 { name: `✅ Unlocked (${count})`, value: unlockedLines, inline: false },
                 { name: `🔒 Locked (${locked.length})`, value: lockedLines, inline: false },
             )
-            .setFooter({ text: 'Achievements are tracked automatically on every match' })
+            .setFooter({ text: 'Achievements are tracked from bot-detected matches' })
             .setTimestamp();
 
         await message.reply({ embeds: [embed] });

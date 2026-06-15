@@ -6,6 +6,7 @@ import { opendotaClient } from '../services/apiClient';
 import { parseArgs } from '../utils/argParser';
 import { renderKDATrend, renderGPMTrend, renderWinRateTrend } from '../services/chartService';
 import { safeTyping } from '../utils/channelHelpers';
+import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
 
 const CHART_TYPES = ['kda', 'gpm', 'wr'] as const;
 type ChartType = typeof CHART_TYPES[number];
@@ -29,17 +30,22 @@ export async function trend(message: Message, args: string[], userDataService: U
     const user = userDataService.getUserByDiscordId(discordId);
     if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
 
-    const chartTypeArg = (parsed.positional[0] || 'kda').toLowerCase() as ChartType;
+    const chartTokenIndex = parsed.positional.findIndex((arg) => CHART_TYPES.includes(arg.toLowerCase() as ChartType));
+    const chartTypeArg = (chartTokenIndex >= 0 ? parsed.positional[chartTokenIndex] : 'kda').toLowerCase() as ChartType;
     const chartType: ChartType = CHART_TYPES.includes(chartTypeArg) ? chartTypeArg : 'kda';
+    const filterWords = parsed.positional.filter((_, index) => index !== chartTokenIndex);
     const gameCount = 20;
 
     try {
         safeTyping(message.channel);
 
-        const response = await opendotaClient.get<any[]>(
-            `/players/${user.steamId}/recentMatches?limit=${gameCount}`
-        );
-        const matches = response.data;
+        const filter = await parseMatchFilter(filterWords, message, userDataService);
+        const fetchCount = filter.consumedAny ? 60 : gameCount;
+        const endpoint = filter.consumedAny
+            ? `/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: fetchCount, significant: 0 })}`
+            : `/players/${user.steamId}/recentMatches?limit=${fetchCount}`;
+        const response = await opendotaClient.get<any[]>(endpoint);
+        const matches = applyResidualFilters(response.data || [], filter).slice(0, gameCount);
 
         if (!matches || matches.length < 3) {
             return message.reply('Not enough recent matches to generate a trend (need at least 3).');
@@ -77,7 +83,7 @@ export async function trend(message: Message, args: string[], userDataService: U
         const embed = new EmbedBuilder()
             .setColor(config.color as `#${string}`)
             .setTitle(`📈 ${config.label} — ${targetUser.username}`)
-            .setDescription(`${config.description}\n**Last ${matches.length} matches**${modeNote}`)
+            .setDescription(`${config.description}\n**Last ${matches.length} matching games**${filter.descriptionParts.length ? ` • ${filter.descriptionParts.join(' • ')}` : ''}${modeNote}`)
             .setThumbnail(targetUser.displayAvatarURL())
             .addFields(
                 { name: 'W/L', value: `${wins}/${matches.length - wins}`, inline: true },
@@ -85,7 +91,7 @@ export async function trend(message: Message, args: string[], userDataService: U
                 { name: 'Avg GPM', value: Math.round(matches.reduce((s: number, m: any) => s + m.gold_per_min, 0) / matches.length).toString(), inline: true },
             )
             .setImage('attachment://trend.png')
-            .setFooter({ text: `Try +trend gpm | +trend wr | +trend kda` })
+            .setFooter({ text: `Try +trend gpm turbo | +trend wr as invoker | +trend kda` })
             .setTimestamp();
 
         await message.reply({ embeds: [embed], files: [attachment] });

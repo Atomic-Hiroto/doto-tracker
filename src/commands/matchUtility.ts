@@ -119,8 +119,10 @@ export async function matchInventory(message: Message, args: string[], userDataS
         const recent = await opendotaClient.get<any[]>(`/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: 30, significant: 0 })}`);
         const matches = applyResidualFilters(recent.data || [], filter).slice(0, 12);
         const detailed = await Promise.all(matches.map((m) => opendotaClient.get<any>(`/matches/${m.match_id}`).then((res) => res.data).catch(() => null)));
+        const usableMatches = detailed.filter(Boolean);
+        if (usableMatches.length === 0) return message.reply('No detailed matches were available for that inventory slice.');
         const counts = new Map<string, number>();
-        for (const match of detailed.filter(Boolean)) {
+        for (const match of usableMatches) {
             const player = (match.players || []).find((p: any) => String(p.account_id || '') === String(user.steamId));
             if (!player) continue;
             for (const name of await itemNames(itemSlots(player))) counts.set(name, (counts.get(name) || 0) + 1);
@@ -128,10 +130,10 @@ export async function matchInventory(message: Message, args: string[], userDataS
         const rows = [...counts.entries()]
             .sort((a, b) => b[1] - a[1])
             .slice(0, 14)
-            .map(([label, count]) => ({ label, count, items: [`Appeared in ${count}/${matches.length} sampled matches`] }));
+            .map(([label, count]) => ({ label, count, items: [`Appeared in ${count}/${usableMatches.length} usable matches`] }));
         const image = renderInventoryImage(rows, {
             title: `Common End Items — ${targetUser.username}`,
-            subtitle: `${matches.length} matches${filter.descriptionParts.length ? ` • ${filter.descriptionParts.join(' • ')}` : ''}`,
+            subtitle: `${usableMatches.length}/${matches.length} fetched matches usable${filter.descriptionParts.length ? ` • ${filter.descriptionParts.join(' • ')}` : ''}`,
         });
         const attachment = new AttachmentBuilder(image, { name: 'inventory.png' });
         return message.reply({ embeds: [new EmbedBuilder().setColor('#7c3aed').setTitle('🎒 Inventory Slice').setImage('attachment://inventory.png')], files: [attachment] });
@@ -157,8 +159,10 @@ export async function roles(message: Message, args: string[], userDataService: U
         const recent = await opendotaClient.get<any[]>(`/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: 40, significant: 0 })}`);
         const matches = applyResidualFilters(recent.data || [], filter).slice(0, 20);
         const detailed = await Promise.all(matches.map((m) => opendotaClient.get<any>(`/matches/${m.match_id}`).then((res) => res.data).catch(() => null)));
+        const usableMatches = detailed.filter(Boolean);
+        if (usableMatches.length === 0) return message.reply('No detailed matches were available for that role slice.');
         const counts = new Map<string, number>();
-        for (const match of detailed.filter(Boolean)) {
+        for (const match of usableMatches) {
             const player = (match.players || []).find((p: any) => String(p.account_id || '') === String(user.steamId));
             if (!player) continue;
             const label = ROLE_LABELS[Number(player.lane_role ?? 0)] || 'Unknown';
@@ -168,7 +172,7 @@ export async function roles(message: Message, args: string[], userDataService: U
         const rows = [...counts.entries()].map(([label, value], index) => ({ label, value, color: colors[index % colors.length] }));
         const image = renderRoleDistribution(rows, {
             title: `Role Distribution — ${targetUser.username}`,
-            subtitle: `${matches.length} parsed/recent matches${filter.descriptionParts.length ? ` • ${filter.descriptionParts.join(' • ')}` : ''}`,
+            subtitle: `${usableMatches.length}/${matches.length} fetched matches usable${filter.descriptionParts.length ? ` • ${filter.descriptionParts.join(' • ')}` : ''}`,
         });
         const attachment = new AttachmentBuilder(image, { name: 'roles.png' });
         await message.reply({ embeds: [new EmbedBuilder().setColor('#7c3aed').setTitle('🧭 Role Distribution').setImage('attachment://roles.png')], files: [attachment] });
@@ -220,7 +224,7 @@ export async function percent(message: Message, args: string[], userDataService:
             .setDescription(`**${found.item.dname || found.key}** appeared in **${hits}/${total}** sampled matches (**${pct}%**).`)
             .addFields(
                 { name: 'Filter', value: filter.descriptionParts.join(' • ') || 'recent matches', inline: false },
-                { name: 'Wins with item', value: `${wins}/${hits || 1}`, inline: true },
+                { name: 'Wins with item', value: hits > 0 ? `${wins}/${hits}` : '0/0', inline: true },
             )
             .setTimestamp();
         await message.reply({ embeds: [embed] });
