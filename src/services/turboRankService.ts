@@ -7,7 +7,7 @@ import {
   TurboRankObservation,
   TurboRankEstimate,
 } from '../models/TurboRank';
-import { fetchPlayerTurboMatchesWithRanks } from './stratzClient';
+import { fetchPlayerTurboMatches } from './stratzClient';
 
 const TURBO_RANK_FILE = 'turboRankData.json';
 const TURBO_GAME_MODE = 23;
@@ -40,13 +40,14 @@ const MEDAL_NAMES: Record<number, string> = {
 /** MMR per star within a medal tier (~154 per 2 stars ≈ 77 per star). */
 const MMR_PER_STAR = 77;
 
-/** Party-size to observation weight. Solo = strongest signal. */
+/** Party-size to observation weight. Solo = strongest signal.
+ *  Spread is aggressive: a single solo game is worth 50× a 5-stack game. */
 const PARTY_WEIGHTS: Record<number, number> = {
   1: 1.0,
-  2: 0.7,
-  3: 0.4,
-  4: 0.2,
-  5: 0.1,
+  2: 0.45,
+  3: 0.15,
+  4: 0.05,
+  5: 0.02,
 };
 
 /** Half-life for recency decay in days. */
@@ -237,14 +238,20 @@ export class TurboRankService {
 
   private computePartySizeOpenDota(players: any[], trackedPlayer: any): number {
     const partyId = trackedPlayer.party_id;
-    if (partyId == null) return 1;
-    return players.filter(p => p.party_id === partyId).length;
+    // party_id is null or 0 for solo players
+    if (partyId == null || partyId === 0) return 1;
+    const sameParty = players.filter(p => p.party_id === partyId).length;
+    // If only 1 player has this partyId, they're solo
+    return sameParty <= 1 ? 1 : sameParty;
   }
 
   private computePartySizeStratz(players: any[], trackedPlayer: any): number {
     const partyId = trackedPlayer.partyId;
-    if (partyId == null) return 1;
-    return players.filter((p: any) => p.partyId === partyId).length;
+    // partyId is null or 0 for solo players
+    if (partyId == null || partyId === 0) return 1;
+    const sameParty = players.filter((p: any) => p.partyId === partyId).length;
+    // If only 1 player has this partyId, they're solo
+    return sameParty <= 1 ? 1 : sameParty;
   }
 
   // ── Estimate computation ─────────────────────────────────────────────────
@@ -273,8 +280,12 @@ export class TurboRankService {
     const estimatedMMR = Math.round(weightedSum / totalWeight);
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
-    // Confidence: based on effective sample size. 20+ effective samples ≈ 100%.
-    const confidence = Math.min(100, Math.round((totalWeight / 20) * 100));
+    // Confidence is a blend of effective sample weight AND solo-game presence.
+    // Without solo games, confidence is capped at 35% because party games
+    // heavily distort the signal.
+    const rawConf = Math.min(100, Math.round((totalWeight / 15) * 100));
+    const soloBonus = soloCount >= 10 ? 1.0 : soloCount >= 5 ? 0.85 : soloCount >= 1 ? 0.6 : 0.35;
+    const confidence = Math.min(100, Math.round(rawConf * soloBonus));
 
     return {
       estimatedMMR,
@@ -317,14 +328,17 @@ export class TurboRankService {
   }
 
   /**
-   * Retroactive calibration — fetch up to `take` recent Turbo matches from
-   * Stratz and build the observation history. Returns the estimate.
+   * Retroactive calibration from Stratz:
+   *  1. Fetches turbo matches from the last 1 year, paginating up to 300 matches
+   *     until we find at least 15 solo games (to give a high-quality "better read" performance estimate).
+   *  2. Fallback to older matches (without date filter) if the player is inactive/no recent matches.
+   *  3. Processes all retrieved matches and estimates hidden turbo rank.
    */
   async calibratePlayer(
     discordId: string,
     steamId: string,
-    take = 50,
-    onProgress?: (fetched: number, total: number) => void,
+    take = 100,
+    onProgress?: (fetched: number, total: number, phase?: string) => void,
   ): Promise<TurboRankEstimate | null> {
     const steamAccountId = parseInt(steamId, 10);
     if (isNaN(steamAccountId)) {
@@ -333,22 +347,71 @@ export class TurboRankService {
     }
 
     try {
-      const matches = await fetchPlayerTurboMatchesWithRanks(steamAccountId, take);
-      if (!matches || matches.length === 0) {
+      const oneYearAgo = Math.floor(Date.now() / 1000) - 365 * 24 * 3600;
+      let allMatches: any[] = [];
+      let skip = 0;
+      const limitPerPage = 100;
+      const maxPages = 3;
+
+      onProgress?.(0, 0, 'Fetching recent turbo matches (last 1 year)…');
+
+      for (let page = 1; page <= maxPages; page++) {
+        const pageMatches = await fetchPlayerTurboMatches(steamAccountId, limitPerPage, skip, oneYearAgo);
+        logger.info(`Stratz page ${page}: fetched ${pageMatches.length} matches for ${steamId}`);
+
+        if (pageMatches.length === 0) break;
+        allMatches.push(...pageMatches);
+
+        // Count solo matches found so far
+        const totalSolo = allMatches.filter(m => {
+          const tracked = m.players?.find((p: any) => p.steamAccountId === steamAccountId);
+          if (!tracked) return false;
+          const partyId = tracked.partyId;
+          if (partyId == null || partyId === 0) return true;
+          const sameParty = m.players.filter((p: any) => p.partyId === partyId).length;
+          return sameParty <= 1;
+        }).length;
+
+        logger.info(`Total solo matches found so far: ${totalSolo}`);
+
+        // If we have at least 15 solo matches, or the page was not full (no more matches), stop pagination
+        if (totalSolo >= 15 || pageMatches.length < limitPerPage) {
+          break;
+        }
+
+        skip += limitPerPage;
+      }
+
+      // Fallback: if no matches in the last 1 year, fetch older matches (no date filter, up to 100 matches)
+      if (allMatches.length === 0) {
+        logger.info(`No Stratz matches in last year, falling back to older matches for ${steamId}`);
+        onProgress?.(0, 0, 'No recent matches. Fetching older matches…');
+        allMatches = await fetchPlayerTurboMatches(steamAccountId, 100, 0, null);
+      }
+
+      // Deduplicate
+      const seenIds = new Set<number>();
+      const merged: any[] = [];
+      for (const m of allMatches) {
+        if (!seenIds.has(m.id)) {
+          seenIds.add(m.id);
+          merged.push(m);
+        }
+      }
+
+      if (merged.length === 0) {
         logger.info(`No Stratz turbo matches found for ${steamId}`);
-        // Fall back to OpenDota
         return this.calibratePlayerOpenDota(discordId, steamId, take, onProgress);
       }
 
       const player = this.getOrCreatePlayer(discordId, steamId);
+      // Clear old observations for a fresh calibration
+      player.observations = [];
       let added = 0;
 
-      for (let i = 0; i < matches.length; i++) {
-        const match = matches[i];
-        onProgress?.(i + 1, matches.length);
-
-        // Skip already-seen matches
-        if (player.observations.some(o => o.matchId === match.id)) continue;
+      for (let i = 0; i < merged.length; i++) {
+        const match = merged[i];
+        onProgress?.(i + 1, merged.length, 'Processing matches…');
 
         const obs = this.extractObservationFromStratz(match, steamAccountId);
         if (obs) {
@@ -361,8 +424,9 @@ export class TurboRankService {
       this.data.lastCalibrated = Date.now();
       this.save();
 
+      const soloObs = player.observations.filter(o => o.partySize === 1).length;
       logger.info(
-        `Calibration for ${discordId}: ${added} new observations from ${matches.length} matches. ` +
+        `Calibration for ${discordId}: ${added} observations (${soloObs} solo) from ${merged.length} matches. ` +
         `Estimate: ${player.estimate?.medal ?? 'N/A'} (MMR ~${player.estimate?.estimatedMMR ?? '?'})`,
       );
 
@@ -373,15 +437,11 @@ export class TurboRankService {
     }
   }
 
-  /**
-   * Fallback calibration using OpenDota. Fetches recent Turbo matches and
-   * then fetches each match's full details for rank_tier data.
-   */
   private async calibratePlayerOpenDota(
     discordId: string,
     steamId: string,
     take: number,
-    onProgress?: (fetched: number, total: number) => void,
+    onProgress?: (fetched: number, total: number, phase?: string) => void,
   ): Promise<TurboRankEstimate | null> {
     try {
       // Fetch recent turbo matches via OpenDota
@@ -397,7 +457,7 @@ export class TurboRankService {
 
       for (let i = 0; i < matchList.length; i++) {
         const m = matchList[i];
-        onProgress?.(i + 1, matchList.length);
+        onProgress?.(i + 1, matchList.length, 'Fetching match details from OpenDota…');
 
         if (player.observations.some(o => o.matchId === m.match_id)) continue;
 
