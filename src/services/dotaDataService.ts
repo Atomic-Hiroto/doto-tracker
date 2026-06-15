@@ -10,7 +10,12 @@ interface HeroData {
 interface ItemData {
     id: number;
     dname: string;
+    img?: string;
 }
+
+// OpenDota item icons live behind cdn.steamstatic.com (the cloudflare host
+// 301-redirects, which canvas/Discord won't follow).
+const OD_IMG_BASE = 'https://cdn.steamstatic.com';
 
 interface AbilityData {
     id: number;
@@ -143,6 +148,13 @@ class DotaDataService {
         if (itemId === 0) return 'Empty Slot';
         const item = this.items.get(itemId);
         return item ? item.dname : 'Unknown Item';
+    }
+
+    getItemImageUrl(itemId: number): string | undefined {
+        if (!itemId) return undefined;
+        const item = this.items.get(itemId);
+        if (!item?.img) return undefined;
+        return OD_IMG_BASE + item.img.split('?')[0];
     }
 
     async getAbilityName(abilityId: number): Promise<string> {

@@ -1,4 +1,5 @@
 import {
+    AttachmentBuilder,
     ButtonInteraction,
     ChatInputCommandInteraction,
     Client,
@@ -16,6 +17,14 @@ import { TurboStatsService } from './turboStatsService';
 import * as commandHandlers from '../commands';
 import { createMatchDetailRow } from '../components/matchButtons';
 import { referenceService } from './referenceService';
+import { renderMatchAdvantageGraph, renderMatchScoreboard, ScoreboardPlayer, ScoreboardTeam } from './chartService';
+import { APIConstants } from '../constants';
+
+const GAME_MODE_NAMES: Record<number, string> = {
+    0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
+    4: 'Single Draft', 5: 'All Random', 8: 'Reverse Captains Mode',
+    16: 'Captains Draft', 22: 'All Draft', 23: 'Turbo', 24: 'Mutation',
+};
 
 function asMessageAdapter(interaction: ButtonInteraction): any {
     const noop = async () => undefined;
@@ -220,30 +229,96 @@ export function registerInteractionHandler(client: Client, userDataService: User
                     return interaction.followUp({ content: 'Could not fetch match details.', ephemeral: true });
                 }
 
-                const radiantPlayers = match.players.filter((p: any) => p.player_slot < 128);
-                const direPlayers = match.players.filter((p: any) => p.player_slot >= 128);
+                const clicker = userDataService.getUserByDiscordId(interaction.user.id);
+                const focusSteamId = clicker ? String(clicker.steamId) : undefined;
 
-                const formatPlayerLine = async (p: any) => {
+                const toScoreboardPlayer = async (p: any): Promise<ScoreboardPlayer> => {
                     const hero = await dotaDataService.getHeroName(p.hero_id);
-                    return `**${p.personaname || 'Unknown'}** (${hero}): ${p.kills}/${p.deaths}/${p.assists} | ${p.gold_per_min} GPM`;
+                    const itemImageUrls = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5']
+                        .map((slot) => dotaDataService.getItemImageUrl(Number(p[slot] || 0)));
+                    return {
+                        heroName: hero,
+                        heroImageUrl: APIConstants.IMAGE_URL(hero),
+                        personaName: p.personaname || 'Anonymous',
+                        level: Number(p.level || 0),
+                        kills: p.kills ?? 0,
+                        deaths: p.deaths ?? 0,
+                        assists: p.assists ?? 0,
+                        gpm: p.gold_per_min ?? 0,
+                        lastHits: p.last_hits ?? 0,
+                        netWorth: Number(p.net_worth ?? p.total_gold ?? 0),
+                        itemImageUrls,
+                        isFocus: !!focusSteamId && String(p.account_id) === focusSteamId,
+                    };
                 };
 
-                const radiantLines = await Promise.all(radiantPlayers.map(formatPlayerLine));
-                const direLines = await Promise.all(direPlayers.map(formatPlayerLine));
+                const radiantPlayers = match.players.filter((p: any) => p.player_slot < 128);
+                const direPlayers = match.players.filter((p: any) => p.player_slot >= 128);
+                const modeName = GAME_MODE_NAMES[Number(match.game_mode)] || `Mode ${match.game_mode ?? '?'}`;
 
-                const embed = new EmbedBuilder()
-                    .setColor(match.radiant_win ? '#66bb6a' : '#ef5350')
-                    .setTitle(`Match #${matchId} — ${match.radiant_win ? 'Radiant Victory' : 'Dire Victory'}`)
-                    .addFields(
-                        { name: '🟢 Radiant', value: radiantLines.join('\n') || 'N/A', inline: false },
-                        { name: '🔴 Dire', value: direLines.join('\n') || 'N/A', inline: false },
-                        { name: 'Duration', value: formatDuration(match.duration), inline: true },
-                        { name: 'Mode', value: match.game_mode?.toString() || 'Unknown', inline: true },
-                    )
-                    .setURL(`https://www.opendota.com/matches/${matchId}`)
-                    .setTimestamp(new Date(match.start_time * 1000));
+                const radiantTeam: ScoreboardTeam = {
+                    name: 'Radiant', won: !!match.radiant_win, score: match.radiant_score ?? 0,
+                    players: await Promise.all(radiantPlayers.map(toScoreboardPlayer)),
+                };
+                const direTeam: ScoreboardTeam = {
+                    name: 'Dire', won: !match.radiant_win, score: match.dire_score ?? 0,
+                    players: await Promise.all(direPlayers.map(toScoreboardPlayer)),
+                };
 
-                await interaction.followUp({ embeds: [embed] });
+                const files: AttachmentBuilder[] = [];
+                const embeds: EmbedBuilder[] = [];
+
+                // Visual scoreboard: hero icons, name+level, K/D/A, GPM, net worth, items.
+                try {
+                    const scoreboard = await renderMatchScoreboard(radiantTeam, direTeam, {
+                        matchId, durationSec: match.duration, mode: modeName,
+                    });
+                    files.push(new AttachmentBuilder(scoreboard, { name: 'scoreboard.png' }));
+                    embeds.push(new EmbedBuilder()
+                        .setColor(match.radiant_win ? '#66bb6a' : '#ef5350')
+                        .setTitle(`Match #${matchId} — ${match.radiant_win ? 'Radiant Victory' : 'Dire Victory'}`)
+                        .setURL(`https://www.opendota.com/matches/${matchId}`)
+                        .setImage('attachment://scoreboard.png')
+                        .setTimestamp(new Date(match.start_time * 1000)));
+                } catch (boardError) {
+                    logger.error(`Failed to render scoreboard for match ${matchId}:`, boardError);
+                    // Fall back to a text scoreboard so Details still works if rendering fails.
+                    const line = (p: ScoreboardPlayer) => `**${p.personaName}** (${p.heroName}): ${p.kills}/${p.deaths}/${p.assists} | ${p.gpm} GPM`;
+                    embeds.push(new EmbedBuilder()
+                        .setColor(match.radiant_win ? '#66bb6a' : '#ef5350')
+                        .setTitle(`Match #${matchId} — ${match.radiant_win ? 'Radiant Victory' : 'Dire Victory'}`)
+                        .addFields(
+                            { name: `🟢 Radiant ${match.radiant_win ? '👑' : ''}`.trim(), value: radiantTeam.players.map(line).join('\n') || 'N/A', inline: false },
+                            { name: `🔴 Dire ${!match.radiant_win ? '👑' : ''}`.trim(), value: direTeam.players.map(line).join('\n') || 'N/A', inline: false },
+                            { name: 'Score', value: `${match.radiant_score ?? '?'}–${match.dire_score ?? '?'}`, inline: true },
+                            { name: 'Duration', value: formatDuration(match.duration), inline: true },
+                            { name: 'Mode', value: modeName, inline: true },
+                        )
+                        .setURL(`https://www.opendota.com/matches/${matchId}`));
+                }
+
+                // Gold/XP advantage graph as a second embed when timeline data exists.
+                const goldAdv: number[] = match.radiant_gold_adv || [];
+                const xpAdv: number[] = match.radiant_xp_adv || [];
+                if (goldAdv.length >= 2) {
+                    try {
+                        const buffer = renderMatchAdvantageGraph(goldAdv, xpAdv, {
+                            title: `Gold & XP Advantage — Match ${matchId}`,
+                            radiantWin: !!match.radiant_win,
+                        });
+                        files.push(new AttachmentBuilder(buffer, { name: 'advantage.png' }));
+                        embeds.push(new EmbedBuilder()
+                            .setColor(match.radiant_win ? '#10b981' : '#ef4444')
+                            .setImage('attachment://advantage.png')
+                            .setFooter({ text: 'Green = Radiant ahead • Red = Dire ahead • dashed = XP' }));
+                    } catch (graphError) {
+                        logger.error(`Failed to render advantage graph for match ${matchId}:`, graphError);
+                    }
+                } else {
+                    embeds[embeds.length - 1].setFooter({ text: 'No timeline yet — parse this match on OpenDota for the advantage graph.' });
+                }
+
+                await interaction.followUp({ embeds, files });
 
             } else if (customId.startsWith('pickmatch_')) {
                 const matchId = parseInt(customId.replace('pickmatch_', ''), 10);
