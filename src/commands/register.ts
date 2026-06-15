@@ -14,6 +14,11 @@ export async function register(message: Message, args: string[], userDataService
     return message.reply('Invalid Steam ID. Please provide a valid 32-bit Steam ID.');
   }
 
+  const existingDiscordUser = userDataService.getUserByDiscordId(message.author.id);
+  if (existingDiscordUser) {
+    return message.reply(`You are already registered with Steam ID ${existingDiscordUser.steamId}. Use \`+unregister\` first if you want to switch accounts.`);
+  }
+
   const existingUser = userDataService.getUserBySteamId(steamId);
   if (existingUser) {
     return message.reply(Replies.ALREADY_REGISTERED(steamId, existingUser.discordId));

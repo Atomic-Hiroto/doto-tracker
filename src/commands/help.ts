@@ -21,14 +21,14 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+trend [@user] [kda|gpm|wr]` — performance trend graph',
       '`+heroes [@user]` — most-played heroes & win rates',
       '`+compare @p1 @p2` — head-to-head comparison',
-      '`+achievements [@user]` — unlocked achievements',
+      '`+achievements [@user]` — achievements from bot-tracked matches',
     ],
   },
   {
     name: '🏆 Turbo',
     lines: [
-      '`+turbolb` — turbo leaderboard',
-      '`+turbostats` — your turbo stats',
+      '`+turbolb` — tracked turbo leaderboard',
+      '`+turbostats` — your tracked turbo stats',
       '`+topheros [@user]` — best turbo heroes (4 weeks)',
       '`+turbopairs` — best turbo duos',
       '`+myturbopairs` — your turbo partnerships',
@@ -60,7 +60,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+skillbuild <match_id> <player|hero>` — skill order image',
       '`+inventory <match_id>` — end-game inventory image',
       '`+inventory [@user] [filters]` — common end items',
-      '`+roles [@user] [filters]` — role distribution graph',
+      '`+roles [@user] [filters]` — parsed role distribution graph',
       '`+% [@user] [filters] with <item>` — item % query',
     ],
   },
@@ -81,7 +81,7 @@ export async function help(message: Message) {
   const embed = new EmbedBuilder()
     .setColor('#7c3aed')
     .setTitle('🎯 Doto Tracker — Commands')
-    .setDescription('Stats, visuals and AI coaching for Dota 2. Reply to any analysis embed to keep the conversation going.')
+    .setDescription('Stats, visuals and AI coaching for Dota 2. Reply to any analysis embed to keep the conversation going. Local streak/turbo/achievement stats use bot-tracked matches.')
     .setFooter({ text: 'Most commands work as slash commands too • prefix: +' });
 
   for (const section of SECTIONS) {

@@ -28,6 +28,7 @@ async function trackMatchForPlayer(
   channel: TextBasedChannel,
   userDataService: UserDataService,
   turboStatsService?: TurboStatsService,
+  shouldAnnounce = true,
 ) {
   try {
     const summary = player.match;
@@ -65,10 +66,10 @@ async function trackMatchForPlayer(
       turboGames: turbo ? turbo.wins + turbo.losses : undefined,
     });
 
-    if (streakEvent) {
+    if (shouldAnnounce && streakEvent) {
       await safeSend(channel, streakService.getStreakAnnouncement(streakEvent, username));
     }
-    for (const ach of newAchievements) {
+    for (const ach of shouldAnnounce ? newAchievements : []) {
       await safeSend(channel, `🎉 **Achievement Unlocked!** ${ach.emoji}\n**${username}** earned **${ach.name}** — *${ach.description}*`);
     }
   } catch (error) {
@@ -89,22 +90,43 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
     return;
   }
 
-  const recentMatches = new Map<number, Array<{ discordId: string; steamId: string; match: any }>>();
+  const recentMatches = new Map<number, Array<{ discordId: string; steamId: string; match: any; shouldPost: boolean }>>();
 
   for (const user of userDataService.getAllUsers()) {
-    if (!user.autoShow) continue;
-
     try {
-      const response = await opendotaClient.get<Array<any>>(`/players/${user.steamId}/recentMatches`);
-      const recentMatch = response.data[0];
-      if (!user.lastCheckedMatch || user.lastCheckedMatch !== recentMatch.match_id) {
-        user.lastCheckedMatch = recentMatch.match_id;
-        userDataService.updateUser(user);
+      const response = await opendotaClient.get<Array<any>>(`/players/${user.steamId}/recentMatches?limit=20`);
+      const matches = response.data || [];
+      if (matches.length === 0) continue;
 
+      const latestMatchId = matches[0]?.match_id;
+      if (!latestMatchId) continue;
+
+      const lastChecked = user.lastCheckedMatch;
+      const lastCheckedIndex = lastChecked
+        ? matches.findIndex((match) => match.match_id === lastChecked)
+        : -1;
+      const unseen = lastChecked
+        ? (lastCheckedIndex >= 0 ? matches.slice(0, lastCheckedIndex) : matches)
+        : matches.slice(0, 1);
+
+      if (unseen.length > 0 || user.lastCheckedMatch !== latestMatchId) {
+        user.lastCheckedMatch = latestMatchId;
+        userDataService.updateUser(user);
+      }
+
+      // Process oldest first so streaks and counters remain chronological when
+      // a player had multiple matches between polls.
+      for (const recentMatch of unseen.reverse()) {
+        const recoveredFromOldCursor = !!lastChecked && lastCheckedIndex === -1;
         if (!recentMatches.has(recentMatch.match_id)) {
           recentMatches.set(recentMatch.match_id, []);
         }
-        recentMatches.get(recentMatch.match_id)!.push({ discordId: user.discordId, steamId: user.steamId, match: recentMatch });
+        recentMatches.get(recentMatch.match_id)!.push({
+          discordId: user.discordId,
+          steamId: user.steamId,
+          match: recentMatch,
+          shouldPost: user.autoShow && (!recoveredFromOldCursor || recentMatch.match_id === latestMatchId),
+        });
       }
     } catch (error) {
       logger.error(`Error fetching recent matches for user ${user.discordId}:`, error);
@@ -112,10 +134,13 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
   }
 
   for (const [matchId, players] of recentMatches) {
+    const postPlayers = players.filter((player) => player.shouldPost);
     const isParsed = await isMatchParsed(matchId);
     if (!isParsed) {
       await requestMatchParse(matchId);
-      await channel.send(`A parse request has been sent for match ${matchId}. More detailed stats will be available soon.`);
+      if (postPlayers.length > 0) {
+        await channel.send(`A parse request has been sent for match ${matchId}. More detailed stats will be available soon.`);
+      }
     }
 
     if (turboStatsService) {
@@ -131,13 +156,13 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
     // Streaks + achievements run after turbo stats so score-based achievements
     // see this match's updated turbo numbers.
     for (const player of players) {
-      await trackMatchForPlayer(player, channel, userDataService, turboStatsService);
+      await trackMatchForPlayer(player, channel, userDataService, turboStatsService, player.shouldPost);
     }
 
-    if (players.length > 1) {
-      await displayCombinedScoreboard(matchId, players, channel);
-    } else {
-      await displayMatchStats(players[0].discordId, players[0].steamId, players[0].match, channel);
+    if (postPlayers.length > 1) {
+      await displayCombinedScoreboard(matchId, postPlayers, channel);
+    } else if (postPlayers.length === 1) {
+      await displayMatchStats(postPlayers[0].discordId, postPlayers[0].steamId, postPlayers[0].match, channel);
     }
   }
 
