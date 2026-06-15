@@ -8,6 +8,7 @@ export { caow } from './caow';
 export { story } from './story';
 export { turboLeaderboard, turboStats } from './turboLeaderboard';
 export { turboPairings, myTurboPairings } from './turboPairings';
+export { turboRank } from './turboRank';
 export { toggleSharedContext } from './toggleSharedContext';
 export { profile } from './profile';
 export { tophero } from './tophero';

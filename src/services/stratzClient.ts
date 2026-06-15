@@ -311,3 +311,74 @@ export async function waitForStratzParse(
 
   return false;
 }
+
+// ── Turbo rank calibration query ────────────────────────────────────────────
+
+const PLAYER_TURBO_MATCHES_QUERY = `
+query ($steamAccountId: Long!, $take: Int!) {
+  player(steamAccountId: $steamAccountId) {
+    matches(request: { gameModeIds: [23], take: $take, orderBy: DESC }) {
+      id
+      startDateTime
+      averageRank
+      players {
+        steamAccountId
+        playerSlot
+        isRadiant
+        partyId
+        steamAccount { seasonRank }
+      }
+    }
+  }
+}
+`;
+
+/**
+ * Fetches a player's recent Turbo matches with rank data for all 10 players.
+ * Used for retroactive turbo rank calibration.
+ */
+export async function fetchPlayerTurboMatchesWithRanks(
+  steamAccountId: number,
+  take = 50,
+): Promise<any[]> {
+  if (!STRATZ_API_KEY) {
+    logger.warn('STRATZ_API_KEY not set — cannot fetch turbo rank data');
+    return [];
+  }
+
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: PLAYER_TURBO_MATCHES_QUERY,
+        variables: { steamAccountId, take },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${STRATZ_API_KEY}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'STRATZ_API',
+          Accept: 'application/json',
+        },
+        timeout: 30000,
+      },
+    );
+
+    if (response.data?.errors) {
+      logger.warn(
+        `Stratz turbo matches errors for ${steamAccountId}:`,
+        JSON.stringify(response.data.errors),
+      );
+    }
+
+    const matches = response.data?.data?.player?.matches ?? [];
+    logger.debug(`Stratz returned ${matches.length} turbo matches for ${steamAccountId}`);
+    return matches;
+  } catch (error: any) {
+    logger.error(
+      `Stratz turbo matches fetch error for ${steamAccountId}:`,
+      error?.response?.data ?? error?.message ?? error,
+    );
+    return [];
+  }
+}

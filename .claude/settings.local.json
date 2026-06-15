@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git diff *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(curl -s \"https://api.opendota.com/api/matches/8845427322\")",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>{const m=JSON.parse\\(d\\);const p=m.players[0];console.log\\('keys with log:',Object.keys\\(p\\).filter\\(k=>k.includes\\('log'\\)||k.includes\\('death'\\)\\)\\);console.log\\('death_log?',p.death_log===undefined?'ABSENT':'present'\\);console.log\\('kills_log sample:',JSON.stringify\\(\\(p.kills_log||[]\\).slice\\(0,2\\)\\)\\);}\\)\")",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(awk 'NR>=600 && NR<=745 && \\(/^async function/ || /^function/ || /^export/ || /buildAnalyze|prompt =|formatMatchDataForAI|prepareMatch/\\)' /mnt/c/Users/user/Documents/Codingz/doto-tracker/src/commands/aiCommands.ts)",
+      "Bash(awk -F: '$1 < 900')",
+      "Bash(awk -F: '$1>=446 && $1<=890')",
+      "Bash(git show *)"
+    ]
+  }
+}

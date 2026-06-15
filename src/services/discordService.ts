@@ -87,6 +87,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.MY_TURBO_PAIRINGS:
       await commandHandlers.myTurboPairings(message, turboStatsService);
       break;
+    case Commands.TURBO_RANK:
+      await commandHandlers.turboRank(message, args, userDataService);
+      break;
     case Commands.TOGGLE_SHARED_CONTEXT:
       await commandHandlers.toggleSharedContext(message, args);
       break;

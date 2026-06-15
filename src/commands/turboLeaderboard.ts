@@ -1,5 +1,6 @@
 import { Message, EmbedBuilder } from 'discord.js';
 import { TurboStatsService } from '../services/turboStatsService';
+import { turboRankService, TurboRankService } from '../services/turboRankService';
 import { logger } from '../services/loggerService';
 
 export async function turboLeaderboard(message: Message, turboStatsService: TurboStatsService) {
@@ -24,8 +25,10 @@ export async function turboLeaderboard(message: Message, turboStatsService: Turb
       const winRate = ((player.wins / totalGames) * 100).toFixed(1);
 
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      const rankEstimate = turboRankService.getEstimate(player.discordId);
+      const rankTag = rankEstimate ? ` ${TurboRankService.formatShort(rankEstimate)}` : '';
 
-      leaderboardText += `${medal} **${user.username}**\n`;
+      leaderboardText += `${medal} **${user.username}**${rankTag}\n`;
       leaderboardText += `   Score: ${player.rating} | W/L: ${player.wins}/${player.losses} (${winRate}%)\n\n`;
     }
 
@@ -88,6 +91,19 @@ export async function turboStats(message: Message, turboStatsService: TurboStats
         { name: 'Record', value: `**${playerStats.wins}**W / **${playerStats.losses}**L`, inline: true },
         { name: 'Win Rate', value: `${winRate.toFixed(1)}%`, inline: true },
         { name: 'Games', value: totalGames.toString(), inline: true },
+      );
+
+    // Add hidden turbo rank if calibrated
+    const rankEstimate = turboRankService.getEstimate(target.id);
+    if (rankEstimate) {
+      embed.addFields({
+        name: '🔮 Hidden Turbo Rank',
+        value: `**${rankEstimate.medal}** (~${rankEstimate.estimatedMMR} MMR, ${rankEstimate.confidence}% confidence)`,
+        inline: false,
+      });
+    }
+
+    embed.addFields(
         {
           name: '🧮 Score Breakdown',
           value: `Raw win rate: **${winRate.toFixed(1)}%**\nConservative estimate (Wilson 95%): **${wilson.toFixed(1)}**\nActivity bonus (${totalGames} games): **+${activityBonus.toFixed(2)}**\n➡️ Score: **${playerStats.rating}**`,
