@@ -70,11 +70,13 @@ export async function profile(
     try {
         safeTyping(message.channel);
 
+        // significant=0 includes turbo/unranked so the "All Modes / Overall" labels
+        // below are accurate — the default would silently return ranked-standard only.
         const [profileRes, wlRes, totalsRes, heroesRes] = await Promise.all([
             opendotaClient.get<PlayerProfile>(`/players/${user.steamId}`),
-            opendotaClient.get<WinLoss>(`/players/${user.steamId}/wl`),
-            opendotaClient.get<TotalField[]>(`/players/${user.steamId}/totals`),
-            opendotaClient.get<HeroStats[]>(`/players/${user.steamId}/heroes`)
+            opendotaClient.get<WinLoss>(`/players/${user.steamId}/wl?significant=0`),
+            opendotaClient.get<TotalField[]>(`/players/${user.steamId}/totals?significant=0`),
+            opendotaClient.get<HeroStats[]>(`/players/${user.steamId}/heroes?significant=0`)
         ]);
 
         const playerProfile = profileRes.data;

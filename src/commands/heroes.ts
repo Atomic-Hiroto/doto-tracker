@@ -13,7 +13,7 @@ function getMasteryLevel(games: number, winRate: number): number {
     if (games < 5) return 0;
     if (games < 15) return 1;
     if (games < 30) return 2;
-    if (games < 50 || winRate < 0.5) return 3;
+    if (games < 50 || winRate < 0.55) return 3; // Master needs 50+ games AND 55%+ WR (matches footer legend)
     return 4;
 }
 
