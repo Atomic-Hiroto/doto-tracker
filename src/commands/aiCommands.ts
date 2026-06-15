@@ -1314,11 +1314,10 @@ ${turboSummary}
 Pub win rates (OpenDota, all modes):
 ${pubLines.join('\n')}
 
-Give a punchy meta snapshot (under 220 words):
+Give a punchy meta snapshot. Under 130 words. No markdown headings (no #). Use short lines with bold hero names. Cover:
 - Which lane/hero is dominating turbo right now and why
-- One hero that's great in turbo specifically (fast game = good)
 - One underrated turbo pick worth spamming
-- One key macro tip for turbo this patch
+- One key macro tip for turbo
 Be specific, spicy, and opinionated.`
             : `Current Dota 2 pub meta (OpenDota):
 ${pubLines.join('\n')}
@@ -1326,14 +1325,19 @@ ${pubLines.join('\n')}
 Turbo top heroes:
 ${turboLines.join('\n')}
 
-Give a brief meta snapshot (under 200 words):
+Give a brief meta snapshot. Under 130 words. No markdown headings (no #). Use short lines with bold hero names. Cover:
 - 2-3 strongest picks and why
 - Why 1-2 turbo heroes dominate
 - One underrated pick
-- One general strategy tip
 Keep it spicy and punchy.`;
 
-        const aiTake = await callAI(COACH_SYSTEM, aiPrompt);
+        // Strip any markdown headings the model adds (they render huge in embeds)
+        // and keep within the embed-description limit so the take is never cut off
+        // mid-sentence like it was when crammed into a 1024-char field.
+        const aiTake = trunc(
+            (await callAI(COACH_SYSTEM, aiPrompt) || 'No commentary available.').replace(/^#{1,6}\s*/gm, '').trim(),
+            4000,
+        );
 
         // ─── Build embed ────────────────────────────────────────────────────────────────────
         const embed = new EmbedBuilder()
@@ -1346,21 +1350,26 @@ Keep it spicy and punchy.`;
             embed.addFields(
                 ...laneFields,
                 { name: '🏆 Pub Win Rates (all modes)', value: trunc(pubLines.join('\n') || 'No data'), inline: false },
-                { name: '🎙️ doto-chan\'s take', value: trunc(aiTake || 'No commentary available.'), inline: false }
             );
             embed.setFooter({ text: 'Turbo data: Dotabuff (7d) • Pub data: OpenDota • doto-chan meta digest' });
         } else {
             embed.addFields(
                 { name: '🏆 Pub Win Rates', value: trunc(pubLines.join('\n') || 'No data'), inline: false },
                 { name: '⚡ Turbo Win Rates', value: trunc(turboLines.join('\n') || 'No data'), inline: false },
-                { name: '🎙️ doto-chan\'s take', value: trunc(aiTake || 'No commentary available.'), inline: false }
             );
             embed.setFooter({ text: 'Data: OpenDota • doto-chan meta digest' });
         }
 
+        // doto-chan's take lives in its own embed description (4096 limit) so it
+        // renders in full instead of being clipped inside a 1024-char field.
+        const takeEmbed = new EmbedBuilder()
+            .setColor('#0ea5e9')
+            .setTitle("🎙️ doto-chan's take")
+            .setDescription(aiTake);
+
         // Delete the loading message
         if (loadingMsg) await loadingMsg.delete().catch(() => null);
-        await message.reply({ embeds: [embed] });
+        await message.reply({ embeds: [embed, takeEmbed] });
     } catch (error) {
         logger.error('Error in meta command:', error);
         if (loadingMsg) await loadingMsg.delete().catch(() => null);
