@@ -136,6 +136,12 @@ const HOW_TEXT =
   '• **Lobby completeness** — a lobby where 8 players are ranked is far more reliable than one with 3, so thin, mostly-unranked lobbies are down-weighted instead of trusted blindly.\n' +
   '• **Honest uncertainty** — the confidence % and likely range scale with how much solid data backs the estimate, so a 3-game read shows low confidence and a wider range rather than false precision.';
 
+/** Dota rank medal icon (medal tier only — the star count is shown in the text). */
+function medalIconUrl(tier: number): string {
+  const t = Math.min(8, Math.max(1, tier));
+  return `https://www.opendota.com/assets/images/dota2/rank_icons/rank_icon_${t}.png`;
+}
+
 function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typeof turboRankService.getEstimateBySteamId>>, observations: TurboRankObservation[]): EmbedBuilder {
   const confLabel = estimate.confidence >= 80 ? 'High confidence'
     : estimate.confidence >= 50 ? 'Moderate confidence'
@@ -176,7 +182,7 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
     .setFooter({ text: `updated ${new Date(estimate.lastUpdated).toLocaleDateString()}` })
     .setTimestamp();
 
-  if (target.avatarURL) embed.setThumbnail(target.avatarURL);
+  embed.setThumbnail(medalIconUrl(estimate.medalTier));
   return embed;
 }
 
