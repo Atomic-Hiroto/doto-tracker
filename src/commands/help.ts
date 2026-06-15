@@ -32,6 +32,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbostudy` — hidden Turbo rank correlation study',
       '`+turborank [@user]` — estimated hidden turbo rank',
       '`+turborank calibrate` — calibrate from match history',
+      '`+turborank calibrateall` — owner-only recalibrate everyone',
       '`+turborank audit [@user]` — audit matches used by hidden rank',
       '`+turborank all` — hidden rank leaderboard',
       '`+topheros [@user]` — best turbo heroes (4 weeks)',

@@ -9,9 +9,12 @@ import { TurboRankObservation } from '../models/TurboRank';
 import { UserDataService } from '../services/userDataService';
 import { logger } from '../services/loggerService';
 
+const BOT_OWNER_ID = '78168838910246912';
+
 /**
  * +turborank [@user | steamId]   — view hidden turbo rank estimate
  * +turborank calibrate [@user | steamId] — retroactive calibration from match history
+ * +turborank calibrateall        — owner-only recalibration for registered + manual estimates
  * +turborank audit [@user | steamId] — show exact matches used by the estimate
  * +turborank all                 — leaderboard of all calculated players
  */
@@ -24,6 +27,9 @@ export async function turboRank(
 
   if (subcommand === 'all' || subcommand === 'leaderboard' || subcommand === 'lb') {
     return turboRankAll(message);
+  }
+  if (subcommand === 'calibrateall' || subcommand === 'calibrate-all' || subcommand === 'recalibrateall' || subcommand === 'recalc-all') {
+    return turboRankCalibrateAll(message, userDataService);
   }
   if (subcommand === 'calibrate' || subcommand === 'recalc') {
     return turboRankCalibrate(message, args.slice(1), userDataService);
@@ -41,6 +47,13 @@ interface RankTarget {
   name: string;
   discordId: string; // '' if unregistered
   avatarURL?: string;
+}
+
+interface BulkRankTarget {
+  steamId: string;
+  discordId: string;
+  name: string;
+  source: 'registered' | 'manual';
 }
 
 function looksLikeSteamId(s?: string): boolean {
@@ -121,6 +134,18 @@ function matchLink(matchId: number): string {
   return `[#${matchId}](https://stratz.com/matches/${matchId})`;
 }
 
+function formatMatchDate(timestamp: number): string {
+  const date = new Date(timestamp * 1000);
+  const iso = date.toISOString().slice(0, 10);
+  const ageDays = Math.max(0, Math.floor((Date.now() / 1000 - timestamp) / 86400));
+  const age = ageDays === 0 ? 'today'
+    : ageDays === 1 ? '1d ago'
+      : ageDays < 30 ? `${ageDays}d ago`
+        : ageDays < 365 ? `${Math.round(ageDays / 30)}mo ago`
+          : `${Math.round(ageDays / 365)}y ago`;
+  return `${iso} (${age})`;
+}
+
 function usedObservations(observations: TurboRankObservation[], partyFallback: boolean): TurboRankObservation[] {
   return partyFallback ? observations : observations.filter(o => o.partySize === 1);
 }
@@ -146,7 +171,7 @@ function recentLobbies(observations: TurboRankObservation[], partyFallback: bool
   if (recent.length === 0) return '_No games on record_';
   return recent
     .map(o => {
-      const date = new Date(o.timestamp * 1000).toLocaleDateString();
+      const date = formatMatchDate(o.timestamp);
       const type = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
       const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '—';
       const head = `${matchLink(o.matchId)} · **${mmrToMedal(o.lobbyMMR).medal}** lobby · ${type} · ${outcome} · ${date}`;
@@ -211,8 +236,8 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
       {
         name: 'Based on',
         value: estimate.partyFallback
-          ? `${estimate.sampleSize} party matches (no solo games found)\nEffective sample: **${estimate.effectiveSample}** heavily discounted lobbies`
-          : `${estimate.soloSampleSize} solo matches\nEffective sample: **${estimate.effectiveSample}** recency/completeness-weighted lobbies`,
+          ? `${estimate.sampleSize} party matches (no solo games found)\nEffective sample: **${estimate.effectiveSample}** visible-rank-weighted lobbies`
+          : `${estimate.soloSampleSize} solo matches\nEffective sample: **${estimate.effectiveSample}** visible-rank-weighted lobbies`,
         inline: false,
       },
       {
@@ -248,7 +273,7 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
   const lines = used.slice(0, 12).map((obs) => {
     const type = obs.partySize === 1 ? 'solo' : `${obs.partySize}-stack`;
     const outcome = obs.won === true ? 'W' : obs.won === false ? 'L' : '-';
-    const date = new Date(obs.timestamp * 1000).toLocaleDateString();
+    const date = formatMatchDate(obs.timestamp);
     return `${matchLink(obs.matchId)} · **${mmrToMedal(obs.lobbyMMR).medal}** · ${type} · ${outcome} · ${obs.visibleRanks}/9 ranks · ${date}`;
   });
 
@@ -263,7 +288,7 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
           `Used observations: **${used.length}** / stored **${observations.length}**\n` +
           `Solo observations: **${estimate.soloSampleSize}** | effective sample: **${estimate.effectiveSample}**\n` +
           `Average visible ranks: **${visibleAvg.toFixed(1)}/9** | ${ageText}\n` +
-          `Window: ${oldest ? new Date(oldest * 1000).toLocaleDateString() : 'n/a'} – ${newest ? new Date(newest * 1000).toLocaleDateString() : 'n/a'}`,
+          `Window: ${oldest ? formatMatchDate(oldest) : 'n/a'} – ${newest ? formatMatchDate(newest) : 'n/a'}`,
         inline: false,
       },
       {
@@ -349,6 +374,115 @@ async function turboRankCalibrate(message: Message, args: string[], userDataServ
     logger.error('Error in turborank calibrate:', error);
     await message.reply('An error occurred during calibration. Please try again later.');
   }
+}
+
+function getBulkCalibrationTargets(userDataService: UserDataService): BulkRankTarget[] {
+  const bySteamId = new Map<string, BulkRankTarget>();
+
+  for (const user of userDataService.getAllUsers()) {
+    bySteamId.set(user.steamId, {
+      steamId: user.steamId,
+      discordId: user.discordId,
+      name: turboRankService.getSteamName(user.steamId) ?? `Steam ${user.steamId}`,
+      source: 'registered',
+    });
+  }
+
+  for (const entry of turboRankService.getAllEstimates()) {
+    if (bySteamId.has(entry.steamId)) continue;
+    bySteamId.set(entry.steamId, {
+      steamId: entry.steamId,
+      discordId: entry.discordId,
+      name: entry.steamName ?? `Steam ${entry.steamId}`,
+      source: 'manual',
+    });
+  }
+
+  return [...bySteamId.values()].sort((a, b) => {
+    if (a.source !== b.source) return a.source === 'registered' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+// ── Bulk Calibrate ───────────────────────────────────────────────────────────
+
+async function turboRankCalibrateAll(message: Message, userDataService: UserDataService) {
+  if (message.author.id !== BOT_OWNER_ID) {
+    return message.reply('❌ Only the bot owner can bulk recalibrate Turbo ranks.');
+  }
+
+  const targets = getBulkCalibrationTargets(userDataService);
+  if (targets.length === 0) {
+    return message.reply('No registered or manually calibrated players found to recalibrate.');
+  }
+
+  const progressMsg = await message.reply(
+    `🔮 Bulk recalibrating Turbo ranks for **${targets.length}** players...\n` +
+    `Includes registered users and Steam-ID-only manual calibrations. This can take several minutes.`,
+  );
+
+  const successes: Array<{ target: BulkRankTarget; medal: string; confidence: number }> = [];
+  const failures: BulkRankTarget[] = [];
+
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i];
+    await progressMsg.edit(
+      `🔮 Bulk recalibrating Turbo ranks... **${i + 1}/${targets.length}**\n` +
+      `Now: **${target.name}** (${target.steamId}, ${target.source})\n` +
+      `Done: ${successes.length} ok, ${failures.length} failed`,
+    ).catch(() => {});
+
+    const estimate = await turboRankService.calibratePlayer(
+      target.discordId,
+      target.steamId,
+      100,
+    );
+
+    const refreshedName = turboRankService.getSteamName(target.steamId);
+    if (refreshedName) target.name = refreshedName;
+
+    if (estimate) {
+      successes.push({ target, medal: estimate.medal, confidence: estimate.confidence });
+    } else {
+      failures.push(target);
+    }
+
+    if (i < targets.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+
+  const topLines = successes
+    .slice()
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 10)
+    .map((entry) => `**${entry.target.name}** — ${entry.medal}, ${entry.confidence}% conf`);
+  const failureLines = failures.map((target) => `**${target.name}** (${target.steamId})`);
+
+  const embed = new EmbedBuilder()
+    .setColor(failures.length ? '#eab308' : '#10b981')
+    .setTitle('✅ Bulk Turbo Rank Recalibration Complete')
+    .setDescription(`Processed **${targets.length}** players: **${successes.length}** updated, **${failures.length}** failed.`)
+    .addFields(
+      {
+        name: 'Updated',
+        value: fitLines(topLines, '_No successful calibrations_'),
+        inline: false,
+      },
+      {
+        name: 'Failed / No Usable Rank Data',
+        value: fitLines(failureLines, '_None_'),
+        inline: false,
+      },
+      {
+        name: 'Next',
+        value: 'Run `+turbostudy` to compare the refreshed estimates, or `+turborank audit <steamId>` for suspicious outliers.',
+        inline: false,
+      },
+    )
+    .setTimestamp();
+
+  await progressMsg.edit({ content: null, embeds: [embed] });
 }
 
 // ── Audit ────────────────────────────────────────────────────────────────────

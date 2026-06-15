@@ -298,7 +298,7 @@ export class TurboRankService {
 
     let weightedSum = 0;
     let totalWeight = 0;
-    let effectiveSample = 0; // visible-rank and recency weighted reliability of the sample
+    let effectiveSample = 0; // visible-rank-weighted, undecayed (reliability of the sample)
 
     const weighted: Array<{ obs: TurboRankObservation; w: number }> = [];
     for (const obs of targets) {
@@ -308,7 +308,7 @@ export class TurboRankService {
       const w = recency * completeness * (partyFallback ? obs.partyWeight : 1.0);
       weightedSum += obs.lobbyMMR * w;
       totalWeight += w;
-      effectiveSample += w;
+      effectiveSample += completeness * (partyFallback ? obs.partyWeight : 1.0);
       weighted.push({ obs, w });
     }
     if (totalWeight === 0) return null;
@@ -316,11 +316,8 @@ export class TurboRankService {
     const estimatedMMR = Math.round(weightedSum / totalWeight);
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
-    // Confidence from recency + visible-rank weighted effective sample.
-    // Party fallback is intentionally capped because party games estimate stack
-    // matchmaking, not individual hidden Turbo MMR.
-    const baseConfidence = Math.min(100, Math.max(10, Math.round(effectiveSample * 8)));
-    const confidence = partyFallback ? Math.min(35, baseConfidence) : baseConfidence;
+    // Confidence from the visible-rank-weighted effective sample. ~12 full lobbies -> ~100%.
+    const confidence = Math.min(100, Math.max(10, Math.round(effectiveSample * 8)));
 
     // Range = ±1 standard error of the weighted mean (clamped to a sensible width).
     let variance = 0;
