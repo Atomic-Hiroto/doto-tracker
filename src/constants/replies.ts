@@ -45,6 +45,7 @@ Examples: \`won\`, \`lost\`, \`turbo\`, \`ranked\`, \`as invoker\`, \`against pu
 \`+help\` - Show this help message
 
 Most commands are also available as slash commands.`;
+// NOTE: HELP above is unused — the live help embed lives in src/commands/help.ts.
 export const CAOW = 'Thrower hai!!';
 export const PROVIDE_STEAM_ID = 'Please provide your Steam ID. Usage: +register <steam_id>';
 export const ALREADY_REGISTERED = (steamId: string, discordId: string) => `SteamId: ${steamId} is already registed with DiscordId: ${discordId}.`;
