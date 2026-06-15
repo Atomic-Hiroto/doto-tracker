@@ -21,6 +21,7 @@ const BULK_CALIBRATE_SUBCOMMANDS = new Set([
   'recalc_all',
   'caliball',
 ]);
+const BULK_PLAYER_TIMEOUT_MS = 120_000;
 
 /**
  * +turborank [@user | steamId]   — view hidden turbo rank estimate
@@ -178,6 +179,16 @@ function fitLines(lines: string[], emptyText: string, limit = 1000): string {
     used += nextLen;
   }
   return selected.join('\n');
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 function recentLobbies(observations: TurboRankObservation[], partyFallback: boolean): string {
@@ -454,22 +465,26 @@ async function turboRankCalibrateAll(message: Message, userDataService: UserData
 
       try {
         logger.info(`Bulk Turbo rank recalibrating ${target.name} (${target.steamId}, ${target.source})`);
-        const estimate = await turboRankService.calibratePlayer(
-          target.discordId,
-          target.steamId,
-          100,
-          (fetched, total, phase) => {
-            const now = Date.now();
-            if (now - lastProgressEdit < 5000 && fetched !== total) return;
-            lastProgressEdit = now;
-            let text =
-              `🔮 Bulk recalibrating Turbo ranks... **${i + 1}/${targets.length}**\n` +
-              `Now: **${target.name}** (${target.steamId}, ${target.source})\n` +
-              `Status: ${phase ?? 'fetching match history'}`;
-            if (total > 0) text += ` (${fetched}/${total})`;
-            text += `\nDone: ${successes.length} ok, ${failures.length} failed`;
-            progressMsg?.edit(text).catch(() => {});
-          },
+        const estimate = await withTimeout(
+          turboRankService.calibratePlayer(
+            target.discordId,
+            target.steamId,
+            100,
+            (fetched, total, phase) => {
+              const now = Date.now();
+              if (now - lastProgressEdit < 5000 && fetched !== total) return;
+              lastProgressEdit = now;
+              let text =
+                `🔮 Bulk recalibrating Turbo ranks... **${i + 1}/${targets.length}**\n` +
+                `Now: **${target.name}** (${target.steamId}, ${target.source})\n` +
+                `Status: ${phase ?? 'fetching match history'}`;
+              if (total > 0) text += ` (${fetched}/${total})`;
+              text += `\nDone: ${successes.length} ok, ${failures.length} failed`;
+              progressMsg?.edit(text).catch(() => {});
+            },
+          ),
+          BULK_PLAYER_TIMEOUT_MS,
+          `Timed out after ${Math.round(BULK_PLAYER_TIMEOUT_MS / 1000)}s`,
         );
 
         const refreshedName = turboRankService.getSteamName(target.steamId);
