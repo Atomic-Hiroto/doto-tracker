@@ -155,8 +155,18 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
     desc.push('_Party-based estimate — this player never solo-queues, so it may be skewed by stackmates._');
   }
 
+  const now = Date.now() / 1000;
+  const usedObs = estimate.partyFallback ? observations : observations.filter(o => o.partySize === 1);
+  const newestTs = usedObs.reduce((m, o) => Math.max(m, o.timestamp), 0);
+  const ageDays = newestTs ? Math.floor((now - newestTs) / 86400) : 0;
+  const stale = !estimate.partyFallback && ageDays > 100;
+  if (stale) {
+    const months = Math.max(1, Math.round(ageDays / 30));
+    desc.push(`⚠️ **Based on old games — newest is ~${months} month${months > 1 ? 's' : ''} ago.** May be out of date; play recent solo turbo to refresh.`);
+  }
+
   const embed = new EmbedBuilder()
-    .setColor(estimate.partyFallback || estimate.confidence < 40 ? '#9ca3af' : estimate.confidence < 60 ? '#eab308' : '#8b5cf6')
+    .setColor(estimate.partyFallback || estimate.confidence < 40 || stale ? '#9ca3af' : estimate.confidence < 60 ? '#eab308' : '#8b5cf6')
     .setTitle(`🔮 Hidden Turbo Rank — ${target.name}`)
     .setDescription(
       (estimate.partyFallback
