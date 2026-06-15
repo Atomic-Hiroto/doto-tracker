@@ -36,7 +36,7 @@ export interface TurboRankEstimate {
   sampleSize: number;
   /** Number of solo-queue observations. */
   soloSampleSize: number;
-  /** Visible-rank-weighted effective sample. */
+  /** Visible-rank and recency weighted effective sample. */
   effectiveSample: number;
   /** True when the estimate had to fall back to party games (player never solo-queues). */
   partyFallback: boolean;

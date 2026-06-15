@@ -12,6 +12,7 @@ import { logger } from '../services/loggerService';
 /**
  * +turborank [@user | steamId]   — view hidden turbo rank estimate
  * +turborank calibrate [@user | steamId] — retroactive calibration from match history
+ * +turborank audit [@user | steamId] — show exact matches used by the estimate
  * +turborank all                 — leaderboard of all calculated players
  */
 export async function turboRank(
@@ -26,6 +27,9 @@ export async function turboRank(
   }
   if (subcommand === 'calibrate' || subcommand === 'recalc') {
     return turboRankCalibrate(message, args.slice(1), userDataService);
+  }
+  if (subcommand === 'audit' || subcommand === 'debug') {
+    return turboRankAudit(message, args.slice(1), userDataService);
   }
   return turboRankView(message, args, userDataService);
 }
@@ -113,16 +117,39 @@ function confidenceBar(confidence: number): string {
   return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
 }
 
+function matchLink(matchId: number): string {
+  return `[#${matchId}](https://stratz.com/matches/${matchId})`;
+}
+
+function usedObservations(observations: TurboRankObservation[], partyFallback: boolean): TurboRankObservation[] {
+  return partyFallback ? observations : observations.filter(o => o.partySize === 1);
+}
+
+function fitLines(lines: string[], emptyText: string, limit = 1000): string {
+  if (lines.length === 0) return emptyText;
+  const selected: string[] = [];
+  let used = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const nextLen = lines[i].length + (selected.length > 0 ? 1 : 0);
+    if (used + nextLen > limit) {
+      selected.push(`...and ${lines.length - i} more.`);
+      break;
+    }
+    selected.push(lines[i]);
+    used += nextLen;
+  }
+  return selected.join('\n');
+}
+
 function recentLobbies(observations: TurboRankObservation[], partyFallback: boolean): string {
-  const targets = partyFallback ? observations : observations.filter(o => o.partySize === 1);
-  const recent = targets.sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
+  const recent = [...usedObservations(observations, partyFallback)].sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
   if (recent.length === 0) return '_No games on record_';
   return recent
     .map(o => {
       const date = new Date(o.timestamp * 1000).toLocaleDateString();
       const type = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
       const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '—';
-      const head = `**${mmrToMedal(o.lobbyMMR).medal}** lobby · ${type} · ${outcome} · ${date}`;
+      const head = `${matchLink(o.matchId)} · **${mmrToMedal(o.lobbyMMR).medal}** lobby · ${type} · ${outcome} · ${date}`;
       const comp = lobbyComposition(o);
       return comp ? `${head}\n${comp}` : head;
     })
@@ -156,7 +183,7 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
   }
 
   const now = Date.now() / 1000;
-  const usedObs = estimate.partyFallback ? observations : observations.filter(o => o.partySize === 1);
+  const usedObs = usedObservations(observations, estimate.partyFallback);
   const newestTs = usedObs.reduce((m, o) => Math.max(m, o.timestamp), 0);
   const ageDays = newestTs ? Math.floor((now - newestTs) / 86400) : 0;
   const stale = !estimate.partyFallback && ageDays > 100;
@@ -184,8 +211,8 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
       {
         name: 'Based on',
         value: estimate.partyFallback
-          ? `${estimate.sampleSize} party matches (no solo games found)`
-          : `${estimate.soloSampleSize} solo matches`,
+          ? `${estimate.sampleSize} party matches (no solo games found)\nEffective sample: **${estimate.effectiveSample}** heavily discounted lobbies`
+          : `${estimate.soloSampleSize} solo matches\nEffective sample: **${estimate.effectiveSample}** recency/completeness-weighted lobbies`,
         inline: false,
       },
       {
@@ -200,6 +227,62 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
 
   embed.setThumbnail(medalIconUrl(estimate.medalTier));
   return embed;
+}
+
+function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typeof turboRankService.getEstimateBySteamId>>, observations: TurboRankObservation[]): EmbedBuilder {
+  const used = [...usedObservations(observations, estimate.partyFallback)].sort((a, b) => b.timestamp - a.timestamp);
+  const visibleAvg = used.length
+    ? used.reduce((sum, obs) => sum + obs.visibleRanks, 0) / used.length
+    : 0;
+  const newest = used[0]?.timestamp;
+  const oldest = used[used.length - 1]?.timestamp;
+  const ageText = newest
+    ? `${Math.floor((Date.now() / 1000 - newest) / 86400)}d since newest`
+    : 'no usable observations';
+  const qualityFlags: string[] = [];
+  if (estimate.partyFallback) qualityFlags.push('party fallback');
+  if (estimate.confidence < 50) qualityFlags.push('low confidence');
+  if (estimate.soloSampleSize < 15 && !estimate.partyFallback) qualityFlags.push('thin solo sample');
+  if (estimate.effectiveSample < 8) qualityFlags.push('low effective sample');
+
+  const lines = used.slice(0, 12).map((obs) => {
+    const type = obs.partySize === 1 ? 'solo' : `${obs.partySize}-stack`;
+    const outcome = obs.won === true ? 'W' : obs.won === false ? 'L' : '-';
+    const date = new Date(obs.timestamp * 1000).toLocaleDateString();
+    return `${matchLink(obs.matchId)} · **${mmrToMedal(obs.lobbyMMR).medal}** · ${type} · ${outcome} · ${obs.visibleRanks}/9 ranks · ${date}`;
+  });
+
+  return new EmbedBuilder()
+    .setColor(estimate.partyFallback || estimate.confidence < 50 ? '#9ca3af' : '#8b5cf6')
+    .setTitle(`🔎 Turbo Rank Audit — ${target.name}`)
+    .setDescription(`Estimate: **${estimate.medal}** (~${estimate.estimatedMMR} MMR), confidence **${estimate.confidence}%**`)
+    .addFields(
+      {
+        name: 'Sample Health',
+        value:
+          `Used observations: **${used.length}** / stored **${observations.length}**\n` +
+          `Solo observations: **${estimate.soloSampleSize}** | effective sample: **${estimate.effectiveSample}**\n` +
+          `Average visible ranks: **${visibleAvg.toFixed(1)}/9** | ${ageText}\n` +
+          `Window: ${oldest ? new Date(oldest * 1000).toLocaleDateString() : 'n/a'} – ${newest ? new Date(newest * 1000).toLocaleDateString() : 'n/a'}`,
+        inline: false,
+      },
+      {
+        name: 'Quality Flags',
+        value: qualityFlags.length ? qualityFlags.join(', ') : 'No major flags.',
+        inline: false,
+      },
+      {
+        name: 'Recent Used Matches',
+        value: fitLines(lines, '_No usable observations_'),
+        inline: false,
+      },
+      {
+        name: 'What To Check',
+        value: 'Open the linked matches and verify the player actually solo-queued. If party games appear here as solo, recalibration is contaminated and the estimator should not be trusted for that player.',
+        inline: false,
+      },
+    )
+    .setTimestamp();
 }
 
 // ── View ──────────────────────────────────────────────────────────────────────
@@ -265,6 +348,26 @@ async function turboRankCalibrate(message: Message, args: string[], userDataServ
   } catch (error) {
     logger.error('Error in turborank calibrate:', error);
     await message.reply('An error occurred during calibration. Please try again later.');
+  }
+}
+
+// ── Audit ────────────────────────────────────────────────────────────────────
+
+async function turboRankAudit(message: Message, args: string[], userDataService: UserDataService) {
+  try {
+    const target = await resolveTarget(message, args, userDataService);
+    if ('error' in target) return message.reply(target.error);
+
+    const estimate = turboRankService.getEstimateBySteamId(target.steamId);
+    if (!estimate) {
+      return message.reply(`No turbo rank estimate for **${target.name}** yet. Run \`+turborank calibrate ${target.steamId}\` first.`);
+    }
+
+    const observations = turboRankService.getObservationsBySteamId(target.steamId);
+    await message.reply({ embeds: [buildAuditEmbed(target, estimate, observations)] });
+  } catch (error) {
+    logger.error('Error in turborank audit:', error);
+    await message.reply('An error occurred while building the audit. Please try again later.');
   }
 }
 
