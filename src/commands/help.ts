@@ -29,6 +29,9 @@ const SECTIONS: { name: string; lines: string[] }[] = [
     lines: [
       '`+turbolb` — tracked turbo leaderboard',
       '`+turbostats` — your tracked turbo stats',
+      '`+turborank [@user]` — estimated hidden turbo rank',
+      '`+turborank calibrate` — calibrate from match history',
+      '`+turborank all` — hidden rank leaderboard',
       '`+topheros [@user]` — best turbo heroes (4 weeks)',
       '`+turbopairs` — best turbo duos',
       '`+myturbopairs` — your turbo partnerships',

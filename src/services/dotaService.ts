@@ -13,6 +13,7 @@ import { gradeActivePlanForMatch } from './coachingPlanService';
 import { renderScoreboardFromMatch } from './chartService';
 import { achievementService } from './achievementService';
 import { streakService } from './streakService';
+import { turboRankService } from './turboRankService';
 
 const GAME_MODE_NAMES: Record<number, string> = {
   0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -148,6 +149,13 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
         const matchDetails = await opendotaClient.get(`/matches/${matchId}`);
         const registeredPlayers = players.map(p => ({ discordId: p.discordId, steamId: p.steamId }));
         turboStatsService.processTurboMatch(matchDetails.data, registeredPlayers);
+
+        // Update hidden turbo rank estimates (piggybacks on the same match data)
+        if (matchDetails.data.game_mode === 23) {
+          for (const rp of registeredPlayers) {
+            turboRankService.updateFromMatch(matchDetails.data, rp.discordId, rp.steamId);
+          }
+        }
       } catch (error) {
         logger.error(`Error processing turbo stats for match ${matchId}:`, error);
       }
