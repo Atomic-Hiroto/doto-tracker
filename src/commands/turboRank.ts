@@ -1,12 +1,19 @@
 import { Message, EmbedBuilder } from 'discord.js';
-import { turboRankService, TurboRankService, mmrToMedal } from '../services/turboRankService';
+import {
+  turboRankService,
+  tierToEmoji,
+  mmrToEmoji,
+  mmrToMedal,
+} from '../services/turboRankService';
+import { fetchStratzPlayerProfile } from '../services/stratzClient';
+import { TurboRankObservation } from '../models/TurboRank';
 import { UserDataService } from '../services/userDataService';
 import { logger } from '../services/loggerService';
 
 /**
- * +turborank [@user]          — view hidden turbo rank estimate
- * +turborank calibrate        — retroactive calibration from match history
- * +turborank all              — leaderboard of all tracked players' hidden ranks
+ * +turborank [@user | steamId]   — view hidden turbo rank estimate
+ * +turborank calibrate [@user | steamId] — retroactive calibration from match history
+ * +turborank all                 — leaderboard of all calculated players
  */
 export async function turboRank(
   message: Message,
@@ -15,158 +22,211 @@ export async function turboRank(
 ) {
   const subcommand = args[0]?.toLowerCase();
 
-  if (subcommand === 'calibrate') {
-    return turboRankCalibrate(message, userDataService);
+  if (subcommand === 'all' || subcommand === 'leaderboard' || subcommand === 'lb') {
+    return turboRankAll(message);
   }
-  if (subcommand === 'all') {
-    return turboRankAll(message, userDataService);
+  if (subcommand === 'calibrate' || subcommand === 'recalc') {
+    return turboRankCalibrate(message, args.slice(1), userDataService);
   }
-
-  // Default: show rank for mentioned user or self
-  return turboRankView(message, userDataService);
+  return turboRankView(message, args, userDataService);
 }
 
-// ── View ────────────────────────────────────────────────────────────────────
+// ── Target resolution (registered @user, or raw steamId for unregistered) ─────
 
-async function turboRankView(message: Message, userDataService: UserDataService) {
-  try {
-    const target = message.mentions.users.first() || message.author;
-    const user = userDataService.getUserByDiscordId(target.id);
+interface RankTarget {
+  steamId: string;
+  name: string;
+  discordId: string; // '' if unregistered
+  avatarURL?: string;
+}
 
-    if (!user) {
-      return message.reply(
-        target.id === message.author.id
-          ? "You're not registered. Use `+register <steamId>` first."
-          : `**${target.username}** is not registered.`,
-      );
+function looksLikeSteamId(s?: string): boolean {
+  return !!s && /^\d{4,}$/.test(s);
+}
+
+async function resolveTarget(
+  message: Message,
+  args: string[],
+  userDataService: UserDataService,
+): Promise<RankTarget | { error: string }> {
+  // 1) @mention → registered user
+  const mentioned = message.mentions.users.first();
+  if (mentioned) {
+    const user = userDataService.getUserByDiscordId(mentioned.id);
+    if (!user) return { error: `**${mentioned.username}** is not registered.` };
+    return {
+      steamId: user.steamId,
+      name: mentioned.username,
+      discordId: mentioned.id,
+      avatarURL: mentioned.displayAvatarURL(),
+    };
+  }
+
+  // 2) raw steamId argument → unregistered player
+  const idArg = args.find(a => looksLikeSteamId(a));
+  if (idArg) {
+    const registered = userDataService.getUserBySteamId(idArg);
+    const cachedName = turboRankService.getSteamName(idArg);
+    let name = cachedName;
+    if (!name) {
+      const profile = await fetchStratzPlayerProfile(parseInt(idArg, 10));
+      name = profile.name ?? `Steam ${idArg}`;
     }
+    return { steamId: idArg, name: name!, discordId: registered?.discordId ?? '' };
+  }
 
-    const estimate = turboRankService.getEstimate(target.id);
+  // 3) self
+  const self = userDataService.getUserByDiscordId(message.author.id);
+  if (!self) {
+    return { error: "You're not registered. Use `+register <steamId>` first, or pass a steamId: `+turborank <steamId>`." };
+  }
+  return {
+    steamId: self.steamId,
+    name: message.author.username,
+    discordId: message.author.id,
+    avatarURL: message.author.displayAvatarURL(),
+  };
+}
 
+// ── Shared rendering helpers ─────────────────────────────────────────────────
+
+/** "2 Immortal · 1 Divine · 4 unranked" composition from an observation's tiers. */
+function lobbyComposition(obs: TurboRankObservation): string {
+  const tiers = obs.tiers ?? []; // older persisted observations may lack tiers
+  const visible = obs.visibleRanks ?? tiers.length;
+  if (tiers.length === 0) {
+    // Fall back to the lobby-average medal if per-player tiers weren't stored.
+    return `avg ${mmrToEmoji(obs.lobbyMMR)} ${mmrToMedal(obs.lobbyMMR).medal}`;
+  }
+  const counts = new Map<number, number>(); // tier int → count
+  for (const t of tiers) {
+    const tier = Math.floor(t / 10);
+    counts.set(tier, (counts.get(tier) ?? 0) + 1);
+  }
+  const parts: string[] = [];
+  for (const tier of [8, 7, 6, 5, 4, 3, 2, 1]) {
+    const c = counts.get(tier);
+    if (c) parts.push(`${c}× ${tierToEmoji(tier)}`);
+  }
+  const unranked = 9 - visible;
+  if (unranked > 0) parts.push(`${unranked}× ⚫`);
+  return parts.join(' ');
+}
+
+function confidenceBar(confidence: number): string {
+  const filled = Math.round(confidence / 10);
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+}
+
+function recentProofMatches(observations: TurboRankObservation[], partyFallback: boolean): string {
+  const targets = partyFallback ? observations : observations.filter(o => o.partySize === 1);
+  const recent = targets.sort((a, b) => b.timestamp - a.timestamp).slice(0, 5);
+  if (recent.length === 0) return '_No games on record_';
+  return recent
+    .map(o => {
+      const date = new Date(o.timestamp * 1000).toLocaleDateString();
+      const type = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
+      const outcome = o.won === true ? '🟩 W' : o.won === false ? '🟥 L' : '';
+      return `${mmrToEmoji(o.lobbyMMR)} **${lobbyComposition(o)}**\n   └ ${type}${outcome ? ` · ${outcome}` : ''} · ${date}`;
+    })
+    .join('\n');
+}
+
+const HOW_TEXT =
+  'Estimated from the **actual ranked medals of the other players** in your lobbies.\n' +
+  '• **Solo only:** only your solo-queue games count — party games distort it, so they\'re ignored unless you *never* solo.\n' +
+  '• **Recency (60-day half-life):** recent games prove current skill and weigh the most.\n' +
+  '• **Lobby completeness:** lobbies where more players are ranked count more than thin, mostly-unranked ones.';
+
+function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typeof turboRankService.getEstimateBySteamId>>, observations: TurboRankObservation[]): EmbedBuilder {
+  const confEmoji = estimate.confidence >= 80 ? '🟢' : estimate.confidence >= 50 ? '🟡' : '🔴';
+  const confLabel = estimate.confidence >= 80 ? 'High confidence'
+    : estimate.confidence >= 50 ? 'Moderate confidence'
+    : 'Low confidence — needs more solo games';
+
+  const embed = new EmbedBuilder()
+    .setColor(estimate.confidence >= 50 ? '#8b5cf6' : '#6b7280')
+    .setTitle(`${tierToEmoji(estimate.medalTier)} Hidden Turbo Rank — ${target.name}`)
+    .setDescription(
+      `# ${estimate.medal}\n` +
+      `est. **~${estimate.estimatedMMR} MMR**` +
+      (estimate.rangeLow && estimate.rangeHigh ? `  ·  range **${estimate.rangeLow} – ${estimate.rangeHigh}**` : '') +
+      (estimate.partyFallback ? '\n⚠️ _Party-based estimate — this player never solo-queues, so it may be skewed by stackmates._' : ''),
+    )
+    .addFields(
+      {
+        name: `${confEmoji} Confidence`,
+        value: `\`${confidenceBar(estimate.confidence)}\` ${estimate.confidence}%\n${confLabel}`,
+        inline: false,
+      },
+      {
+        name: '📊 Sample',
+        value: estimate.partyFallback
+          ? `**${estimate.sampleSize}** party matches (no solo games found)`
+          : `**${estimate.soloSampleSize}** solo matches used`,
+        inline: true,
+      },
+      {
+        name: '⚖️ Effective weight',
+        value: `${estimate.effectiveSample.toFixed(1)}`,
+        inline: true,
+      },
+      {
+        name: estimate.partyFallback ? '🎯 Recent lobbies' : '🎯 Recent solo lobbies (proof)',
+        value: recentProofMatches(observations, estimate.partyFallback),
+        inline: false,
+      },
+      { name: '🧠 How is this calculated?', value: HOW_TEXT, inline: false },
+    )
+    .setFooter({ text: `updated ${new Date(estimate.lastUpdated).toLocaleDateString()} • medals: ⚫ unranked` })
+    .setTimestamp();
+
+  if (target.avatarURL) embed.setThumbnail(target.avatarURL);
+  return embed;
+}
+
+// ── View ──────────────────────────────────────────────────────────────────────
+
+async function turboRankView(message: Message, args: string[], userDataService: UserDataService) {
+  try {
+    const target = await resolveTarget(message, args, userDataService);
+    if ('error' in target) return message.reply(target.error);
+
+    const estimate = turboRankService.getEstimateBySteamId(target.steamId);
     if (!estimate) {
       return message.reply(
-        `No turbo rank estimate for **${target.username}** yet. ` +
-        `Run \`+turborank calibrate\` to analyze match history, or play some turbo matches.`,
+        `No turbo rank estimate for **${target.name}** yet. ` +
+        `Run \`+turborank calibrate${args.find(looksLikeSteamId) ? ' ' + target.steamId : ''}\` to analyze their match history.`,
       );
     }
 
-    const confEmoji =
-      estimate.confidence >= 80 ? '🟢' : estimate.confidence >= 50 ? '🟡' : '🔴';
-    const confLabel =
-      estimate.confidence >= 80
-        ? 'High confidence'
-        : estimate.confidence >= 50
-          ? 'Moderate confidence'
-          : 'Low confidence — need more games';
-
-    const isSoloOnly = estimate.soloSampleSize >= 5;
-    const observations = turboRankService.getObservations(target.id);
-    const targets = isSoloOnly
-      ? observations.filter(o => o.partySize === 1)
-      : observations;
-
-    const recentMatches = targets
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, 5);
-
-    const matchBreakdown = recentMatches.length > 0
-      ? recentMatches
-          .map(o => {
-            const { medal } = mmrToMedal(o.lobbyMMR);
-            const date = new Date(o.timestamp * 1000).toLocaleDateString();
-            const partyType = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
-            const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '';
-            const outcomeStr = outcome ? ` | **${outcome}**` : '';
-            return `• **${medal}** lobby (${partyType}${outcomeStr}) — ${date}`;
-          })
-          .join('\n')
-      : '_No games on record_';
-
-    const sampleValue = isSoloOnly
-      ? `**${estimate.soloSampleSize}** solo matches used\n*(ignored ${estimate.sampleSize - estimate.soloSampleSize} party)*`
-      : `**${estimate.sampleSize}** matches\n*(${estimate.soloSampleSize} solo, ${estimate.sampleSize - estimate.soloSampleSize} party)*`;
-
-    const embed = new EmbedBuilder()
-      .setColor(estimate.confidence >= 50 ? '#8b5cf6' : '#6b7280')
-      .setTitle(`🔮 Hidden Turbo Rank — ${target.username}`)
-      .setThumbnail(target.displayAvatarURL())
-      .setDescription(
-        `**${estimate.medal}** (est. MMR ~${estimate.estimatedMMR})`,
-      )
-      .addFields(
-        {
-          name: `${confEmoji} Confidence`,
-          value: `${estimate.confidence}% — ${confLabel}`,
-          inline: true,
-        },
-        {
-          name: '📊 Matches Used',
-          value: sampleValue,
-          inline: true,
-        },
-        {
-          name: '⚖️ Effective Weight',
-          value: `${estimate.effectiveSample.toFixed(1)}`,
-          inline: true,
-        },
-        {
-          name: isSoloOnly ? '🎯 Recent Solo Lobbies' : '🎯 Recent Calibration Lobbies',
-          value: matchBreakdown,
-          inline: false,
-        },
-        {
-          name: '🧠 How is this calculated?',
-          value: 'Your hidden rank is estimated by analyzing the **actual ranked medals of other players** (enemies and teammates) in your matches.\n' +
-                 '• **Solo Priority:** Solo matches are the purest signal. If you have **≥ 5** solo games, party matches are **completely ignored** so your friends\' ranks do not distort your calibration.\n' +
-                 '• **Recency Decay:** Newer matches carry higher weight (60-day half-life) to reflect your current skill level.\n' +
-                 '• **Win/Loss Adjustment:** Winning in a lobby shifts the estimated matchmaking level up by +100 MMR; losing shifts it down by -100 MMR.',
-          inline: false,
-        },
-      )
-      .setFooter({
-        text:
-          'Based on lobby ranks of enemies & teammates • solo games weighted highest • ' +
-          `updated ${new Date(estimate.lastUpdated).toLocaleDateString()}`,
-      })
-      .setTimestamp();
-
-    await message.reply({ embeds: [embed] });
+    const observations = turboRankService.getObservationsBySteamId(target.steamId);
+    await message.reply({ embeds: [buildRankEmbed(target, estimate, observations)] });
   } catch (error) {
     logger.error('Error in turborank view:', error);
     await message.reply('An error occurred. Please try again later.');
   }
 }
 
-// ── Calibrate ───────────────────────────────────────────────────────────────
+// ── Calibrate ─────────────────────────────────────────────────────────────────
 
-async function turboRankCalibrate(message: Message, userDataService: UserDataService) {
+async function turboRankCalibrate(message: Message, args: string[], userDataService: UserDataService) {
   try {
-    const target = message.mentions.users.first() || message.author;
-    const user = userDataService.getUserByDiscordId(target.id);
-    if (!user) {
-      return message.reply(
-        target.id === message.author.id
-          ? "You're not registered. Use `+register <steamId>` first."
-          : `**${target.username}** is not registered.`,
-      );
-    }
+    const target = await resolveTarget(message, args, userDataService);
+    if ('error' in target) return message.reply(target.error);
 
     const progressMsg = await message.reply(
-      `🔮 Calibrating hidden Turbo rank for **${target.username}**…\n` +
-      'Analyzing match history, this may take a minute.',
+      `🔮 Calibrating hidden Turbo rank for **${target.name}**…\nAnalyzing match history, this may take a minute.`,
     );
 
     const estimate = await turboRankService.calibratePlayer(
-      target.id,
-      user.steamId,
-      100, // Fetch up to 100 matches overall if we fall back
+      target.discordId,
+      target.steamId,
+      100,
       (fetched, total, phase) => {
-        // Update progress dynamically
         if (fetched === 0 || fetched % 10 === 0 || fetched === total) {
-          let text = `🔮 Calibrating **${target.username}**… **${phase}**`;
-          if (total > 0) {
-            text += ` (${fetched}/${total})`;
-          }
+          let text = `🔮 Calibrating **${target.name}**… ${phase ?? ''}`;
+          if (total > 0) text += ` (${fetched}/${total})`;
           progressMsg.edit(text).catch(() => {});
         }
       },
@@ -174,68 +234,15 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
 
     if (!estimate) {
       return progressMsg.edit(
-        `❌ Calibration failed for **${target.username}** — not enough matches with visible rank data. ` +
-        'Play more Turbo matches (especially solo queue) and try again.',
+        `❌ Calibration failed for **${target.name}** — not enough turbo matches with visible rank data.`,
       );
     }
 
-    const confEmoji =
-      estimate.confidence >= 80 ? '🟢' : estimate.confidence >= 50 ? '🟡' : '🔴';
-
-    const isSoloOnly = estimate.soloSampleSize >= 5;
-    const observations = turboRankService.getObservations(target.id);
-    const targets = isSoloOnly
-      ? observations.filter(o => o.partySize === 1)
-      : observations;
-
-    const recentMatches = targets
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, 5);
-
-    const matchBreakdown = recentMatches.length > 0
-      ? recentMatches
-          .map(o => {
-            const { medal } = mmrToMedal(o.lobbyMMR);
-            const date = new Date(o.timestamp * 1000).toLocaleDateString();
-            const partyType = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
-            const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '';
-            const outcomeStr = outcome ? ` | **${outcome}**` : '';
-            return `• **${medal}** lobby (${partyType}${outcomeStr}) — ${date}`;
-          })
-          .join('\n')
-      : '_No games on record_';
-
-    const matchesUsedDesc = isSoloOnly
-      ? `Based on **${estimate.soloSampleSize}** solo matches *(ignored ${estimate.sampleSize - estimate.soloSampleSize} party matches to prevent stack distortion)*`
-      : `Based on **${estimate.sampleSize}** matches *(${estimate.soloSampleSize} solo, ${estimate.sampleSize - estimate.soloSampleSize} party)*`;
-
-    const embed = new EmbedBuilder()
-      .setColor('#8b5cf6')
-      .setTitle(`🔮 Calibration Complete — ${target.username}`)
-      .setDescription(
-        `**Hidden Turbo Rank: ${estimate.medal}**\n` +
-        `Estimated MMR: **~${estimate.estimatedMMR}**\n\n` +
-        `${confEmoji} **${estimate.confidence}% confidence**\n` +
-        `${matchesUsedDesc}`,
-      )
-      .setThumbnail(target.displayAvatarURL())
-      .addFields(
-        {
-          name: isSoloOnly ? '🎯 Recent Solo Lobbies' : '🎯 Recent Calibration Lobbies',
-          value: matchBreakdown,
-          inline: false,
-        },
-        {
-          name: '🧠 How is this calculated?',
-          value: 'Your hidden rank is estimated by analyzing the **actual ranked medals of other players** (enemies and teammates) in your matches.\n' +
-                 '• **Solo Priority:** Solo matches are the purest signal. If you have **≥ 5** solo games, party matches are **completely ignored** so your friends\' ranks do not distort your calibration.\n' +
-                 '• **Recency Decay:** Newer matches carry higher weight (60-day half-life) to reflect your current skill level.\n' +
-                 '• **Win/Loss Adjustment:** Winning in a lobby shifts the estimated matchmaking level up by +100 MMR; losing shifts it down by -100 MMR.',
-          inline: false,
-        },
-      )
-      .setFooter({ text: 'Solo games carry the most weight • party games are discounted' })
-      .setTimestamp();
+    // Refresh the name in case calibration resolved it.
+    target.name = turboRankService.getSteamName(target.steamId) ?? target.name;
+    const observations = turboRankService.getObservationsBySteamId(target.steamId);
+    const embed = buildRankEmbed(target, estimate, observations)
+      .setTitle(`✅ Calibration Complete — ${target.name}`);
 
     await progressMsg.edit({ content: null, embeds: [embed] });
   } catch (error) {
@@ -244,41 +251,45 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
   }
 }
 
-// ── All (leaderboard) ───────────────────────────────────────────────────────
+// ── Leaderboard ─────────────────────────────────────────────────────────────
 
-async function turboRankAll(message: Message, userDataService: UserDataService) {
+async function turboRankAll(message: Message) {
   try {
     const ranked = turboRankService.getAllEstimates();
-
     if (ranked.length === 0) {
-      return message.reply(
-        'No players have turbo rank estimates yet. ' +
-        'Run `+turborank calibrate` to get started.',
+      return message.reply('No players have turbo rank estimates yet. Run `+turborank calibrate` to get started.');
+    }
+
+    const lines: string[] = [];
+    for (let i = 0; i < ranked.length; i++) {
+      const { discordId, steamName, estimate } = ranked[i];
+      let name = steamName;
+      if (!name && discordId) {
+        const user = await message.client.users.fetch(discordId).catch(() => null);
+        name = user?.username ?? undefined;
+      }
+      name = name ?? `Player ${i + 1}`;
+
+      const place = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
+      const conf = estimate.confidence >= 70 ? '✅' : estimate.confidence >= 40 ? '⚠️' : '❓';
+      const fallback = estimate.partyFallback ? ' · _party-est_' : '';
+
+      lines.push(
+        `${place} ${tierToEmoji(estimate.medalTier)} **${name}** — ${estimate.medal}\n` +
+        ` ~${estimate.estimatedMMR} MMR · \`${confidenceBar(estimate.confidence)}\` ${estimate.confidence}% ${conf} · ${estimate.soloSampleSize} solo${fallback}`,
       );
     }
 
-    let text = '';
-    for (let i = 0; i < ranked.length; i++) {
-      const { discordId, estimate } = ranked[i];
-      const user = await message.client.users.fetch(discordId).catch(() => null);
-      const name = user?.username ?? discordId;
-      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      const confEmoji =
-        estimate.confidence >= 80 ? '🟢' : estimate.confidence >= 50 ? '🟡' : '🔴';
-
-      text += `${medal} **${name}** — ${estimate.medal} (~${estimate.estimatedMMR} MMR) `;
-      text += `${confEmoji} ${estimate.confidence}%\n`;
-      text += `   ${estimate.sampleSize} games (${estimate.soloSampleSize} solo)\n\n`;
-    }
-
+    const top = ranked[0];
     const embed = new EmbedBuilder()
-      .setColor('#8b5cf6')
+      .setColor('#ffd700')
       .setTitle('🔮 Hidden Turbo Rank Leaderboard')
       .setDescription(
-        'Estimated hidden Turbo MMR based on lobby rank observations.\n' +
-        'Solo games carry the most weight.\n\n' + text,
+        `Estimated hidden Turbo MMR from solo-lobby rank analysis.\n` +
+        `👑 Top: **${top.steamName ?? 'Player'}** at **${top.estimate.medal}**\n\n` +
+        lines.join('\n'),
       )
-      .setFooter({ text: 'Run +turborank calibrate to update your estimate' })
+      .setFooter({ text: 'medals: ⭐ Immortal 🔴 Divine 🟠 Ancient 🟡 Legend 🟣 Archon 🔵 Crusader 🟢 Guardian 🟤 Herald' })
       .setTimestamp();
 
     await message.reply({ embeds: [embed] });
