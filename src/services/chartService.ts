@@ -268,6 +268,184 @@ export interface MatchRow {
     mode: string;
 }
 
+export interface ScoreboardPlayer {
+    heroName: string;
+    heroImageUrl?: string;
+    personaName: string;
+    level: number;
+    kills: number;
+    deaths: number;
+    assists: number;
+    gpm: number;
+    lastHits: number;
+    netWorth: number;
+    itemImageUrls: (string | undefined)[];
+    isFocus?: boolean;
+}
+
+export interface ScoreboardTeam {
+    name: string;
+    won: boolean;
+    score: number;
+    players: ScoreboardPlayer[];
+}
+
+/**
+ * Renders an OpenDota-style match scoreboard PNG: a header band with the result
+ * and duration, then both teams with hero portrait, name+level, K/D/A, GPM, net
+ * worth, last hits and the end-game item icons. The focus player's row (if any)
+ * is highlighted. Far richer than a plain text scoreboard.
+ */
+export async function renderMatchScoreboard(
+    radiant: ScoreboardTeam,
+    dire: ScoreboardTeam,
+    opts: { matchId: number; durationSec: number; mode: string },
+): Promise<Buffer> {
+    const W = 940;
+    const HEADER_H = 72;
+    const TEAM_HEADER_H = 30;
+    const ROW_H = 46;
+    const GAP = 14;
+    const teamBlockH = (team: ScoreboardTeam) => TEAM_HEADER_H + team.players.length * ROW_H;
+    const H = HEADER_H + teamBlockH(radiant) + GAP + teamBlockH(dire) + 16;
+
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+
+    // Background
+    ctx.fillStyle = '#15151f';
+    ctx.fillRect(0, 0, W, H);
+
+    // Header band
+    ctx.fillStyle = '#1f1f33';
+    ctx.fillRect(0, 0, W, HEADER_H);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'left';
+    const winner = radiant.won ? radiant.name : dire.name;
+    ctx.fillText(`Match #${opts.matchId} — ${winner} Victory`, 22, 34);
+
+    const m = Math.floor(opts.durationSec / 60);
+    const s = opts.durationSec % 60;
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#9aa0c0';
+    ctx.fillText(`${radiant.score}–${dire.score}  •  ${m}:${s.toString().padStart(2, '0')}  •  ${opts.mode}`, 22, 58);
+
+    // Column anchors
+    const cols = { hero: 16, name: 78, kda: 318, gpm: 452, nw: 540, lh: 632, items: 706 };
+    const ITEM_W = 30;
+    const ITEM_H = 23;
+    const ITEM_GAP = 4;
+
+    const drawTeam = async (team: ScoreboardTeam, top: number) => {
+        // Team header
+        ctx.fillStyle = team.won ? '#143d2c' : '#3d1a1a';
+        ctx.fillRect(0, top, W, TEAM_HEADER_H);
+        ctx.fillStyle = team.won ? '#10b981' : '#ef4444';
+        ctx.fillRect(0, top, 6, TEAM_HEADER_H);
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = team.won ? '#34d399' : '#f87171';
+        ctx.fillText(`${team.won ? '👑 ' : ''}${team.name}`, cols.hero, top + 20);
+        // Column headers
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillStyle = '#6b6b8a';
+        ctx.fillText('K / D / A', cols.kda, top + 20);
+        ctx.fillText('GPM', cols.gpm, top + 20);
+        ctx.fillText('NET', cols.nw, top + 20);
+        ctx.fillText('LH', cols.lh, top + 20);
+        ctx.fillText('ITEMS', cols.items, top + 20);
+
+        for (const [i, p] of team.players.entries()) {
+            const y = top + TEAM_HEADER_H + i * ROW_H;
+            if (p.isFocus) {
+                ctx.fillStyle = '#2a2a44';
+                ctx.fillRect(0, y, W, ROW_H);
+                ctx.fillStyle = '#7c3aed';
+                ctx.fillRect(0, y, 4, ROW_H);
+            } else if (i % 2 === 0) {
+                ctx.fillStyle = '#1a1a28';
+                ctx.fillRect(0, y, W, ROW_H);
+            }
+
+            const midY = y + ROW_H / 2;
+
+            // Hero portrait (16:9)
+            const heroImg = await loadCachedImage(p.heroImageUrl);
+            const hw = 52;
+            const hh = 29;
+            const hy = midY - hh / 2;
+            if (heroImg) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.roundRect(cols.hero, hy, hw, hh, 4);
+                ctx.clip();
+                ctx.drawImage(heroImg, cols.hero, hy, hw, hh);
+                ctx.restore();
+            }
+            // Level badge
+            ctx.fillStyle = '#0d0d16';
+            ctx.beginPath();
+            ctx.arc(cols.hero + hw - 6, hy + hh - 4, 9, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffd24a';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(String(p.level), cols.hero + hw - 6, hy + hh);
+
+            // Name + hero
+            ctx.textAlign = 'left';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillStyle = p.isFocus ? '#c4b5fd' : '#e6e6f0';
+            ctx.fillText(truncatePx(ctx, p.personaName || 'Anonymous', 228), cols.name, midY - 2);
+            ctx.font = '11px sans-serif';
+            ctx.fillStyle = '#8a8aa8';
+            ctx.fillText(truncatePx(ctx, p.heroName, 228), cols.name, midY + 13);
+
+            // K/D/A
+            ctx.font = '14px sans-serif';
+            ctx.fillStyle = '#c4c4d8';
+            ctx.fillText(`${p.kills} / ${p.deaths} / ${p.assists}`, cols.kda, midY + 4);
+
+            // GPM
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillText(String(p.gpm), cols.gpm, midY + 4);
+
+            // Net worth (k)
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillText(p.netWorth ? `${(p.netWorth / 1000).toFixed(1)}k` : '—', cols.nw, midY + 4);
+
+            // Last hits
+            ctx.fillStyle = '#9aa0c0';
+            ctx.fillText(String(p.lastHits), cols.lh, midY + 4);
+
+            // Items
+            for (let s = 0; s < 6; s++) {
+                const ix = cols.items + s * (ITEM_W + ITEM_GAP);
+                const iy = midY - ITEM_H / 2;
+                ctx.fillStyle = '#0d0d16';
+                ctx.beginPath();
+                ctx.roundRect(ix, iy, ITEM_W, ITEM_H, 3);
+                ctx.fill();
+                const itemImg = await loadCachedImage(p.itemImageUrls[s]);
+                if (itemImg) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.roundRect(ix, iy, ITEM_W, ITEM_H, 3);
+                    ctx.clip();
+                    ctx.drawImage(itemImg, ix, iy, ITEM_W, ITEM_H);
+                    ctx.restore();
+                }
+            }
+        }
+    };
+
+    await drawTeam(radiant, HEADER_H);
+    await drawTeam(dire, HEADER_H + teamBlockH(radiant) + GAP);
+
+    return canvas.toBuffer('image/png');
+}
+
 const imageCache = new Map<string, any | null>();
 
 async function loadCachedImage(url?: string): Promise<any | null> {
