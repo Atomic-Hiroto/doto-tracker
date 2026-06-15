@@ -59,23 +59,29 @@ async function turboRankView(message: Message, userDataService: UserDataService)
           ? 'Moderate confidence'
           : 'Low confidence — need more games';
 
+    const isSoloOnly = estimate.soloSampleSize >= 5;
     const observations = turboRankService.getObservations(target.id);
-    const recentSolo = observations
-      .filter(o => o.partySize === 1)
+    const targets = isSoloOnly
+      ? observations.filter(o => o.partySize === 1)
+      : observations;
+
+    const recentMatches = targets
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, 5);
 
-    const soloBreakdown = recentSolo.length > 0
-      ? recentSolo
+    const matchBreakdown = recentMatches.length > 0
+      ? recentMatches
           .map(o => {
             const { medal } = mmrToMedal(o.lobbyMMR);
             const date = new Date(o.timestamp * 1000).toLocaleDateString();
-            return `• ${medal} lobby (${o.visibleRanks} visible ranks) — ${date}`;
+            const partyType = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
+            const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '';
+            const outcomeStr = outcome ? ` | **${outcome}**` : '';
+            return `• **${medal}** lobby (${partyType}${outcomeStr}) — ${date}`;
           })
           .join('\n')
-      : '_No solo games on record_';
+      : '_No games on record_';
 
-    const isSoloOnly = estimate.soloSampleSize >= 5;
     const sampleValue = isSoloOnly
       ? `**${estimate.soloSampleSize}** solo matches used\n*(ignored ${estimate.sampleSize - estimate.soloSampleSize} party)*`
       : `**${estimate.sampleSize}** matches\n*(${estimate.soloSampleSize} solo, ${estimate.sampleSize - estimate.soloSampleSize} party)*`;
@@ -104,8 +110,8 @@ async function turboRankView(message: Message, userDataService: UserDataService)
           inline: true,
         },
         {
-          name: '🎯 Recent Solo Lobbies',
-          value: soloBreakdown,
+          name: isSoloOnly ? '🎯 Recent Solo Lobbies' : '🎯 Recent Calibration Lobbies',
+          value: matchBreakdown,
           inline: false,
         },
         {
@@ -177,6 +183,28 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
       estimate.confidence >= 80 ? '🟢' : estimate.confidence >= 50 ? '🟡' : '🔴';
 
     const isSoloOnly = estimate.soloSampleSize >= 5;
+    const observations = turboRankService.getObservations(target.id);
+    const targets = isSoloOnly
+      ? observations.filter(o => o.partySize === 1)
+      : observations;
+
+    const recentMatches = targets
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 5);
+
+    const matchBreakdown = recentMatches.length > 0
+      ? recentMatches
+          .map(o => {
+            const { medal } = mmrToMedal(o.lobbyMMR);
+            const date = new Date(o.timestamp * 1000).toLocaleDateString();
+            const partyType = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
+            const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '';
+            const outcomeStr = outcome ? ` | **${outcome}**` : '';
+            return `• **${medal}** lobby (${partyType}${outcomeStr}) — ${date}`;
+          })
+          .join('\n')
+      : '_No games on record_';
+
     const matchesUsedDesc = isSoloOnly
       ? `Based on **${estimate.soloSampleSize}** solo matches *(ignored ${estimate.sampleSize - estimate.soloSampleSize} party matches to prevent stack distortion)*`
       : `Based on **${estimate.sampleSize}** matches *(${estimate.soloSampleSize} solo, ${estimate.sampleSize - estimate.soloSampleSize} party)*`;
@@ -192,6 +220,11 @@ async function turboRankCalibrate(message: Message, userDataService: UserDataSer
       )
       .setThumbnail(target.displayAvatarURL())
       .addFields(
+        {
+          name: isSoloOnly ? '🎯 Recent Solo Lobbies' : '🎯 Recent Calibration Lobbies',
+          value: matchBreakdown,
+          inline: false,
+        },
         {
           name: '🧠 How is this calculated?',
           value: 'Your hidden rank is estimated by analyzing the **actual ranked medals of other players** (enemies and teammates) in your matches.\n' +
