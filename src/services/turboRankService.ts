@@ -309,17 +309,23 @@ export class TurboRankService {
     const estimatedMMR = Math.round(weightedSum / totalWeight);
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
-    // Confidence calculation
-    const totalSoloCount = soloObs.length;
-    let confidence = 0;
-    if (useSoloOnly) {
-      // 10+ solo games with decay weight provides 100% confidence
-      confidence = Math.min(100, Math.round((totalWeight / 6) * 100));
-    } else {
-      const rawConf = Math.min(100, Math.round((totalWeight / 15) * 100));
-      const soloBonus = totalSoloCount >= 10 ? 1.0 : totalSoloCount >= 5 ? 0.85 : totalSoloCount >= 1 ? 0.6 : 0.35;
-      confidence = Math.min(100, Math.round(rawConf * soloBonus));
+    // Confidence calculation based on raw match reliability and slow recency decay (180-day half-life)
+    const confDecayLambda = Math.LN2 / (180 * 86400);
+    let confidenceSum = 0;
+
+    for (const obs of targets) {
+      const ageSec = Math.max(0, now - obs.timestamp);
+      const confRecency = Math.exp(-confDecayLambda * ageSec);
+      
+      let matchContribution = 0;
+      if (obs.partySize === 1) matchContribution = 10;      // Solo: 10%
+      else if (obs.partySize === 2) matchContribution = 3;  // Duo: 3%
+      else if (obs.partySize === 3) matchContribution = 1;  // Trio: 1%
+      else matchContribution = 0.2;                         // 4/5-stack: 0.2%
+      
+      confidenceSum += matchContribution * confRecency;
     }
+    const confidence = Math.min(100, Math.max(10, Math.round(confidenceSum)));
 
     return {
       estimatedMMR,
@@ -328,7 +334,7 @@ export class TurboRankService {
       medal,
       confidence,
       sampleSize: observations.length,
-      soloSampleSize: totalSoloCount,
+      soloSampleSize: soloObs.length,
       effectiveSample: Math.round(totalWeight * 100) / 100,
       lastUpdated: Date.now(),
     };
