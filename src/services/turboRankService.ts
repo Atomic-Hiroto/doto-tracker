@@ -198,6 +198,7 @@ export class TurboRankService {
   extractObservationFromStratz(
     match: any,
     steamAccountId: number,
+    isSoloOverride?: boolean,
   ): TurboRankObservation | null {
     const players: any[] = match.players || [];
     const trackedPlayer = players.find(
@@ -206,7 +207,14 @@ export class TurboRankService {
     if (!trackedPlayer) return null;
 
     // Party size from partyId
-    const partySize = this.computePartySizeStratz(players, trackedPlayer);
+    let partySize = this.computePartySizeStratz(players, trackedPlayer);
+    if (isSoloOverride === true) {
+      partySize = 1;
+    } else if (isSoloOverride === false && partySize <= 1) {
+      // If we know this was a party match, but partyId calculation yielded 1 (due to Stratz parse omissions),
+      // treat it as default party size 3 (discounted).
+      partySize = 3;
+    }
 
     // Collect MMR values from the OTHER 9 players (exclude tracked player's
     // own ranked medal — it may be outdated or not reflect turbo skill).
@@ -329,10 +337,10 @@ export class TurboRankService {
 
   /**
    * Retroactive calibration from Stratz:
-   *  1. Fetches turbo matches from the last 1 year, paginating up to 300 matches
-   *     until we find at least 15 solo games (to give a high-quality "better read" performance estimate).
-   *  2. Fallback to older matches (without date filter) if the player is inactive/no recent matches.
-   *  3. Processes all retrieved matches and estimates hidden turbo rank.
+   *  1. Fetches recent solo matches (isParty: false) from the last 1 year (up to 100 matches).
+   *  2. If solo matches count is < 15, fetches recent party matches (isParty: true) from the last 1 year (up to 100 matches).
+   *  3. Fallback to older matches (no date filter, mix of solo/party) if the player is inactive.
+   *  4. Handles overrides during parsing to prevent misclassifying party matches with missing party IDs as solo.
    */
   async calibratePlayer(
     discordId: string,
@@ -348,54 +356,45 @@ export class TurboRankService {
 
     try {
       const oneYearAgo = Math.floor(Date.now() / 1000) - 365 * 24 * 3600;
-      let allMatches: any[] = [];
-      let skip = 0;
-      const limitPerPage = 100;
-      const maxPages = 3;
+      let finalMatches: Array<{ match: any; isSolo?: boolean }> = [];
 
-      onProgress?.(0, 0, 'Fetching recent turbo matches (last 1 year)…');
-
-      for (let page = 1; page <= maxPages; page++) {
-        const pageMatches = await fetchPlayerTurboMatches(steamAccountId, limitPerPage, skip, oneYearAgo);
-        logger.info(`Stratz page ${page}: fetched ${pageMatches.length} matches for ${steamId}`);
-
-        if (pageMatches.length === 0) break;
-        allMatches.push(...pageMatches);
-
-        // Count solo matches found so far
-        const totalSolo = allMatches.filter(m => {
-          const tracked = m.players?.find((p: any) => p.steamAccountId === steamAccountId);
-          if (!tracked) return false;
-          const partyId = tracked.partyId;
-          if (partyId == null || partyId === 0) return true;
-          const sameParty = m.players.filter((p: any) => p.partyId === partyId).length;
-          return sameParty <= 1;
-        }).length;
-
-        logger.info(`Total solo matches found so far: ${totalSolo}`);
-
-        // If we have at least 15 solo matches, or the page was not full (no more matches), stop pagination
-        if (totalSolo >= 15 || pageMatches.length < limitPerPage) {
-          break;
-        }
-
-        skip += limitPerPage;
+      // Pass 1: Fetch solo matches (isParty: false) from the last 1 year
+      onProgress?.(0, 0, 'Fetching recent solo matches (last 1 year)…');
+      const soloMatches = await fetchPlayerTurboMatches(steamAccountId, 100, 0, oneYearAgo, false);
+      logger.info(`Stratz solo matches (last 1 year) fetched: ${soloMatches.length} for ${steamId}`);
+      
+      for (const m of soloMatches) {
+        finalMatches.push({ match: m, isSolo: true });
       }
 
-      // Fallback: if no matches in the last 1 year, fetch older matches (no date filter, up to 100 matches)
-      if (allMatches.length === 0) {
+      // Pass 2: If we have fewer than 15 solo matches, fetch recent party matches (isParty: true) from the last 1 year
+      if (finalMatches.length < 15) {
+        onProgress?.(0, 0, 'Fetching recent party matches (last 1 year)…');
+        const partyMatches = await fetchPlayerTurboMatches(steamAccountId, 100, 0, oneYearAgo, true);
+        logger.info(`Stratz party matches (last 1 year) fetched: ${partyMatches.length} for ${steamId}`);
+        
+        for (const m of partyMatches) {
+          finalMatches.push({ match: m, isSolo: false });
+        }
+      }
+
+      // Fallback: if no matches in the last 1 year, fetch older matches (up to 100, mix of solo/party)
+      if (finalMatches.length === 0) {
         logger.info(`No Stratz matches in last year, falling back to older matches for ${steamId}`);
         onProgress?.(0, 0, 'No recent matches. Fetching older matches…');
-        allMatches = await fetchPlayerTurboMatches(steamAccountId, 100, 0, null);
+        const fallbackMatches = await fetchPlayerTurboMatches(steamAccountId, 100, 0, null, null);
+        for (const m of fallbackMatches) {
+          finalMatches.push({ match: m });
+        }
       }
 
-      // Deduplicate
+      // Deduplicate by match ID, keeping the solo match entry first if there's any overlap
       const seenIds = new Set<number>();
-      const merged: any[] = [];
-      for (const m of allMatches) {
-        if (!seenIds.has(m.id)) {
-          seenIds.add(m.id);
-          merged.push(m);
+      const merged: Array<{ match: any; isSolo?: boolean }> = [];
+      for (const item of finalMatches) {
+        if (!seenIds.has(item.match.id)) {
+          seenIds.add(item.match.id);
+          merged.push(item);
         }
       }
 
@@ -410,10 +409,10 @@ export class TurboRankService {
       let added = 0;
 
       for (let i = 0; i < merged.length; i++) {
-        const match = merged[i];
+        const item = merged[i];
         onProgress?.(i + 1, merged.length, 'Processing matches…');
 
-        const obs = this.extractObservationFromStratz(match, steamAccountId);
+        const obs = this.extractObservationFromStratz(item.match, steamAccountId, item.isSolo);
         if (obs) {
           player.observations.push(obs);
           added++;
