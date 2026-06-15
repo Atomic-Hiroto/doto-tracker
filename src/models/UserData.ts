@@ -3,4 +3,5 @@ export interface UserData {
     steamId: string,
     autoShow: boolean,
     lastCheckedMatch: number | null,
+    matchesTracked?: number,
 }

@@ -49,8 +49,10 @@ export async function heroes(message: Message, args: string[], userDataService: 
                 const winRate = hero.games > 0 ? hero.win / hero.games : 0;
                 const level = getMasteryLevel(hero.games, winRate);
                 const winRatePct = (winRate * 100).toFixed(1);
-                const kda = ((hero.kills + hero.assists) / (hero.deaths || 1)).toFixed(2);
-                return `${MASTERY_LEVELS[level]} **${heroName}** — ${hero.games}G | ${winRatePct}% WR | ${kda} KDA`;
+                // /players/{id}/heroes carries no per-hero K/D/A — only games/win —
+                // so we show the win/loss split instead of a NaN KDA.
+                const losses = hero.games - hero.win;
+                return `${MASTERY_LEVELS[level]} **${heroName}** — ${hero.games}G | ${hero.win}W-${losses}L | ${winRatePct}% WR`;
             })
         );
 

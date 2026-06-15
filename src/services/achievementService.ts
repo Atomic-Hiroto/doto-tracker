@@ -24,8 +24,8 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
     { id: 'clean_sweep', name: 'Clean Sweep', emoji: '🧹', description: 'Win a game with 0 deaths' },
     { id: 'carry_enjoyer', name: 'Carry Enjoyer', emoji: '👑', description: 'Win with 15+ kills in one game' },
     { id: 'support_god', name: 'Support God', emoji: '💚', description: 'Win a game with 20+ assists' },
-    { id: 'climbing', name: 'Mountain Climber', emoji: '🏔️', description: 'Reach turbo rating 50+' },
-    { id: 'overlord', name: 'Overlord', emoji: '🌋', description: 'Reach turbo rating 100+' },
+    { id: 'climbing', name: 'Mountain Climber', emoji: '🏔️', description: 'Reach turbo score 40+' },
+    { id: 'overlord', name: 'Overlord', emoji: '🌋', description: 'Reach turbo score 55+' },
     { id: 'first_blood', name: 'First Steps', emoji: '🎮', description: 'Play your first tracked match' },
 ];
 
@@ -44,6 +44,7 @@ export interface MatchContext {
     totalMatches?: number;
     turboRating?: number;
     turboGames?: number;
+    winStreak?: number;
 }
 
 class AchievementService {
@@ -116,14 +117,16 @@ class AchievementService {
             if (ctx.totalMatches >= 100) tryUnlock('century_club');
         }
 
+        if (ctx.winStreak !== undefined && ctx.winStreak >= 5) tryUnlock('on_fire');
+
         if (ctx.won && ctx.deaths === 0) tryUnlock('clean_sweep');
         if (ctx.won && (ctx.deaths || 0) >= 10) tryUnlock('feeder_redeemed');
         if (ctx.won && (ctx.kills || 0) >= 15) tryUnlock('carry_enjoyer');
         if (ctx.won && (ctx.assists || 0) >= 20) tryUnlock('support_god');
 
         if (ctx.turboRating !== undefined) {
-            if (ctx.turboRating >= 50) tryUnlock('climbing');
-            if (ctx.turboRating >= 100) tryUnlock('overlord');
+            if (ctx.turboRating >= 40) tryUnlock('climbing');
+            if (ctx.turboRating >= 55) tryUnlock('overlord');
         }
 
         if (ctx.turboGames !== undefined && ctx.turboGames >= 50) {

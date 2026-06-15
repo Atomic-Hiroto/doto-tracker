@@ -143,7 +143,7 @@ export async function profile(
             const turboWr = turboTotal > 0 ? ((turboStats.wins / turboTotal) * 100).toFixed(1) : '0';
             embed.addFields({
                 name: '⚡ Turbo Stats',
-                value: `**Rating:** ${turboStats.rating} | **W/L:** ${turboStats.wins}/${turboStats.losses} (${turboWr}%)`,
+                value: `**Score:** ${turboStats.rating} | **W/L:** ${turboStats.wins}/${turboStats.losses} (${turboWr}%)`,
                 inline: false
             });
         }

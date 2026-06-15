@@ -1,4 +1,12 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
+import { dotaDataService } from './dotaDataService';
+import { APIConstants } from '../constants';
+
+const SCOREBOARD_GAME_MODES: Record<number, string> = {
+    0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
+    4: 'Single Draft', 5: 'All Random', 8: 'Reverse Captains Mode',
+    16: 'Captains Draft', 22: 'All Draft', 23: 'Turbo', 24: 'Mutation',
+};
 
 export interface DataPoint {
     label: string;
@@ -466,6 +474,45 @@ async function loadCachedImage(url?: string): Promise<any | null> {
  * match with a green/red result bar, hero, K/D/A, KDA ratio, GPM, duration and
  * mode. Far more readable than plain embed text rows.
  */
+/**
+ * Convenience wrapper: build both teams from a raw OpenDota match object and
+ * render the scoreboard. focusSteamIds highlights those players' rows. Shared by
+ * the +matches Details button and the auto-show feed so they stay identical.
+ */
+export async function renderScoreboardFromMatch(match: any, focusSteamIds: string[] = []): Promise<Buffer> {
+    const focus = new Set(focusSteamIds.map(String));
+    const toPlayer = async (p: any): Promise<ScoreboardPlayer> => {
+        const hero = await dotaDataService.getHeroName(p.hero_id);
+        return {
+            heroName: hero,
+            heroImageUrl: APIConstants.IMAGE_URL(hero),
+            personaName: p.personaname || 'Anonymous',
+            level: Number(p.level || 0),
+            kills: p.kills ?? 0,
+            deaths: p.deaths ?? 0,
+            assists: p.assists ?? 0,
+            gpm: p.gold_per_min ?? 0,
+            lastHits: p.last_hits ?? 0,
+            netWorth: Number(p.net_worth ?? p.total_gold ?? 0),
+            itemImageUrls: ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5']
+                .map((slot) => dotaDataService.getItemImageUrl(Number(p[slot] || 0))),
+            isFocus: focus.has(String(p.account_id)),
+        };
+    };
+    const radiantPlayers = (match.players || []).filter((p: any) => p.player_slot < 128);
+    const direPlayers = (match.players || []).filter((p: any) => p.player_slot >= 128);
+    const radiant: ScoreboardTeam = {
+        name: 'Radiant', won: !!match.radiant_win, score: match.radiant_score ?? 0,
+        players: await Promise.all(radiantPlayers.map(toPlayer)),
+    };
+    const dire: ScoreboardTeam = {
+        name: 'Dire', won: !match.radiant_win, score: match.dire_score ?? 0,
+        players: await Promise.all(direPlayers.map(toPlayer)),
+    };
+    const mode = SCOREBOARD_GAME_MODES[Number(match.game_mode)] || `Mode ${match.game_mode ?? '?'}`;
+    return renderMatchScoreboard(radiant, dire, { matchId: match.match_id, durationSec: match.duration, mode });
+}
+
 export function renderRecentMatchesTable(
     rows: MatchRow[],
     opts: { username: string; wins: number; total: number; subtitle?: string }
