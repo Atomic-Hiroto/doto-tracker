@@ -839,7 +839,15 @@ export async function analyze(message: Message, args: string[], userDataService?
         if (!useStratz) {
             const matchData = await getDetailedMatchData(matchId);
             if (!matchData) {
-                return message.reply(`❌ Could not fetch data from OpenDota for match **${matchId}**.`);
+                const parseRequested = await requestMatchParse(matchId).catch(() => false);
+                const suffix = parseRequested
+                    ? 'I sent OpenDota a parse request. Try `+analyze` again in a few minutes.'
+                    : 'OpenDota did not accept a parse request right now. Try again later.';
+                return message.reply(
+                    `⏳ Match **#${matchId}** is not parsed on Stratz or OpenDota yet.\n` +
+                    `I can show basic **Details**, but AI analysis needs parsed replay/timeline data.\n` +
+                    suffix
+                );
             }
 
             // ── Build structured prompt with clear sections ─────────────────────

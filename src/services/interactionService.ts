@@ -26,6 +26,8 @@ const GAME_MODE_NAMES: Record<number, string> = {
     16: 'Captains Draft', 22: 'All Draft', 23: 'Turbo', 24: 'Mutation',
 };
 
+const activeAnalysisButtons = new Set<string>();
+
 function asMessageAdapter(interaction: ButtonInteraction): any {
     const noop = async () => undefined;
     return {
@@ -215,8 +217,20 @@ export function registerInteractionHandler(client: Client, userDataService: User
             // messages keep working — both now run fact-grounded whole-match analysis.
             if (customId.startsWith('analyze_') || customId.startsWith('story_')) {
                 const matchId = parseInt(customId.replace(/^(analyze|story)_/, ''), 10);
-                await interaction.reply({ content: `🔍 Analyzing match #${matchId}...`, ephemeral: false });
-                await analyze(asMessageAdapter(interaction), [String(matchId)], userDataService);
+                const lockKey = `match:${matchId}`;
+                if (activeAnalysisButtons.has(lockKey)) {
+                    return interaction.reply({
+                        content: `Analysis for match #${matchId} is already running. I’ll post it here when it finishes.`,
+                        ephemeral: true,
+                    });
+                }
+                activeAnalysisButtons.add(lockKey);
+                try {
+                    await interaction.reply({ content: `🔍 Analyzing match #${matchId}...`, ephemeral: false });
+                    await analyze(asMessageAdapter(interaction), [String(matchId)], userDataService);
+                } finally {
+                    activeAnalysisButtons.delete(lockKey);
+                }
 
             } else if (customId.startsWith('details_')) {
                 const matchId = parseInt(customId.replace('details_', ''), 10);
@@ -359,8 +373,20 @@ export function registerInteractionHandler(client: Client, userDataService: User
                 if (!clicker) {
                     return interaction.reply({ content: 'Register first with `+register <steam_id>` to analyze your own performance.', ephemeral: true });
                 }
-                await interaction.reply({ content: `🎓 Analyzing your game in match #${matchId}...`, ephemeral: false });
-                await analyze(asMessageAdapter(interaction), [String(matchId), clicker.steamId], userDataService);
+                const lockKey = `player:${matchId}:${clicker.steamId}`;
+                if (activeAnalysisButtons.has(lockKey)) {
+                    return interaction.reply({
+                        content: `Your focused analysis for match #${matchId} is already running. I’ll post it here when it finishes.`,
+                        ephemeral: true,
+                    });
+                }
+                activeAnalysisButtons.add(lockKey);
+                try {
+                    await interaction.reply({ content: `🎓 Analyzing your game in match #${matchId}...`, ephemeral: false });
+                    await analyze(asMessageAdapter(interaction), [String(matchId), clicker.steamId], userDataService);
+                } finally {
+                    activeAnalysisButtons.delete(lockKey);
+                }
 
             } else if (customId.startsWith('coachme_')) {
                 const [, matchIdRaw, steamId] = customId.split('_');
@@ -368,8 +394,20 @@ export function registerInteractionHandler(client: Client, userDataService: User
                 if (!matchId || !steamId) {
                     return interaction.reply({ content: 'Invalid coach request.', ephemeral: true });
                 }
-                await interaction.reply({ content: `🎓 Running focused coaching for match #${matchId}...`, ephemeral: false });
-                await analyze(asMessageAdapter(interaction), [String(matchId), steamId]);
+                const lockKey = `player:${matchId}:${steamId}`;
+                if (activeAnalysisButtons.has(lockKey)) {
+                    return interaction.reply({
+                        content: `Focused coaching for match #${matchId} is already running. I’ll post it here when it finishes.`,
+                        ephemeral: true,
+                    });
+                }
+                activeAnalysisButtons.add(lockKey);
+                try {
+                    await interaction.reply({ content: `🎓 Running focused coaching for match #${matchId}...`, ephemeral: false });
+                    await analyze(asMessageAdapter(interaction), [String(matchId), steamId]);
+                } finally {
+                    activeAnalysisButtons.delete(lockKey);
+                }
 
             } else if (customId.startsWith('page_')) {
                 // Pagination buttons — handled by individual commands that registered them
