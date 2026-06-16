@@ -21,6 +21,7 @@ export enum Commands {
     TURBO_SQUAD = "turbosquad",
     TURBO_FACTS = "turbofacts",
     TURBO_SCORECARD = "turboscorecard",
+    TURBO_WINRATE = "turbowinrate",
     TOGGLE_SHARED_CONTEXT = "togglesharedcontext",
     PROFILE = "profile",
     TOP_HEROES = "topheros",

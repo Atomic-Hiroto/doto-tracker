@@ -11,6 +11,7 @@ export { turboStudy } from './turboStudy';
 export { turboPairings, myTurboPairings } from './turboPairings';
 export { turboRank } from './turboRank';
 export { turboLean, turboVs, turboClimb, turboSquad, turboFacts, turboScorecard } from './turboFun';
+export { turboWinRate } from './turboWinRate';
 export { toggleSharedContext } from './toggleSharedContext';
 export { profile } from './profile';
 export { tophero } from './tophero';
