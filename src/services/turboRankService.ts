@@ -548,7 +548,7 @@ export class TurboRankService {
   async discoverPeerCandidates(
     seedSteamId: string,
     minCoOccurrence = 3,
-    matchSampleSize = 150,
+    matchSampleSize = 200,
   ): Promise<{
     candidates: Array<{ steamId: string; coOccurrences: number; seasonRank: number | null }>;
     matchesScanned: number;
@@ -560,8 +560,16 @@ export class TurboRankService {
     }
 
     const profile = await fetchStratzPlayerProfile(seedAccountId);
+    // Stratz caps `take` at 100 per request, so page through to reach matchSampleSize.
     // isParty: null returns both solo and party turbo matches — maximises peer coverage.
-    const matches = await fetchPlayerTurboMatches(seedAccountId, matchSampleSize, 0, null, null);
+    const PAGE = 100;
+    const matches: any[] = [];
+    for (let skip = 0; skip < matchSampleSize; skip += PAGE) {
+      const take = Math.min(PAGE, matchSampleSize - skip);
+      const page = await fetchPlayerTurboMatches(seedAccountId, take, skip, null, null);
+      matches.push(...page);
+      if (page.length < take) break; // no more matches available
+    }
 
     const tally = new Map<string, { count: number; seasonRank: number | null }>();
     for (const match of matches) {
