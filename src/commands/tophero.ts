@@ -80,7 +80,8 @@ export async function tophero(message: Message, args: string[], userDataService:
 
     const matches = await opendotaClient.get<any[]>(
       `/players/${user.steamId}/matches?game_mode=23&significant=0&limit=500`
-      + '&project=gold_per_min&project=xp_per_min&project=last_hits&project=hero_damage&project=hero_healing&project=start_time',
+      + '&project=hero_id&project=start_time&project=assists&project=gold_per_min'
+      + '&project=xp_per_min&project=last_hits&project=hero_damage&project=hero_healing',
     ).then(r => r.data || []).catch(() => []);
 
     if (matches.length === 0) {

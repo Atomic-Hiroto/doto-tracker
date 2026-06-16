@@ -5,34 +5,55 @@ import { logger } from '../services/loggerService';
 
 export async function turboLeaderboard(message: Message, turboStatsService: TurboStatsService) {
   try {
-    const leaderboard = turboStatsService.getPlayerLeaderboard(10);
-
-    if (leaderboard.length === 0) {
+    const MIN_GAMES = 10;
+    const players = turboStatsService.getAllStats().playerStats.filter(p => p.wins + p.losses >= MIN_GAMES);
+    if (players.length === 0) {
       return message.reply('No players have 10+ tracked turbo games yet. Play more turbo matches to unlock the leaderboard.');
     }
 
+    // Rank by the opponent-AWARE hidden-MMR estimate (read from lobby opponent medals) —
+    // turbo win rates all cluster near 50% (matchmaking), so they barely separate anyone.
+    // Win rate is just the tiebreaker. Players without a usable estimate are listed apart.
+    const entries = players.map(p => ({ p, est: turboRankService.getEstimate(p.discordId) }));
+    const skill = entries
+      .filter(e => e.est && e.est.confidence >= 25)
+      .sort((a, b) => (b.est!.estimatedMMR - a.est!.estimatedMMR)
+        || ((b.p.wins / (b.p.wins + b.p.losses)) - (a.p.wins / (a.p.wins + a.p.losses))));
+    const uncalibrated = entries.filter(e => !(e.est && e.est.confidence >= 25));
+
     const embed = new EmbedBuilder()
       .setColor('#ffd700')
-      .setTitle('🏆 Turbo Leaderboard')
-      .setDescription('Top players by turbo score — conservative win-rate estimate (min 10 games)')
+      .setTitle('🏆 Turbo Leaderboard — the Crew')
+      .setDescription('Registered players ranked by **estimated hidden Turbo MMR** (from lobby opponent medals — opponent-aware, not just win rate). Min 10 games. _For the full estimator dataset incl. discovered peers, use `+turborank all`._')
       .setTimestamp();
 
-    let leaderboardText = '';
-    for (let i = 0; i < leaderboard.length; i++) {
-      const player = leaderboard[i];
-      const user = await message.client.users.fetch(player.discordId);
-      const totalGames = player.wins + player.losses;
-      const winRate = ((player.wins / totalGames) * 100).toFixed(1);
-
-      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      const rankEstimate = turboRankService.getEstimate(player.discordId);
-      const rankTag = rankEstimate ? ` ${TurboRankService.formatShort(rankEstimate)}` : '';
-
-      leaderboardText += `${medal} **${user.username}**${rankTag}\n`;
-      leaderboardText += `   Score: ${player.rating} | W/L: ${player.wins}/${player.losses} (${winRate}%)\n\n`;
+    if (skill.length > 0) {
+      let text = '';
+      for (let i = 0; i < skill.length; i++) {
+        const { p, est } = skill[i];
+        const user = await message.client.users.fetch(p.discordId).catch(() => null);
+        const name = user?.username ?? `Player ${p.discordId}`;
+        const total = p.wins + p.losses;
+        const wr = ((p.wins / total) * 100).toFixed(0);
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+        const flags = est!.partyFallback ? ' ⚠ party-based' : est!.confidence < 50 ? ' ⏳ low conf' : '';
+        text += `${medal} **${name}** — ${est!.medal} (~${est!.estimatedMMR})${flags}\n`;
+        text += `   ${p.wins}W/${p.losses}L (${wr}%) · est. confidence ${est!.confidence}%\n\n`;
+      }
+      embed.addFields({ name: 'Rankings — by hidden Turbo MMR', value: text.slice(0, 1024), inline: false });
     }
 
-    embed.addFields({ name: 'Rankings', value: leaderboardText, inline: false });
+    if (uncalibrated.length > 0) {
+      const names = (await Promise.all(uncalibrated.slice(0, 12).map(async e => {
+        const u = await message.client.users.fetch(e.p.discordId).catch(() => null);
+        return u?.username ?? `Player ${e.p.discordId}`;
+      }))).join(', ');
+      embed.addFields({
+        name: `🔧 Uncalibrated (${uncalibrated.length})`,
+        value: `${names}\nRun \`+turborank calibrate\` (with Expose Public Match Data on) to join the skill ranking.`.slice(0, 1024),
+        inline: false,
+      });
+    }
 
     await message.reply({ embeds: [embed] });
   } catch (error) {
