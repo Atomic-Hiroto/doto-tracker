@@ -6,6 +6,7 @@ import { TurboStatsService } from '../services/turboStatsService';
 import { UserDataService } from '../services/userDataService';
 import { opendotaClient } from '../services/apiClient';
 import { renderTurboStudyScatter, renderTurboStudyResidual } from '../services/chartService';
+import { turboScorecard } from './turboFun';
 import { logger } from '../services/loggerService';
 
 interface StudyCandidate {
@@ -340,6 +341,10 @@ const STUDY_BRACKETS = [
 
 export async function turboStudy(message: Message, args: string[], userDataService: UserDataService, turboStatsService: TurboStatsService) {
   try {
+    // +turbostudy scorecard → estimator-accuracy validation (formerly +turboscorecard)
+    if (['scorecard', 'score', 'accuracy', 'validate'].includes((args[0] ?? '').toLowerCase())) {
+      return turboScorecard(message);
+    }
     const crewOnly = ['friends', 'crew', 'mine', 'squad'].includes((args[0] ?? '').toLowerCase());
     const estimates = turboRankService.getAllEstimates()
       .filter(e => !crewOnly || !e.discovered);
