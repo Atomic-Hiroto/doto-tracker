@@ -209,16 +209,37 @@ async function displayMatchStats(discordId: string, steamId: string, match: Matc
     const isRadiant = playerData.player_slot < 128;
     const didWin = (isRadiant && detailedMatch.data.radiant_win) || (!isRadiant && !detailedMatch.data.radiant_win);
 
-    const itemSlots = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5'];
-    const itemNames = await Promise.all(itemSlots.map(slot => dotaDataService.getItemName(playerData[slot])));
     const planGrade = await gradeActivePlanForMatch(String(playerData.account_id || ''), match.match_id, detailedMatch.data);
+
+    // The visual scoreboard already carries every per-player stat (K/D/A, GPM,
+    // net worth, last hits, items) for the focus row, so when it renders we keep
+    // the embed minimal and only fall back to the text stat fields if it fails.
+    const files: AttachmentBuilder[] = [];
+    let hasBoard = false;
+    try {
+      const board = await renderScoreboardFromMatch(detailedMatch.data, [steamId]);
+      files.push(new AttachmentBuilder(board, { name: 'scoreboard.png' }));
+      hasBoard = true;
+    } catch (boardError) {
+      logger.error(`Failed to render scoreboard for match ${match.match_id}:`, boardError);
+    }
 
     const embed = new EmbedBuilder()
       .setColor(didWin ? '#66bb6a' : '#ef5350')
       .setTitle(`Recent Match for ${user.username}`)
       .setDescription(`**${didWin ? 'Victory' : 'Defeat'}** as **${heroName}**`)
       .setThumbnail(APIConstants.IMAGE_URL(heroName))
-      .addFields(
+      .setTimestamp(new Date(detailedMatch.data.start_time * 1000))
+      .setFooter({ text: `Match played on ${new Date(detailedMatch.data.start_time * 1000).toLocaleString()}` })
+      .setURL(`https://www.opendota.com/matches/${match.match_id}`);
+
+    if (hasBoard) {
+      embed.setImage('attachment://scoreboard.png');
+    } else {
+      // Text fallback: the image didn't render, so spell the stats out.
+      const itemSlots = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5'];
+      const itemNames = await Promise.all(itemSlots.map(slot => dotaDataService.getItemName(playerData[slot])));
+      embed.addFields(
         { name: 'K/D/A', value: `${playerData.kills}/${playerData.deaths}/${playerData.assists}`, inline: true },
         { name: 'KDA Ratio', value: ((playerData.kills + playerData.assists) / (playerData.deaths || 1)).toFixed(2), inline: true },
         { name: 'Level', value: playerData.level.toString(), inline: true },
@@ -233,23 +254,11 @@ async function displayMatchStats(discordId: string, steamId: string, match: Matc
         { name: 'Match ID', value: `[${match.match_id}](https://www.opendota.com/matches/${match.match_id})`, inline: true },
         { name: 'Duration', value: formatDuration(detailedMatch.data.duration), inline: true },
         { name: 'Game Mode', value: GAME_MODE_NAMES[Number(detailedMatch.data.game_mode)] || `Mode ${detailedMatch.data.game_mode ?? '?'}`, inline: true }
-      )
-      .setTimestamp(new Date(detailedMatch.data.start_time * 1000))
-      .setFooter({ text: `Match played on ${new Date(detailedMatch.data.start_time * 1000).toLocaleString()}` })
-      .setURL(`https://www.opendota.com/matches/${match.match_id}`);
-    if (planGrade) {
-      embed.addFields({ name: 'Coach Check-In', value: planGrade.slice(0, 1024), inline: false });
+      );
     }
 
-    // Attach the full visual scoreboard so the auto-feed matches the on-demand
-    // Details view instead of being a plain text card.
-    const files: AttachmentBuilder[] = [];
-    try {
-      const board = await renderScoreboardFromMatch(detailedMatch.data, [steamId]);
-      files.push(new AttachmentBuilder(board, { name: 'scoreboard.png' }));
-      embed.setImage('attachment://scoreboard.png');
-    } catch (boardError) {
-      logger.error(`Failed to render scoreboard for match ${match.match_id}:`, boardError);
+    if (planGrade) {
+      embed.addFields({ name: 'Coach Check-In', value: planGrade.slice(0, 1024), inline: false });
     }
 
     await safeSend(channel, { embeds: [embed], files });

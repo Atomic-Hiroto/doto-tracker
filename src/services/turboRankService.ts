@@ -8,6 +8,7 @@ import {
   TurboRankEstimate,
 } from '../models/TurboRank';
 import { fetchPlayerTurboMatches, fetchStratzPlayerProfile } from './stratzClient';
+import { logCalibrationSnapshot } from './turboCalibrationLog';
 
 const TURBO_RANK_FILE = 'turboRankData.json';
 const TURBO_GAME_MODE = 23;
@@ -286,7 +287,10 @@ export class TurboRankService {
    *  - Players who never solo-queue fall back to party games (heavily discounted
    *    by party size) with the partyFallback flag set.
    */
-  private computeEstimate(observations: TurboRankObservation[]): TurboRankEstimate | null {
+  private computeEstimate(
+    observations: TurboRankObservation[],
+    rankedTier?: number | null,
+  ): TurboRankEstimate | null {
     if (observations.length === 0) return null;
 
     const now = Date.now() / 1000;
@@ -330,6 +334,10 @@ export class TurboRankService {
     const rangeLow = mmrToMedal(estimatedMMR - spread).medal;
     const rangeHigh = mmrToMedal(estimatedMMR + spread).medal;
 
+    // Turbo-lean: how far above/below the visible ranked medal they actually play.
+    const rankedMMR = rankTierToMMR(rankedTier ?? 0);
+    const lean = rankedMMR != null ? estimatedMMR - rankedMMR : null;
+
     return {
       estimatedMMR,
       medalTier: tier,
@@ -342,6 +350,9 @@ export class TurboRankService {
       soloSampleSize: soloObs.length,
       effectiveSample: Math.round(effectiveSample * 100) / 100,
       partyFallback,
+      rankedTier: rankedTier ?? null,
+      rankedMMR,
+      lean,
       lastUpdated: Date.now(),
     };
   }
@@ -357,8 +368,15 @@ export class TurboRankService {
       const player = this.getOrCreatePlayer(discordId, steamId);
       if (player.observations.some(o => o.matchId === obs.matchId)) return;
 
+      // Keep the ranked-medal anchor fresh from this match's own rank_tier, but
+      // never blank a previously-known one if this match has no visible rank.
+      const tracked = (matchData.players || []).find(
+        (p: any) => p.account_id && String(p.account_id) === String(steamId),
+      );
+      const rankedTier = tracked?.rank_tier || player.estimate?.rankedTier || null;
+
       player.observations.push(obs);
-      player.estimate = this.computeEstimate(player.observations);
+      player.estimate = this.computeEstimate(player.observations, rankedTier);
       this.save();
 
       logger.info(
@@ -424,13 +442,14 @@ export class TurboRankService {
 
       if (observations.length === 0) {
         logger.info(`No usable Stratz turbo matches for ${steamId}, trying OpenDota`);
-        return this.calibratePlayerOpenDota(discordId, steamId, 100, onProgress);
+        return this.calibratePlayerOpenDota(discordId, steamId, 100, onProgress, profile.seasonRank);
       }
 
       player.observations = observations;
-      player.estimate = this.computeEstimate(observations);
+      player.estimate = this.computeEstimate(observations, profile.seasonRank);
       this.data.lastCalibrated = Date.now();
       this.save();
+      if (player.estimate) logCalibrationSnapshot(player, player.estimate);
 
       const soloN = observations.filter(o => o.partySize === 1).length;
       logger.info(
@@ -449,6 +468,7 @@ export class TurboRankService {
     steamId: string,
     take: number,
     onProgress?: (fetched: number, total: number, phase?: string) => void,
+    rankedTier?: number | null,
   ): Promise<TurboRankEstimate | null> {
     try {
       const resp = await opendotaClient.get<any[]>(
@@ -474,10 +494,15 @@ export class TurboRankService {
         if (i < matchList.length - 1) await new Promise(r => setTimeout(r, 1200));
       }
 
+      // Fall back to the tracked player's own rank_tier from the last match if
+      // Stratz didn't supply a season rank.
+      const ownTier = rankedTier ?? matchList.find((m: any) => m.rank_tier)?.rank_tier ?? null;
+
       player.observations = observations;
-      player.estimate = this.computeEstimate(observations);
+      player.estimate = this.computeEstimate(observations, ownTier);
       this.data.lastCalibrated = Date.now();
       this.save();
+      if (player.estimate) logCalibrationSnapshot(player, player.estimate);
       return player.estimate;
     } catch (err) {
       logger.error(`OpenDota calibration failed for ${steamId}:`, err);

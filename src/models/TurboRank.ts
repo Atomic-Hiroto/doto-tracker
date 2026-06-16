@@ -40,6 +40,16 @@ export interface TurboRankEstimate {
   effectiveSample: number;
   /** True when the estimate had to fall back to party games (player never solo-queues). */
   partyFallback: boolean;
+  /** Player's visible *ranked* medal tier (rank_tier int) at compute time, if known. */
+  rankedTier?: number | null;
+  /** MMR derived from rankedTier (null when unranked / unknown). */
+  rankedMMR?: number | null;
+  /**
+   * Turbo-lean: estimatedMMR − rankedMMR. The headline finding — how far above
+   * (or below) their visible ranked medal the player actually plays in turbo.
+   * Null when the player has no visible ranked medal to compare against.
+   */
+  lean?: number | null;
   /** Unix ms when estimate was last computed. */
   lastUpdated: number;
 }
