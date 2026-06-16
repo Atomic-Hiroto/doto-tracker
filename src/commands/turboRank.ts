@@ -38,7 +38,11 @@ export async function turboRank(
   const subcommand = args[0]?.toLowerCase();
 
   if (subcommand === 'all' || subcommand === 'leaderboard' || subcommand === 'lb') {
-    return turboRankAll(message);
+    const showEveryone = ['everyone', 'full', 'all'].includes(args[1]?.toLowerCase() ?? '');
+    return turboRankAll(message, showEveryone);
+  }
+  if (subcommand === 'trim' || subcommand === 'prune') {
+    return turboRankTrim(message, args.slice(1), userDataService);
   }
   if (
     (subcommand && BULK_CALIBRATE_SUBCOMMANDS.has(subcommand))
@@ -412,6 +416,10 @@ async function turboRankCalibrate(message: Message, args: string[], userDataServ
       );
     }
 
+    // A manual calibrate is an explicit "I vouch for this player" — promote them
+    // onto the leaderboard even if they were originally peer-discovered.
+    turboRankService.setDiscovered(target.steamId, false);
+
     // Refresh the name in case calibration resolved it.
     target.name = turboRankService.getSteamName(target.steamId) ?? target.name;
     const observations = turboRankService.getObservationsBySteamId(target.steamId);
@@ -652,6 +660,7 @@ async function turboRankDiscover(message: Message, args: string[], userDataServi
         );
 
         if (estimate) {
+          turboRankService.setDiscovered(cand.steamId, true); // hide from default leaderboard
           const name = turboRankService.getSteamName(cand.steamId) ?? `Steam ${cand.steamId}`;
           successes.push({ steamId: cand.steamId, name, medal: estimate.medal, confidence: estimate.confidence });
         } else {
@@ -700,6 +709,71 @@ async function turboRankDiscover(message: Message, args: string[], userDataServi
   }
 }
 
+// ── Trim (backfill discovered flag) ──────────────────────────────────────────
+
+/**
+ * +turborank trim <@user | steamId>
+ * Owner-only. Re-harvests a seed's recurring peers and flags the ones already in
+ * the dataset as `discovered`, so they drop off the default leaderboard. This
+ * back-fills players that peer-discovery added before the flag existed. Registered
+ * users are never touched, and a later manual `+turborank calibrate` re-promotes
+ * anyone you want back on the board.
+ */
+async function turboRankTrim(message: Message, args: string[], userDataService: UserDataService) {
+  if (message.author.id !== ProcessConstants.BOT_OWNER_ID) {
+    return message.reply('❌ Only the bot owner can trim the leaderboard.');
+  }
+
+  const minLobbies = looksLikeSteamId(args[1]) ? undefined : parseInt(args[1] ?? '', 10);
+  const minCoOccurrence = Number.isFinite(minLobbies) && (minLobbies as number) > 0 ? (minLobbies as number) : 3;
+
+  try {
+    const target = await resolveTarget(message, args, userDataService);
+    if ('error' in target) return message.reply(target.error);
+
+    const progressMsg = await message.reply(
+      `✂️ Re-scanning **${target.name}**'s peers to flag discovered players (${minCoOccurrence}+ shared lobbies)…`,
+    );
+
+    const { candidates, matchesScanned, seedName } = await withTimeout(
+      turboRankService.discoverPeerCandidates(target.steamId, minCoOccurrence, 200, true),
+      BULK_PLAYER_TIMEOUT_MS,
+      `Timed out scanning ${target.name}'s match history`,
+    );
+
+    const flagged: string[] = [];
+    for (const cand of candidates) {
+      const player = turboRankService.getPlayerBySteamId(cand.steamId);
+      // Only flag players that exist, aren't registered, and aren't already flagged.
+      if (player && !player.discordId && !player.discovered) {
+        turboRankService.setDiscovered(cand.steamId, true);
+        flagged.push(turboRankService.getSteamName(cand.steamId) ?? cand.steamId);
+      }
+    }
+
+    logger.info(`Trim by ${message.author.tag}: flagged ${flagged.length} discovered from ${seedName ?? target.steamId}`);
+
+    const embed = new EmbedBuilder()
+      .setColor('#10b981')
+      .setTitle('✂️ Leaderboard Trimmed')
+      .setDescription(
+        `Re-scanned **${matchesScanned}** of ${seedName ?? target.name}'s matches. ` +
+        `Flagged **${flagged.length}** peer-discovered player(s) as hidden.\n` +
+        'They stay in the dataset (and `+turbostudy`) but leave the default `+turborank all`.',
+      )
+      .addFields(
+        { name: 'Now hidden', value: fitLines(flagged.map(n => `**${n}**`), '_None — nothing to trim_'), inline: false },
+        { name: 'Note', value: 'Registered users were left alone. To put someone back, run `+turborank calibrate <id>`.', inline: false },
+      )
+      .setTimestamp();
+
+    await progressMsg.edit({ content: null, embeds: [embed] });
+  } catch (error) {
+    logger.error('Error in turborank trim:', error);
+    await message.reply('❌ Trim failed. Check the bot logs and try again.');
+  }
+}
+
 // ── Audit ────────────────────────────────────────────────────────────────────
 
 async function turboRankAudit(message: Message, args: string[], userDataService: UserDataService) {
@@ -722,16 +796,37 @@ async function turboRankAudit(message: Message, args: string[], userDataService:
 
 // ── Leaderboard ─────────────────────────────────────────────────────────────
 
-async function turboRankAll(message: Message) {
+/** Quality bar for the default board — keeps out tiny-sample / low-conf / party guesses. */
+const LB_MIN_SOLO = 10;
+const LB_MIN_CONF = 40;
+function isLeaderboardQuality(estimate: { confidence: number; soloSampleSize: number; partyFallback: boolean }): boolean {
+  return !estimate.partyFallback && estimate.confidence >= LB_MIN_CONF && estimate.soloSampleSize >= LB_MIN_SOLO;
+}
+
+async function turboRankAll(message: Message, showEveryone = false) {
   try {
-    const ranked = turboRankService.getAllEstimates();
-    if (ranked.length === 0) {
+    const all = turboRankService.getAllEstimates();
+    if (all.length === 0) {
       return message.reply('No players have turbo rank estimates yet. Run `+turborank calibrate` to get started.');
+    }
+
+    // Default board: your crew only (registered + manually calibrated), and only
+    // solid estimates. `everyone` shows the full dataset, discovered + provisional.
+    const hiddenDiscovered = showEveryone ? 0 : all.filter(r => r.discovered).length;
+    const shown = showEveryone ? all : all.filter(r => !r.discovered);
+    const provisional = shown.filter(r => !isLeaderboardQuality(r.estimate));
+    const ranked = showEveryone ? shown : shown.filter(r => isLeaderboardQuality(r.estimate));
+
+    if (ranked.length === 0) {
+      return message.reply(
+        'No players meet the leaderboard quality bar yet (need >=10 solo games and >=40% confidence). ' +
+        'Try `+turborank all everyone` to see every estimate.',
+      );
     }
 
     const lines: string[] = [];
     for (let i = 0; i < ranked.length; i++) {
-      const { discordId, steamName, estimate } = ranked[i];
+      const { discordId, steamName, discovered, estimate } = ranked[i];
       let name = steamName;
       if (!name && discordId) {
         const user = await message.client.users.fetch(discordId).catch(() => null);
@@ -742,21 +837,28 @@ async function turboRankAll(message: Message) {
       const place = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
       const conf = estimate.confidence >= 70 ? '✅' : estimate.confidence >= 40 ? '⚠️' : '❓';
       const fallback = estimate.partyFallback ? ' · _party-est_' : '';
+      const tag = showEveryone && discovered ? ' · _discovered_' : '';
 
       lines.push(
-        `${place}  **${name}** — ${estimate.medal}\n` +
-        ` ~${estimate.estimatedMMR} MMR · ${estimate.confidence}% conf · ${estimate.soloSampleSize} solo${fallback}`,
+        `${place}  **${name}** — ${estimate.medal} ${conf}\n` +
+        ` ~${estimate.estimatedMMR} MMR · ${estimate.confidence}% conf · ${estimate.soloSampleSize} solo${fallback}${tag}`,
       );
     }
+
+    const footerBits: string[] = [];
+    if (!showEveryone && hiddenDiscovered > 0) footerBits.push(`${hiddenDiscovered} discovered hidden`);
+    if (!showEveryone && provisional.length > 0) footerBits.push(`${provisional.length} provisional (need more games)`);
+    const footerNote = footerBits.length ? `\n\n_See \`+turborank all everyone\` for ${footerBits.join(' and ')}._` : '';
 
     const top = ranked[0];
     const embed = new EmbedBuilder()
       .setColor('#ffd700')
-      .setTitle('🔮 Hidden Turbo Rank Leaderboard')
+      .setTitle(showEveryone ? '🔮 Hidden Turbo Rank — Everyone' : '🔮 Hidden Turbo Rank Leaderboard')
       .setDescription(
         `Estimated hidden Turbo MMR from solo-lobby rank analysis.\n` +
         `👑 Top: **${top.steamName ?? 'Player'}** at **${top.estimate.medal}**\n\n` +
-        lines.join('\n'),
+        lines.join('\n') +
+        footerNote,
       )
       .setFooter({ text: 'medals: ⭐ Immortal 🔴 Divine 🟠 Ancient 🟡 Legend 🟣 Archon 🔵 Crusader 🟢 Guardian 🟤 Herald' })
       .setTimestamp();
