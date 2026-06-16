@@ -860,7 +860,17 @@ function studyMedalColor(mmr: number): string {
 }
 
 function studyPointColor(p: { partyFallback?: boolean; stale?: boolean; confidence: number }): string {
-    return p.partyFallback ? '#dc2626' : p.stale ? '#d97706' : p.confidence < 50 ? '#6b7280' : '#2563eb';
+    return p.partyFallback ? '#ef4444' : p.stale ? '#f59e0b' : p.confidence < 50 ? '#94a3b8' : '#38bdf8';
+}
+
+function boxesOverlap(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function overlapArea(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number {
+    const x = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+    const y = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    return x * y;
 }
 
 function roundRectPath(ctx: any, x: number, y: number, w: number, h: number, r: number) {
@@ -877,13 +887,13 @@ export function renderTurboStudyScatter(
     points: TurboStudyPoint[],
     opts: { title: string; xLabel: string; yLabel: string; fit?: { slope: number; intercept: number } },
 ): Buffer {
-    const W = 980;
-    const H = 600;
-    const P = 78;
+    const W = 1120;
+    const H = 680;
+    const P = 88;
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
 
-    ctx.fillStyle = '#f8fafc';
+    ctx.fillStyle = '#0b1120';
     ctx.fillRect(0, 0, W, H);
 
     if (points.length < 2) {
@@ -903,9 +913,9 @@ export function renderTurboStudyScatter(
     const sx = (x: number) => P + ((x - low) / range) * plotW;
     const sy = (y: number) => H - P - ((y - low) / range) * plotH;
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#111827';
     ctx.fillRect(P, P, plotW, plotH);
-    ctx.strokeStyle = '#cbd5e1';
+    ctx.strokeStyle = '#334155';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(P, P, plotW, plotH);
 
@@ -914,11 +924,11 @@ export function renderTurboStudyScatter(
     for (let v = low; v <= high; v += 500) {
         const x = sx(v);
         const y = sy(v);
-        ctx.strokeStyle = '#e5e7eb';
+        ctx.strokeStyle = '#334155';
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(x, P); ctx.lineTo(x, H - P); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(W - P, y); ctx.stroke();
-        ctx.fillStyle = '#475569';
+        ctx.fillStyle = '#cbd5e1';
         ctx.textAlign = 'center';
         ctx.fillText(String(v), x, H - P + 20);
         ctx.textAlign = 'right';
@@ -926,7 +936,7 @@ export function renderTurboStudyScatter(
     }
 
     // Identity line (perfect agreement).
-    ctx.strokeStyle = '#334155';
+    ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 2;
     ctx.setLineDash([8, 6]);
     ctx.beginPath(); ctx.moveTo(sx(low), sy(low)); ctx.lineTo(sx(high), sy(high)); ctx.stroke();
@@ -936,38 +946,86 @@ export function renderTurboStudyScatter(
     if (opts.fit) {
         const y0 = opts.fit.slope * low + opts.fit.intercept;
         const y1 = opts.fit.slope * high + opts.fit.intercept;
-        ctx.strokeStyle = '#0891b2';
+        ctx.strokeStyle = '#22d3ee';
         ctx.lineWidth = 2.5;
         ctx.beginPath(); ctx.moveTo(sx(low), sy(y0)); ctx.lineTo(sx(high), sy(y1)); ctx.stroke();
     }
 
     // Points: radius by sample size, colour by status, red ring for outliers.
+    const renderedPoints: Array<TurboStudyPoint & { px: number; py: number; radius: number }> = [];
     for (const point of points) {
         const x = sx(point.x);
         const y = sy(point.y);
         const radius = 5 + Math.min(7, Math.sqrt(Math.max(0, point.sampleSize ?? 0)));
+        renderedPoints.push({ ...point, px: x, py: y, radius });
         if (point.outlier) {
             ctx.beginPath(); ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
-            ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.strokeStyle = '#f87171'; ctx.lineWidth = 2; ctx.stroke();
         }
         ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fillStyle = studyPointColor(point); ctx.fill();
-        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
-        if (point.outlier || point.partyFallback || point.stale) {
-            ctx.font = '11px sans-serif';
-            ctx.fillStyle = '#111827';
-            ctx.textAlign = 'left';
-            ctx.fillText(point.label.slice(0, 14), x + radius + 4, y + 4);
+        ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+
+    // Label every player. Try several offsets and keep labels inside the plot area.
+    const placed: Array<{ x: number; y: number; w: number; h: number }> = [];
+    const labelOffsets = [
+        [12, -18], [12, 10], [-92, -18], [-92, 10],
+        [26, -34], [26, 28], [-112, -34], [-112, 28],
+        [0, -46], [0, 42],
+    ];
+    ctx.font = '11px sans-serif';
+    for (const point of renderedPoints.sort((a, b) => Number(b.outlier) - Number(a.outlier))) {
+        const text = point.label;
+        const w = Math.min(180, Math.ceil(ctx.measureText(text).width) + 10);
+        const h = 18;
+        let best = { x: point.px + point.radius + 8, y: point.py - 13, w, h };
+        let bestScore = Infinity;
+
+        for (const [dx, dy] of labelOffsets) {
+            const x = Math.max(P + 4, Math.min(W - P - w - 4, point.px + dx));
+            const y = Math.max(P + 4, Math.min(H - P - h - 4, point.py + dy));
+            const box = { x, y, w, h };
+            const overlap = placed.reduce((sum, p) => sum + overlapArea(box, p), 0);
+            const distance = Math.hypot((x + w / 2) - point.px, (y + h / 2) - point.py);
+            const score = overlap * 1000 + distance;
+            if (!placed.some((p) => boxesOverlap(box, p))) {
+                best = box;
+                bestScore = score;
+                break;
+            }
+            if (score < bestScore) {
+                best = box;
+                bestScore = score;
+            }
         }
+
+        placed.push(best);
+        ctx.strokeStyle = '#64748b99';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(point.px, point.py);
+        ctx.lineTo(best.x + best.w / 2, best.y + best.h / 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#020617dd';
+        roundRectPath(ctx, best.x, best.y, best.w, best.h, 4);
+        ctx.fill();
+        ctx.strokeStyle = point.outlier ? '#f87171' : '#475569';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#f8fafc';
+        ctx.textAlign = 'left';
+        ctx.fillText(text, best.x + 5, best.y + 13, best.w - 10);
     }
 
     // Title + axis labels.
-    ctx.fillStyle = '#111827';
+    ctx.fillStyle = '#f8fafc';
     ctx.font = 'bold 21px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(opts.title, W / 2, 32);
     ctx.font = '13px sans-serif';
-    ctx.fillStyle = '#334155';
+    ctx.fillStyle = '#cbd5e1';
     ctx.fillText(opts.xLabel, W / 2, H - 18);
     ctx.save(); ctx.translate(20, H / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillText(opts.yLabel, 0, 0); ctx.restore();
@@ -978,18 +1036,18 @@ export function renderTurboStudyScatter(
     const legendLine = (color: string, dashed: boolean, label: string) => {
         ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.setLineDash(dashed ? [6, 4] : []);
         ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 18, ly); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#334155'; ctx.fillText(label, lx + 24, ly + 4); lx += 30 + ctx.measureText(label).width + 16;
+        ctx.fillStyle = '#cbd5e1'; ctx.fillText(label, lx + 24, ly + 4); lx += 30 + ctx.measureText(label).width + 16;
     };
     const legendDot = (color: string, label: string) => {
         ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx + 5, ly, 5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#334155'; ctx.fillText(label, lx + 14, ly + 4); lx += 14 + ctx.measureText(label).width + 16;
+        ctx.fillStyle = '#cbd5e1'; ctx.fillText(label, lx + 14, ly + 4); lx += 14 + ctx.measureText(label).width + 16;
     };
-    legendLine('#334155', true, 'perfect agreement');
-    if (opts.fit) legendLine('#0891b2', false, 'least-squares fit');
-    legendDot('#2563eb', 'normal');
-    legendDot('#6b7280', 'low confidence');
-    legendDot('#dc2626', 'party fallback');
-    ctx.fillStyle = '#64748b'; ctx.fillText('point size = solo games; red ring = >=900 MMR gap', lx, ly + 4);
+    legendLine('#e2e8f0', true, 'perfect agreement');
+    if (opts.fit) legendLine('#22d3ee', false, 'least-squares fit');
+    legendDot('#38bdf8', 'normal');
+    legendDot('#94a3b8', 'low confidence');
+    legendDot('#ef4444', 'party fallback');
+    ctx.fillStyle = '#94a3b8'; ctx.fillText('point size = solo games; red ring = >=900 MMR gap', lx, ly + 4);
 
     return canvas.toBuffer('image/png');
 }
