@@ -38,11 +38,17 @@ async function trackMatchForPlayer(
 
     // Persisted tracked-match counter for the count-based achievements.
     let totalMatches: number | undefined;
+    let heroPoolSize: number | undefined;
     const user = userDataService.getUserByDiscordId(player.discordId);
     if (user) {
       user.matchesTracked = (user.matchesTracked || 0) + 1;
+      if (summary.hero_id) {
+        user.heroesPlayed = user.heroesPlayed || [];
+        if (!user.heroesPlayed.includes(summary.hero_id)) user.heroesPlayed.push(summary.hero_id);
+      }
       userDataService.updateUser(user);
       totalMatches = user.matchesTracked;
+      heroPoolSize = user.heroesPlayed?.length;
     }
 
     const streakEvent = streakService.updateStreak(player.discordId, won);
@@ -65,6 +71,14 @@ async function trackMatchForPlayer(
       winStreak,
       turboRating: turbo?.rating,
       turboGames: turbo ? turbo.wins + turbo.losses : undefined,
+      gpm: summary.gold_per_min,
+      xpm: summary.xp_per_min,
+      heroDamage: summary.hero_damage,
+      heroHealing: summary.hero_healing,
+      lastHits: summary.last_hits,
+      durationMin: summary.duration ? summary.duration / 60 : undefined,
+      partySize: summary.party_size,
+      heroPoolSize,
     });
 
     if (shouldAnnounce && streakEvent) {
