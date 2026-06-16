@@ -44,6 +44,9 @@ export async function turboRank(
   if (subcommand === 'trim' || subcommand === 'prune') {
     return turboRankTrim(message, args.slice(1), userDataService);
   }
+  if (subcommand === 'hide' || subcommand === 'show' || subcommand === 'unhide') {
+    return turboRankShowHide(message, subcommand === 'hide', args.slice(1), userDataService);
+  }
   if (
     (subcommand && BULK_CALIBRATE_SUBCOMMANDS.has(subcommand))
     || ((subcommand === 'calibrate' || subcommand === 'recalc' || subcommand === 'recalibrate') && args[1]?.toLowerCase() === 'all')
@@ -772,6 +775,47 @@ async function turboRankTrim(message: Message, args: string[], userDataService: 
     logger.error('Error in turborank trim:', error);
     await message.reply('❌ Trim failed. Check the bot logs and try again.');
   }
+}
+
+// ── Show / Hide (manual leaderboard control) ─────────────────────────────────
+
+/**
+ * +turborank hide <@user | steamId | name>  — drop someone from the default board
+ * +turborank show <@user | steamId | name>  — put them back on it
+ * Owner-only. The reliable, explicit override when discovery/heuristics get it wrong.
+ */
+async function turboRankShowHide(message: Message, hide: boolean, args: string[], userDataService: UserDataService) {
+  if (message.author.id !== ProcessConstants.BOT_OWNER_ID) {
+    return message.reply('❌ Only the bot owner can manage the leaderboard.');
+  }
+  if (args.length === 0) {
+    return message.reply(`Usage: \`+turborank ${hide ? 'hide' : 'show'} <@user | steamId | name>\``);
+  }
+
+  // Resolve by @user/steamId first; otherwise treat the rest of the args as a name.
+  let player = undefined as ReturnType<typeof turboRankService.getPlayerBySteamId>;
+  const mentioned = message.mentions.users.first();
+  const idArg = args.find(looksLikeSteamId);
+  if (mentioned) {
+    const u = userDataService.getUserByDiscordId(mentioned.id);
+    if (u) player = turboRankService.getPlayerBySteamId(u.steamId);
+  } else if (idArg) {
+    player = turboRankService.getPlayerBySteamId(idArg);
+  } else {
+    player = turboRankService.getPlayerByName(args.join(' '));
+  }
+
+  if (!player) {
+    return message.reply(`No tracked player matched **${args.join(' ')}**. Try a steamId or exact name.`);
+  }
+
+  turboRankService.setDiscovered(player.steamId, hide);
+  const who = player.steamName ?? player.steamId;
+  return message.reply(
+    hide
+      ? `🙈 **${who}** hidden from the default \`+turborank all\`. (Still in the dataset & \`+turbostudy\`.)`
+      : `👀 **${who}** is back on the default \`+turborank all\`.`,
+  );
 }
 
 // ── Audit ────────────────────────────────────────────────────────────────────

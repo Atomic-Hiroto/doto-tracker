@@ -614,6 +614,14 @@ export class TurboRankService {
     return this.data.players.find(p => p.steamId === steamId);
   }
 
+  /** Find a tracked player by (case-insensitive) display name — exact first, then contains. */
+  getPlayerByName(name: string): TurboRankPlayerData | undefined {
+    const q = name.trim().toLowerCase();
+    if (!q) return undefined;
+    return this.data.players.find(p => (p.steamName ?? '').toLowerCase() === q)
+      ?? this.data.players.find(p => (p.steamName ?? '').toLowerCase().includes(q));
+  }
+
   getSteamName(steamId: string): string | undefined {
     return this.data.players.find(p => p.steamId === steamId)?.steamName;
   }
