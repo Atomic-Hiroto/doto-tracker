@@ -4,4 +4,5 @@ export interface UserData {
     autoShow: boolean,
     lastCheckedMatch: number | null,
     matchesTracked?: number,
+    heroesPlayed?: number[],
 }
