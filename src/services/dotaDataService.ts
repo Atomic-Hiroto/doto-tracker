@@ -5,6 +5,7 @@ interface HeroData {
     id: number;
     localized_name: string;
     name: string;
+    roles?: string[];
 }
 
 interface ItemData {
@@ -193,6 +194,11 @@ class DotaDataService {
 
     getHeroById(heroId: number): HeroData | undefined {
         return this.heroes.get(heroId);
+    }
+
+    /** OpenDota role tags for a hero, e.g. ['Carry','Escape'] or ['Support','Initiator']. */
+    getHeroRoles(heroId: number): string[] {
+        return this.heroes.get(heroId)?.roles ?? [];
     }
 
     getAllHeroes(): HeroData[] {

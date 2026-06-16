@@ -6,170 +6,198 @@ import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
 import { safeTyping } from '../utils/channelHelpers';
 
-interface HeroStats {
-    hero_id: number;
-    games: number;
-    win: number;
-    with_games?: number;
-    with_win?: number;
-    against_games?: number;
-    against_win?: number;
+// "Top turbo heroes" ranked the way an analyst would defend it:
+//   backbone = Wilson lower-bound of win rate (conservative; crushes lucky small samples)
+//   + edge vs the player's own baseline WR (heroes you genuinely over-perform on)
+//   + a small role-aware IMPACT nudge that corroborates the win rate (and flags flukes)
+// Window = last 60 days measured FROM THE PLAYER'S LATEST GAME (so inactive stretches
+// still show their last active form), configurable with a day count.
+
+const MIN_RANKED_GAMES = 5;
+const DEFAULT_WINDOW_DAYS = 60;
+const Z = 1.96;
+
+// turbo percentile thresholds: good ≈ p85, elite ≈ p97 (1000 pooled crew games)
+const IMPACT: Record<string, { good: number; elite: number; fmt: (v: number) => string }> = {
+  gpm:        { good: 1530, elite: 1830,  fmt: v => `${Math.round(v)} GPM` },
+  lastHits:   { good: 196,  elite: 283,   fmt: v => `${Math.round(v)} LH` },
+  assists:    { good: 20,   elite: 26,    fmt: v => `${v.toFixed(1)} assists` },
+  heroDamage: { good: 41500, elite: 67000, fmt: v => `${(v / 1000).toFixed(1)}k dmg` },
+  stuns:      { good: 30,   elite: 60,    fmt: v => `${Math.round(v)}s stuns` },
+  healing:    { good: 8000, elite: 15000, fmt: v => `${(v / 1000).toFixed(1)}k healing` },
+};
+const ROLE_METRICS: Record<string, string[]> = {
+  Carry: ['gpm', 'lastHits'],
+  Initiator: ['stuns'],
+  Disabler: ['stuns'],
+  Support: ['assists', 'healing'],
+  Nuker: ['heroDamage'],
+};
+
+function wilson(wins: number, n: number): number {
+  if (n === 0) return 0;
+  const p = wins / n;
+  const denom = 1 + (Z * Z) / n;
+  const centre = p + (Z * Z) / (2 * n);
+  const margin = Z * Math.sqrt((p * (1 - p) + (Z * Z) / (4 * n)) / n);
+  return (centre - margin) / denom;
 }
 
-interface HeroImpactStats {
-    games: number;
-    avgKda: string;
-    avgGpm: number;
-    avgXpm: number;
-    parsedSample: number;
-    avgHeroDamage?: number;
-    avgStuns?: number;
+function bestImpact(heroId: number, avgs: Record<string, number | undefined>) {
+  const metrics = new Set<string>();
+  for (const r of dotaDataService.getHeroRoles(heroId)) for (const m of ROLE_METRICS[r] ?? []) metrics.add(m);
+  if (metrics.size === 0) metrics.add('gpm');
+  let best: { metric: string; q: number; ratio: number; text: string } | null = null;
+  for (const m of metrics) {
+    const v = avgs[m];
+    if (v == null || !isFinite(v) || v <= 0) continue;
+    const t = IMPACT[m];
+    const q = v >= t.elite ? 2 : v >= t.good ? 1 : 0;
+    const ratio = v / t.good;
+    if (!best || q > best.q || (q === best.q && ratio > best.ratio)) best = { metric: m, q, ratio, text: t.fmt(v) };
+  }
+  return best;
 }
 
-function formatCompact(value: number): string {
-    if (!Number.isFinite(value)) return '0';
-    if (value >= 1000) return `${(value / 1000).toFixed(1)}k`;
-    return Math.round(value).toString();
-}
+interface HeroAgg { heroId: number; games: number; win: number; rows: any[]; }
 
-export async function tophero(
-    message: Message,
-    args: string[],
-    userDataService: UserDataService
-) {
-    let discordId = message.author.id;
-    let targetUser = message.author;
+export async function tophero(message: Message, args: string[], userDataService: UserDataService) {
+  let discordId = message.author.id;
+  let targetUser = message.author;
+  if (message.mentions.users.size > 0) {
+    discordId = message.mentions.users.first()!.id;
+    targetUser = message.mentions.users.first()!;
+  }
+  const user = userDataService.getUserByDiscordId(discordId);
+  if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
 
-    if (args.length > 0 && message.mentions.users.size > 0) {
-        discordId = message.mentions.users.first()!.id;
-        targetUser = message.mentions.users.first()!;
+  // Window in days back from the player's latest game. Default 60; a number overrides; `all` = no cap.
+  const winArg = args.find(a => !a.startsWith('<@'))?.toLowerCase();
+  const windowDays = winArg === 'all' ? Infinity : (winArg && /^\d+$/.test(winArg) ? Number(winArg) : DEFAULT_WINDOW_DAYS);
+
+  try {
+    safeTyping(message.channel);
+
+    const matches = await opendotaClient.get<any[]>(
+      `/players/${user.steamId}/matches?game_mode=23&significant=0&limit=500`
+      + '&project=gold_per_min&project=xp_per_min&project=last_hits&project=hero_damage&project=hero_healing&project=start_time',
+    ).then(r => r.data || []).catch(() => []);
+
+    if (matches.length === 0) {
+      return message.reply(`No turbo games found for ${targetUser.username}. Play some turbo! ⚡`);
     }
 
-    const user = userDataService.getUserByDiscordId(discordId);
-    if (!user) {
-        return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
+    // Window back from the LATEST game, not from today.
+    const latestTs = Math.max(...matches.map(m => Number(m.start_time || 0)));
+    const cutoff = windowDays === Infinity ? 0 : latestTs - windowDays * 86400;
+    const inWindow = matches.filter(m => Number(m.start_time || 0) >= cutoff);
+
+    // Aggregate per hero from the matches themselves (win = my side won).
+    const byHero = new Map<number, HeroAgg>();
+    let totalGames = 0, totalWins = 0;
+    for (const m of inWindow) {
+      const heroId = Number(m.hero_id);
+      if (!heroId) continue;
+      const won = (m.player_slot < 128) === !!m.radiant_win;
+      const agg = byHero.get(heroId) ?? { heroId, games: 0, win: 0, rows: [] };
+      agg.games++; if (won) agg.win++; agg.rows.push(m);
+      byHero.set(heroId, agg);
+      totalGames++; if (won) totalWins++;
     }
-
-    try {
-        safeTyping(message.channel);
-
-        const daysAgo = 28;
-        const response = await opendotaClient.get<HeroStats[]>(
-            `/players/${user.steamId}/heroes?game_mode=23&significant=0&date=${daysAgo}`
-        );
-        const heroes = response.data;
-        // /matches omits gpm/xpm/last_hits by default — project them in so the impact line isn't 0.
-        const recentRows = await opendotaClient.get<any[]>(
-            `/players/${user.steamId}/matches?game_mode=23&significant=0&date=${daysAgo}&limit=200`
-            + `&project=hero_id&project=kills&project=deaths&project=assists&project=gold_per_min&project=xp_per_min`
-        ).then((res) => res.data || []).catch(() => []);
-
-        const calculateHeroScore = (hero: HeroStats): number => {
-            const n = hero.games;
-            if (n === 0) return 0;
-            const z = 1.96;
-            const p = hero.win / n;
-            const denom = 1 + (z * z) / n;
-            const centre = p + (z * z) / (2 * n);
-            const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n);
-            const wilson = (centre - margin) / denom;
-            const activityBonus = Math.min(n, 100) * 0.02;
-            return Math.round((wilson * 100 + activityBonus) * 100) / 100;
-        };
-
-        const topHeroes = heroes
-            .filter(h => h.games >= 2)
-            .map(h => ({ ...h, score: calculateHeroScore(h) }))
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 5);
-
-        if (topHeroes.length === 0) {
-            return message.reply(`No turbo games found for ${targetUser.username} in the past 4 weeks (min 2 games per hero). Play some turbo! ⚡`);
-        }
-
-        const rowsByHero = new Map<number, any[]>();
-        for (const row of recentRows) {
-            const heroRows = rowsByHero.get(Number(row.hero_id)) || [];
-            heroRows.push(row);
-            rowsByHero.set(Number(row.hero_id), heroRows);
-        }
-
-        const impactByHero = new Map<number, HeroImpactStats>();
-        await Promise.all(topHeroes.map(async (hero) => {
-            const rows = rowsByHero.get(hero.hero_id) || [];
-            if (rows.length === 0) return;
-
-            const avg = (field: string) => rows.reduce((sum, row) => sum + Number(row[field] || 0), 0) / rows.length;
-            const avgKdaValue = rows.reduce((sum, row) => sum + ((Number(row.kills || 0) + Number(row.assists || 0)) / Math.max(1, Number(row.deaths || 0))), 0) / rows.length;
-
-            const detailed = await Promise.all(rows.slice(0, 3).map((row) =>
-                opendotaClient.get<any>(`/matches/${row.match_id}`).then((res) => {
-                    const match = res.data;
-                    const player = (match.players || []).find((p: any) => String(p.account_id || '') === String(user.steamId));
-                    if (!player) return null;
-                    return {
-                        heroDamage: Number(player.hero_damage || 0),
-                        stuns: Number(player.stuns || 0),
-                    };
-                }).catch(() => null)
-            ));
-            const parsed = detailed.filter((entry): entry is { heroDamage: number; stuns: number } => !!entry);
-
-            impactByHero.set(hero.hero_id, {
-                games: rows.length,
-                avgKda: avgKdaValue.toFixed(2),
-                avgGpm: Math.round(avg('gold_per_min')),
-                avgXpm: Math.round(avg('xp_per_min')),
-                parsedSample: parsed.length,
-                avgHeroDamage: parsed.length ? Math.round(parsed.reduce((sum, row) => sum + row.heroDamage, 0) / parsed.length) : undefined,
-                avgStuns: parsed.length ? Math.round((parsed.reduce((sum, row) => sum + row.stuns, 0) / parsed.length) * 10) / 10 : undefined,
-            });
-        }));
-
-        const heroLines = await Promise.all(
-            topHeroes.map(async (hero, index) => {
-                const heroName = await dotaDataService.getHeroName(hero.hero_id);
-                const losses = hero.games - hero.win;
-                const winRate = hero.games > 0 ? ((hero.win / hero.games) * 100).toFixed(1) : '0';
-                const impact = impactByHero.get(hero.hero_id);
-                const impactLine = impact
-                    ? `Impact avg: **${impact.avgKda} KDA** | **${impact.avgGpm} GPM** | **${impact.avgXpm} XPM**${impact.parsedSample ? `\nParsed sample (${impact.parsedSample}): **${formatCompact(impact.avgHeroDamage || 0)} dmg** | **${impact.avgStuns?.toFixed(1) ?? '0.0'}s stuns**` : ''}`
-                    : 'Impact avg unavailable from recent match rows.';
-                const medals = ['🥇', '🥈', '🥉', '4.', '5.'];
-                return {
-                    name: `${medals[index]} ${heroName} (${hero.score.toFixed(1)} score)`,
-                    value: `**${hero.games}** games | **${hero.win}**W/**${losses}**L (${winRate}% WR)\n${impactLine}`,
-                    inline: false
-                };
-            })
-        );
-
-        const embed = new EmbedBuilder()
-            .setColor('#f59e0b')
-            .setTitle(`⚡ Best Turbo Heroes: ${targetUser.username}`)
-            .setDescription(`📅 **Past 4 Weeks** • Ranked by conservative win-rate score\nImpact stats are context, not the ranking formula.`)
-            .setThumbnail(targetUser.displayAvatarURL())
-            .addFields(heroLines)
-            .setFooter({ text: `Steam ID: ${user.steamId} • Data from OpenDota` })
-            .setURL(`https://www.opendota.com/players/${user.steamId}/heroes?game_mode=23`)
-            .setTimestamp();
-
-        const totalGames = topHeroes.reduce((sum, h) => sum + h.games, 0);
-        const totalWins = topHeroes.reduce((sum, h) => sum + h.win, 0);
-        const overallWr = totalGames > 0 ? ((totalWins / totalGames) * 100).toFixed(1) : '0';
-
-        embed.addFields({
-            name: '📊 Top 5 Summary',
-            value: `**${totalGames}** games | **${totalWins}**W/**${totalGames - totalWins}**L (${overallWr}% WR)`,
-            inline: false
-        });
-
-        await message.reply({ embeds: [embed] });
-    } catch (error) {
-        logger.error(`Error in tophero command for user ${discordId}:`, error);
-        if (error instanceof Error && (error as any).response?.status === 404) {
-            return message.reply('Player not found. Make sure the Steam ID is correct and the profile is public.');
-        }
-        return message.reply('An error occurred while fetching turbo heroes. Please try again later.');
+    if (totalGames === 0) {
+      return message.reply(`No turbo games in that window for ${targetUser.username}. Try \`+topheros all\`.`);
     }
+    const baselineWR = totalWins / totalGames;
+    const avgOf = (rows: any[], f: string) => rows.length ? rows.reduce((s, r) => s + Number(r[f] || 0), 0) / rows.length : undefined;
+
+    const ranked = [...byHero.values()].filter(h => h.games >= MIN_RANKED_GAMES).map(h => {
+      const wr = h.win / h.games;
+      const w = wilson(h.win, h.games);
+      const edge = wr - baselineWR;
+      const preScore = w * 100 + Math.max(-10, Math.min(12, edge * 25)) + Math.min(h.games, 100) * 0.02;
+      return { ...h, wr, edge, preScore };
+    }).sort((a, b) => b.preScore - a.preScore);
+
+    const top = ranked.slice(0, 6);
+
+    // Parsed sample (stun seconds) only for the heroes we may display.
+    const stunsByHero = new Map<number, number>();
+    await Promise.all(top.map(async h => {
+      const vals = await Promise.all(h.rows.slice(0, 3).map(r =>
+        opendotaClient.get<any>(`/matches/${r.match_id}`).then(res => {
+          const p = (res.data.players || []).find((pl: any) => String(pl.account_id || '') === String(user.steamId));
+          return p && typeof p.stuns === 'number' ? p.stuns : null;
+        }).catch(() => null),
+      ));
+      const ok = vals.filter((v): v is number => v != null);
+      if (ok.length) stunsByHero.set(h.heroId, ok.reduce((s, v) => s + v, 0) / ok.length);
+    }));
+
+    const scored = top.map(h => {
+      const avgs = {
+        gpm: avgOf(h.rows, 'gold_per_min'),
+        lastHits: avgOf(h.rows, 'last_hits'),
+        assists: avgOf(h.rows, 'assists'),
+        heroDamage: avgOf(h.rows, 'hero_damage'),
+        healing: avgOf(h.rows, 'hero_healing'),
+        stuns: stunsByHero.get(h.heroId),
+      };
+      const imp = bestImpact(h.heroId, avgs);
+      const impBonus = imp ? (imp.q === 2 ? 2 : imp.q === 1 ? 1 : 0) : 0;
+      return { ...h, imp, score: h.preScore + impBonus };
+    }).sort((a, b) => b.score - a.score).slice(0, 5);
+
+    const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+    const heroLines = await Promise.all(scored.map(async (h, i) => {
+      const heroName = await dotaDataService.getHeroName(h.heroId);
+      const roles = dotaDataService.getHeroRoles(h.heroId);
+      const roleTag = roles.find(r => ROLE_METRICS[r]) ?? roles[0] ?? 'Flex';
+      const edgePct = `${h.edge >= 0 ? '+' : ''}${Math.round(h.edge * 100)}%`;
+      const flags: string[] = [];
+      if (h.games < 8) flags.push('⚠ small sample');
+      if (h.wr >= 0.6 && h.imp && h.imp.q === 0) flags.push('⚠ low impact (carried?)');
+      const qLabel = h.imp ? (h.imp.q === 2 ? ' (elite)' : h.imp.q === 1 ? ' (strong)' : '') : '';
+      return {
+        name: `${medals[i]} ${heroName} — ${h.score.toFixed(1)} · ${roleTag}`,
+        value: `**${h.games}** games · **${h.win}**W-**${h.games - h.win}**L · **${Math.round(h.wr * 100)}% WR** (${edgePct} vs your ${Math.round(baselineWR * 100)}%)`
+          + (h.imp ? `\n💪 ${h.imp.text}${qLabel}` : '')
+          + (flags.length ? `\n${flags.join(' · ')}` : ''),
+        inline: false,
+      };
+    }));
+
+    const promising = [...byHero.values()]
+      .filter(h => h.games >= 2 && h.games < MIN_RANKED_GAMES && h.win / h.games >= 0.6)
+      .sort((a, b) => (b.win / b.games) - (a.win / a.games))
+      .slice(0, 4);
+    const promisingLine = promising.length
+      ? (await Promise.all(promising.map(async h => `${await dotaDataService.getHeroName(h.heroId)} (${h.win}-${h.games - h.win})`))).join(' · ')
+      : '';
+
+    const spanDays = windowDays === Infinity ? 'all available' : `last ${windowDays}d`;
+    const embed = new EmbedBuilder()
+      .setColor('#f59e0b')
+      .setTitle(`⚡ Top Turbo Heroes: ${targetUser.username}`)
+      .setDescription(
+        `📅 **${spanDays}** (from last game) · baseline WR **${Math.round(baselineWR * 100)}%** over ${totalGames} games\n`
+        + 'Ranked by **confidence-adjusted win rate** (Wilson) + your edge over baseline. Impact is role-aware context.',
+      )
+      .setThumbnail(targetUser.displayAvatarURL())
+      .addFields(heroLines.length ? heroLines : [{ name: 'Not enough data', value: `No hero with ${MIN_RANKED_GAMES}+ turbo games in this window. Try \`+topheros all\`.`, inline: false }]);
+
+    if (promisingLine) embed.addFields({ name: '🌱 Promising (need 5+ games)', value: promisingLine, inline: false });
+
+    embed
+      .setFooter({ text: `Steam ID: ${user.steamId} · score = Wilson WR + edge + role impact · +topheros 90 / all to widen` })
+      .setURL(`https://www.opendota.com/players/${user.steamId}/heroes?game_mode=23`)
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+  } catch (error) {
+    logger.error(`Error in tophero command for ${discordId}:`, error);
+    if (error instanceof Error && (error as any).response?.status === 404) {
+      return message.reply('Player not found. Make sure the Steam ID is correct and the profile is public.');
+    }
+    return message.reply('An error occurred while fetching turbo heroes. Please try again later.');
+  }
 }
