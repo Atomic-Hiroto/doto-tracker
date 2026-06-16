@@ -255,9 +255,11 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
   const usedObs = usedObservations(observations, estimate.partyFallback);
   const newestTs = usedObs.reduce((m, o) => Math.max(m, o.timestamp), 0);
   const ageDays = newestTs ? Math.floor((now - newestTs) / 86400) : 0;
+  const months = Math.max(1, Math.round(ageDays / 30));
   const stale = !estimate.partyFallback && ageDays > 100;
-  if (stale) {
-    const months = Math.max(1, Math.round(ageDays / 30));
+  if (estimate.oldGamesFallback) {
+    desc.push(`📜 **No solo games in the last year — this reaches back to their last active turbo stretch (newest ~${months} month${months > 1 ? 's' : ''} ago).** Treat as historical skill, not current form.`);
+  } else if (stale) {
     desc.push(`⚠️ **Based on old games — newest is ~${months} month${months > 1 ? 's' : ''} ago.** May be out of date; play recent solo turbo to refresh.`);
   }
 

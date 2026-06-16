@@ -40,6 +40,12 @@ export interface TurboRankEstimate {
   effectiveSample: number;
   /** True when the estimate had to fall back to party games (player never solo-queues). */
   partyFallback: boolean;
+  /**
+   * True when there were no solo games in the last year, so the estimate reached
+   * back to the player's last active turbo stretch (1 year up to their newest game).
+   * Historical, not current form.
+   */
+  oldGamesFallback?: boolean;
   /** Player's visible *ranked* medal tier (rank_tier int) at compute time, if known. */
   rankedTier?: number | null;
   /** MMR derived from rankedTier (null when unranked / unknown). */
