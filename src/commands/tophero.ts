@@ -58,8 +58,10 @@ export async function tophero(
             `/players/${user.steamId}/heroes?game_mode=23&significant=0&date=${daysAgo}`
         );
         const heroes = response.data;
+        // /matches omits gpm/xpm/last_hits by default — project them in so the impact line isn't 0.
         const recentRows = await opendotaClient.get<any[]>(
             `/players/${user.steamId}/matches?game_mode=23&significant=0&date=${daysAgo}&limit=200`
+            + `&project=hero_id&project=kills&project=deaths&project=assists&project=gold_per_min&project=xp_per_min`
         ).then((res) => res.data || []).catch(() => []);
 
         const calculateHeroScore = (hero: HeroStats): number => {
