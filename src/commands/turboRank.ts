@@ -46,6 +46,9 @@ export async function turboRank(
   ) {
     return turboRankCalibrateAll(message, userDataService);
   }
+  if (subcommand === 'discover' || subcommand === 'peers' || subcommand === 'expand') {
+    return turboRankDiscover(message, args.slice(1), userDataService);
+  }
   if (subcommand === 'calibrate' || subcommand === 'recalc') {
     return turboRankCalibrate(message, args.slice(1), userDataService);
   }
@@ -560,6 +563,135 @@ async function turboRankCalibrateAll(message: Message, userDataService: UserData
   } catch (error) {
     logger.error('Error in turborank calibrateall:', error);
     const text = '❌ Bulk recalibration failed before it could finish. Check the bot logs, then try again.';
+    if (progressMsg) {
+      await progressMsg.edit(text).catch(() => message.reply(text).catch(() => {}));
+    } else {
+      await message.reply(text).catch(() => {});
+    }
+  }
+}
+
+// ── Discover Peers ───────────────────────────────────────────────────────────
+
+/**
+ * +turborank discover <@user | steamId> [minLobbies]
+ * Owner-only. Harvests a seed player's recurring same-team turbo peers (default
+ * 3+ shared lobbies, visible ranked medal, not already tracked) and calibrates
+ * each into the dataset. Grows the turbo-study sample from one anchor player.
+ */
+async function turboRankDiscover(message: Message, args: string[], userDataService: UserDataService) {
+  if (message.author.id !== ProcessConstants.BOT_OWNER_ID) {
+    return message.reply('❌ Only the bot owner can run peer discovery (it spawns many calibrations).');
+  }
+
+  const minLobbies = looksLikeSteamId(args[1]) ? undefined : parseInt(args[1] ?? '', 10);
+  const minCoOccurrence = Number.isFinite(minLobbies) && (minLobbies as number) > 0 ? (minLobbies as number) : 3;
+
+  let progressMsg: Message | null = null;
+
+  try {
+    const target = await resolveTarget(message, args, userDataService);
+    if ('error' in target) return message.reply(target.error);
+
+    progressMsg = await message.reply(
+      `🕸️ Discovering **${target.name}**'s turbo peers (same team, **${minCoOccurrence}+** shared lobbies, visible medal)…`,
+    );
+
+    const { candidates, matchesScanned, seedName } = await withTimeout(
+      turboRankService.discoverPeerCandidates(target.steamId, minCoOccurrence),
+      BULK_PLAYER_TIMEOUT_MS,
+      `Timed out scanning ${target.name}'s match history`,
+    );
+
+    if (candidates.length === 0) {
+      return progressMsg.edit(
+        `🕸️ Scanned **${matchesScanned}** of ${seedName ?? target.name}'s turbo matches — ` +
+        `found no new peers with **${minCoOccurrence}+** shared lobbies and a visible ranked medal. ` +
+        `(Already-tracked players are skipped.)`,
+      );
+    }
+
+    logger.info(
+      `Peer discovery by ${message.author.tag}: ${candidates.length} new candidates from ${seedName ?? target.steamId} ` +
+      `(${matchesScanned} matches, min ${minCoOccurrence})`,
+    );
+
+    const successes: Array<{ steamId: string; name: string; medal: string; confidence: number }> = [];
+    const failures: Array<{ steamId: string; coOccurrences: number }> = [];
+
+    for (let i = 0; i < candidates.length; i++) {
+      const cand = candidates[i];
+      let lastProgressEdit = 0;
+      await progressMsg.edit(
+        `🕸️ Found **${candidates.length}** new peers of ${seedName ?? target.name}. Calibrating **${i + 1}/${candidates.length}**…\n` +
+        `Now: \`${cand.steamId}\` (${cand.coOccurrences} shared lobbies)\n` +
+        `Done: ${successes.length} ok, ${failures.length} failed`,
+      ).catch(() => {});
+
+      try {
+        const estimate = await withTimeout(
+          turboRankService.calibratePlayer(
+            '',
+            cand.steamId,
+            100,
+            (fetched, total, phase) => {
+              const now = Date.now();
+              if (now - lastProgressEdit < 5000 && fetched !== total) return;
+              lastProgressEdit = now;
+              let text =
+                `🕸️ Calibrating new peers **${i + 1}/${candidates.length}**\n` +
+                `Now: \`${cand.steamId}\` (${cand.coOccurrences} shared lobbies)\n` +
+                `Status: ${phase ?? 'fetching match history'}`;
+              if (total > 0) text += ` (${fetched}/${total})`;
+              text += `\nDone: ${successes.length} ok, ${failures.length} failed`;
+              progressMsg?.edit(text).catch(() => {});
+            },
+          ),
+          BULK_PLAYER_TIMEOUT_MS,
+          `Timed out after ${Math.round(BULK_PLAYER_TIMEOUT_MS / 1000)}s`,
+        );
+
+        if (estimate) {
+          const name = turboRankService.getSteamName(cand.steamId) ?? `Steam ${cand.steamId}`;
+          successes.push({ steamId: cand.steamId, name, medal: estimate.medal, confidence: estimate.confidence });
+        } else {
+          failures.push({ steamId: cand.steamId, coOccurrences: cand.coOccurrences });
+        }
+      } catch (error) {
+        logger.error(`Peer discovery calibration failed for ${cand.steamId}`, error);
+        failures.push({ steamId: cand.steamId, coOccurrences: cand.coOccurrences });
+      }
+
+      if (i < candidates.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+
+    const okLines = successes
+      .slice()
+      .sort((a, b) => b.confidence - a.confidence)
+      .map(s => `**${s.name}** — ${s.medal}, ${s.confidence}% conf`);
+    const failLines = failures.map(f => `\`${f.steamId}\` (${f.coOccurrences} lobbies)`);
+
+    const embed = new EmbedBuilder()
+      .setColor(failures.length ? '#eab308' : '#10b981')
+      .setTitle('🕸️ Peer Discovery Complete')
+      .setDescription(
+        `Scanned **${matchesScanned}** of ${seedName ?? target.name}'s turbo matches. ` +
+        `Added **${successes.length}** new player(s) to the dataset` +
+        (failures.length ? `, **${failures.length}** had no usable rank data.` : '.'),
+      )
+      .addFields(
+        { name: 'Added', value: fitLines(okLines, '_None_'), inline: false },
+        { name: 'Skipped / No Usable Data', value: fitLines(failLines, '_None_'), inline: false },
+        { name: 'Next', value: 'Run `+turbostudy` to see how the bigger sample moves the fit, MAE and bracket bias.', inline: false },
+      )
+      .setTimestamp();
+
+    await progressMsg.edit({ content: null, embeds: [embed] });
+  } catch (error) {
+    logger.error('Error in turborank discover:', error);
+    const text = '❌ Peer discovery failed before it could finish. Check the bot logs, then try again.';
     if (progressMsg) {
       await progressMsg.edit(text).catch(() => message.reply(text).catch(() => {}));
     } else {

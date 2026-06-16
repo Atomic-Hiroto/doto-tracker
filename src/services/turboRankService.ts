@@ -534,6 +534,61 @@ export class TurboRankService {
   }
 
   /** Get the current estimate for a registered player. */
+  /**
+   * Walks a seed player's recent turbo matches and harvests recurring same-team
+   * peers — accounts that played on the seed's side in at least `minCoOccurrence`
+   * lobbies and have a visible ranked medal. These are the real recurring squad
+   * (premades + people the seed solo-queues alongside), not one-off randoms, so
+   * they make high-value dataset additions.
+   *
+   * This only *finds* candidates (one Stratz call for the seed's history); it does
+   * NOT calibrate them — each add costs its own calibration, so the caller decides.
+   * Already-tracked accounts are excluded. Returns candidates most-frequent first.
+   */
+  async discoverPeerCandidates(
+    seedSteamId: string,
+    minCoOccurrence = 3,
+    matchSampleSize = 150,
+  ): Promise<{
+    candidates: Array<{ steamId: string; coOccurrences: number; seasonRank: number | null }>;
+    matchesScanned: number;
+    seedName: string | null;
+  }> {
+    const seedAccountId = parseInt(seedSteamId, 10);
+    if (isNaN(seedAccountId)) {
+      return { candidates: [], matchesScanned: 0, seedName: null };
+    }
+
+    const profile = await fetchStratzPlayerProfile(seedAccountId);
+    // isParty: null returns both solo and party turbo matches — maximises peer coverage.
+    const matches = await fetchPlayerTurboMatches(seedAccountId, matchSampleSize, 0, null, null);
+
+    const tally = new Map<string, { count: number; seasonRank: number | null }>();
+    for (const match of matches) {
+      const players: any[] = match?.players ?? [];
+      const seed = players.find(p => p.steamAccountId === seedAccountId);
+      if (!seed) continue;
+      for (const p of players) {
+        if (!p.steamAccountId || p.steamAccountId === seedAccountId) continue;
+        if (p.isRadiant !== seed.isRadiant) continue; // same team only
+        const key = String(p.steamAccountId);
+        const entry = tally.get(key) ?? { count: 0, seasonRank: null };
+        entry.count += 1;
+        const rank = p.steamAccount?.seasonRank ?? null;
+        if (rank != null) entry.seasonRank = rank;
+        tally.set(key, entry);
+      }
+    }
+
+    const candidates = [...tally.entries()]
+      .filter(([steamId, v]) =>
+        v.count >= minCoOccurrence && v.seasonRank != null && !this.getPlayerBySteamId(steamId))
+      .map(([steamId, v]) => ({ steamId, coOccurrences: v.count, seasonRank: v.seasonRank }))
+      .sort((a, b) => b.coOccurrences - a.coOccurrences);
+
+    return { candidates, matchesScanned: matches.length, seedName: profile.name ?? null };
+  }
+
   getEstimate(discordId: string): TurboRankEstimate | null {
     const player = this.data.players.find(p => p.discordId === discordId);
     return player?.estimate ?? null;
