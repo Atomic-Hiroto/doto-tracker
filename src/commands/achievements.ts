@@ -1,7 +1,7 @@
 import { Message, EmbedBuilder } from 'discord.js';
 import { UserDataService } from '../services/userDataService';
 import { Replies } from '../constants';
-import { achievementService, ACHIEVEMENTS } from '../services/achievementService';
+import { achievementService, ACHIEVEMENTS, RARITY_META, rarityOf, Rarity } from '../services/achievementService';
 import { logger } from '../services/loggerService';
 import { parseArgs } from '../utils/argParser';
 
@@ -42,15 +42,25 @@ export async function achievements(message: Message, args: string[], userDataSer
         const total = ACHIEVEMENTS.length;
         const count = unlocked.length;
 
-        // Unlocked achievements
+        const byRarityDesc = (aId: string, bId: string) => RARITY_META[rarityOf(bId)].order - RARITY_META[rarityOf(aId)].order;
+
+        // Unlocked achievements (rarest first)
         const unlockedLines = unlocked.length > 0
-            ? fitField(unlocked.map(({ def }) => `${def.emoji} **${def.name}** — *${def.description}*`), '_No achievements yet — go play some games!_')
+            ? fitField(
+                [...unlocked]
+                    .sort((a, b) => byRarityDesc(a.def.id, b.def.id))
+                    .map(({ def }) => `${RARITY_META[rarityOf(def.id)].emoji} ${def.emoji} **${def.name}** — *${def.description}*`),
+                '_No achievements yet — go play some games!_')
             : '_No achievements yet — go play some games!_';
 
-        // Locked achievements (show as a teaser)
+        // Locked achievements (show easiest/most-common first as the next targets)
         const locked = ACHIEVEMENTS.filter(a => !unlockedIds.has(a.id));
         const lockedLines = locked.length > 0
-            ? fitField(locked.map(a => `🔒 ~~${a.name}~~ — *${a.description}*`), '🎊 All achievements unlocked! You are GOATED!')
+            ? fitField(
+                [...locked]
+                    .sort((a, b) => byRarityDesc(b.id, a.id))
+                    .map(a => `🔒 ${RARITY_META[rarityOf(a.id)].emoji} ~~${a.name}~~ — *${a.description}*`),
+                '🎊 All achievements unlocked! You are GOATED!')
             : '🎊 All achievements unlocked! You are GOATED!';
 
         const completionBar = (() => {
@@ -58,10 +68,23 @@ export async function achievements(message: Message, args: string[], userDataSer
             return '🟦'.repeat(filled) + '⬜'.repeat(10 - filled) + ` ${count}/${total}`;
         })();
 
+        // Rarity haul: unlocked / total per tier, rarest first, skipping empties.
+        const rarityHaul = (() => {
+            const order: Rarity[] = ['arcana', 'immortal', 'legendary', 'mythical', 'rare', 'uncommon', 'common'];
+            return order
+                .map(r => {
+                    const got = unlocked.filter(u => rarityOf(u.def.id) === r).length;
+                    const tot = ACHIEVEMENTS.filter(a => rarityOf(a.id) === r).length;
+                    return got > 0 ? `${RARITY_META[r].emoji} ${got}/${tot}` : null;
+                })
+                .filter(Boolean)
+                .join('  ') || '—';
+        })();
+
         const embed = new EmbedBuilder()
             .setColor(count === total ? '#fbbf24' : '#6366f1')
             .setTitle(`🏆 Achievement Trophy Case — ${targetUser.username}`)
-            .setDescription(`**Progress:** ${completionBar}`)
+            .setDescription(`**Progress:** ${completionBar}\n**Rarity haul:** ${rarityHaul}`)
             .setThumbnail(targetUser.displayAvatarURL())
             .addFields(
                 { name: `✅ Unlocked (${count})`, value: unlockedLines, inline: false },

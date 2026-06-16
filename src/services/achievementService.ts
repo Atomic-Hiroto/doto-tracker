@@ -122,6 +122,54 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
     { id: 'turbo_titan', name: 'Turbo Titan', emoji: '🗿', description: 'Reach turbo score 72+' },
 ];
 
+// ── Rarity (Dota-flavoured: Common → … → Arcana) ──────────────────────────────
+export type Rarity = 'common' | 'uncommon' | 'rare' | 'mythical' | 'legendary' | 'immortal' | 'arcana';
+
+export const RARITY_META: Record<Rarity, { label: string; emoji: string; order: number }> = {
+    common:    { label: 'Common',    emoji: '⚪', order: 1 },
+    uncommon:  { label: 'Uncommon',  emoji: '🟢', order: 2 },
+    rare:      { label: 'Rare',      emoji: '🔵', order: 3 },
+    mythical:  { label: 'Mythical',  emoji: '🟣', order: 4 },
+    legendary: { label: 'Legendary', emoji: '🟡', order: 5 },
+    immortal:  { label: 'Immortal',  emoji: '🟠', order: 6 },
+    arcana:    { label: 'Arcana',    emoji: '🔴', order: 7 },
+};
+
+const RARITY_BY_ID: Record<string, Rarity> = {
+    // common
+    first_blood: 'common', carry_enjoyer: 'common', team_player: 'common', gold_digger: 'common',
+    farmhand: 'common', fast_learner: 'common', damage_dealer: 'common', field_medic: 'common',
+    lone_wolf: 'common', dynamic_duo: 'common', dabbler: 'common', turbo_addict: 'common',
+    // uncommon
+    century_club: 'uncommon', bloodthirsty: 'uncommon', support_god: 'uncommon', feeder_redeemed: 'uncommon',
+    clean_sweep: 'uncommon', midas_touch: 'uncommon', last_hit_machine: 'uncommon', scholar: 'uncommon',
+    nuker: 'uncommon', field_hospital: 'uncommon', endurance: 'uncommon', squad_goals: 'uncommon',
+    on_fire: 'uncommon', hero_collector: 'uncommon', turbo_centurion: 'uncommon', climbing: 'uncommon',
+    // rare
+    marathoner: 'rare', massacre: 'rare', guardian_angel: 'rare', unkillable_feeder: 'rare',
+    flawless_execution: 'rare', one_man_army: 'rare', pure_support: 'rare', greedy: 'rare',
+    creep_god: 'rare', galaxy_brain: 'rare', devastation: 'rare', lifesaver: 'rare',
+    blitzkrieg: 'rare', trench_warfare: 'rare', blazing: 'rare', jack_of_all: 'rare',
+    turbo_lifer: 'rare', overlord: 'rare',
+    // mythical
+    veteran: 'mythical', thirty_bomb: 'mythical', assist_master: 'mythical', int_diff: 'mythical',
+    untouchable: 'mythical', glass_cannon: 'mythical', triple_threat: 'mythical', economy_god: 'mythical',
+    free_real_estate: 'mythical', gg_ez: 'mythical', inferno_streak: 'mythical', apex_predator: 'mythical',
+    turbo_maniac: 'mythical',
+    // legendary
+    no_lifer: 'legendary', unstoppable: 'legendary', battle_medic: 'legendary', godlike_kda: 'legendary',
+    raid_boss: 'legendary', money_printer: 'legendary', apocalypse: 'legendary', godlike_streak: 'legendary',
+    the_completionist: 'legendary', turbo_legend: 'legendary', turbo_titan: 'legendary',
+    // immortal
+    god_of_slaughter: 'immortal', hand_of_god: 'immortal', beyond_godlike: 'immortal',
+    // arcana
+    kill_legend: 'arcana', the_saint: 'arcana', rampage_streak: 'arcana',
+};
+
+export function rarityOf(id: string): Rarity {
+    return RARITY_BY_ID[id] ?? 'common';
+}
+
 interface AchievementStore {
     unlocked: UnlockedAchievement[];
 }
@@ -359,20 +407,27 @@ class AchievementService {
     formatAnnouncement(achievements: AchievementDefinition[], discordId: string, username: string): string {
         const mention = `<@${discordId}>`;
         const subject = `${mention} (${username})`;
-        if (achievements.length === 1) {
-            const ach = achievements[0];
-            return `🎉 **Achievement Unlocked!** ${ach.emoji}\n${subject} earned **${ach.name}** — *${ach.description}*`;
+        // Show the rarest first so the cool unlocks lead.
+        const sorted = [...achievements].sort(
+            (a, b) => RARITY_META[rarityOf(b.id)].order - RARITY_META[rarityOf(a.id)].order,
+        );
+
+        if (sorted.length === 1) {
+            const ach = sorted[0];
+            const rm = RARITY_META[rarityOf(ach.id)];
+            return `🎉 **${rm.emoji} ${rm.label} Achievement Unlocked!**\n${subject} earned ${ach.emoji} **${ach.name}** — *${ach.description}*`;
         }
 
         const MAX_SHOWN = 12;
-        const shown = achievements.slice(0, MAX_SHOWN);
+        const shown = sorted.slice(0, MAX_SHOWN);
         const lines = shown
-            .map((ach) => `${ach.emoji} **${ach.name}** — *${ach.description}*`)
+            .map((ach) => `${RARITY_META[rarityOf(ach.id)].emoji} ${ach.emoji} **${ach.name}** — *${ach.description}*`)
             .join('\n');
-        const more = achievements.length > MAX_SHOWN
-            ? `\n…and **${achievements.length - MAX_SHOWN}** more.`
+        const more = sorted.length > MAX_SHOWN
+            ? `\n…and **${sorted.length - MAX_SHOWN}** more.`
             : '';
-        return `🎉 **Achievements Unlocked!**\n${subject} earned **${achievements.length}** achievements:\n${lines}${more}`;
+        const top = RARITY_META[rarityOf(sorted[0].id)];
+        return `🎉 **Achievements Unlocked!** _(rarest: ${top.emoji} ${top.label})_\n${subject} earned **${sorted.length}**:\n${lines}${more}`;
     }
 
     async announceNewAchievements(achievements: AchievementDefinition[], discordId: string, username: string, channel: TextChannel) {
