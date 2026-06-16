@@ -5,10 +5,27 @@ import {
   mmrToMedal,
 } from '../services/turboRankService';
 import { fetchStratzPlayerProfile } from '../services/stratzClient';
-import { TurboRankObservation } from '../models/TurboRank';
+import { TurboRankObservation, TurboRankEstimate } from '../models/TurboRank';
 import { UserDataService } from '../services/userDataService';
 import { logger } from '../services/loggerService';
 import { ProcessConstants } from '../constants';
+
+/**
+ * A fun "archetype" label for a player from their turbo-lean (how far above/below
+ * their ranked medal they actually play). Pure flavour on top of the estimate.
+ */
+function turboArchetype(e: TurboRankEstimate): { emoji: string; title: string } {
+  if (e.partyFallback || e.confidence < 30 || e.soloSampleSize < 5) return { emoji: '❓', title: 'Unproven' };
+  const immortal = (e.rankedTier ?? 0) >= 80;
+  if (e.lean == null || immortal) return { emoji: '🎖️', title: 'Verified Calibre' };
+  const lean = e.lean;
+  if (lean >= 800 && e.soloSampleSize < 20) return { emoji: '🥷', title: 'Smurf Suspect' };
+  if (lean >= 600) return { emoji: '🐉', title: 'Turbo God' };
+  if (lean >= 250) return { emoji: '📈', title: 'Overperformer' };
+  if (lean <= -600) return { emoji: '🪦', title: 'Turbo Feeder' };
+  if (lean <= -250) return { emoji: '📉', title: 'Underperformer' };
+  return { emoji: '🎯', title: 'Ranked Andy' };
+}
 
 const BULK_CALIBRATE_SUBCOMMANDS = new Set([
   'calibrateall',
@@ -257,6 +274,8 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
   }
   const leanLine = formatLean(estimate);
   if (leanLine) desc.push(leanLine);
+  const type = turboArchetype(estimate);
+  desc.push(`${type.emoji} **${type.title}**`);
   if (estimate.partyFallback) {
     desc.push('_Party-based estimate — this player never solo-queues, so it may be skewed by stackmates._');
   }

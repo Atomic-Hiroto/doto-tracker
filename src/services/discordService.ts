@@ -103,6 +103,24 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_RANK:
       await commandHandlers.turboRank(message, args, userDataService);
       break;
+    case Commands.TURBO_LEAN:
+      await commandHandlers.turboLean(message, args);
+      break;
+    case Commands.TURBO_VS:
+      await commandHandlers.turboVs(message, args, userDataService, turboStatsService);
+      break;
+    case Commands.TURBO_CLIMB:
+      await commandHandlers.turboClimb(message);
+      break;
+    case Commands.TURBO_SQUAD:
+      await commandHandlers.turboSquad(message, args, userDataService, turboStatsService);
+      break;
+    case Commands.TURBO_FACTS:
+      await commandHandlers.turboFacts(message);
+      break;
+    case Commands.TURBO_SCORECARD:
+      await commandHandlers.turboScorecard(message);
+      break;
     case Commands.TOGGLE_SHARED_CONTEXT:
       await commandHandlers.toggleSharedContext(message, args);
       break;
