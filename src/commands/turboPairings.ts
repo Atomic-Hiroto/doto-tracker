@@ -51,21 +51,23 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
 
 export async function myTurboPairings(message: Message, turboStatsService: TurboStatsService) {
   try {
+    const target = message.mentions.users.first() ?? message.author;
     const allPairings = turboStatsService.getAllStats().pairings;
     const myPairings = allPairings
-      .filter(p => p.player1 === message.author.id || p.player2 === message.author.id)
+      .filter(p => p.player1 === target.id || p.player2 === target.id)
       .filter(p => p.wins + p.losses >= 2) // Show pairings with at least 2 games
       .sort((a, b) => b.rating - a.rating)
       .slice(0, 10);
 
     if (myPairings.length === 0) {
-      return message.reply('You haven\'t played enough turbo games with anyone yet! Play some turbo matches with friends to see your pairing stats.');
+      const who = target.id === message.author.id ? "You haven't" : `${target.username} hasn't`;
+      return message.reply(`${who} played enough turbo games with anyone yet! Play some turbo matches with friends to see pairing stats.`);
     }
 
     const embed = new EmbedBuilder()
       .setColor('#4ecdc4')
-      .setTitle(`🤝 Your Turbo Duos - ${message.author.username}`)
-      .setDescription('Your best turbo partnerships (min 2 games together)')
+      .setTitle(`🤝 Turbo Duos - ${target.username}`)
+      .setDescription('Best turbo partnerships (min 2 games together)')
       .setTimestamp();
 
     let pairingsText = '';
@@ -73,7 +75,7 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
       const pairing = myPairings[i];
 
       try {
-        const partnerId = pairing.player1 === message.author.id ? pairing.player2 : pairing.player1;
+        const partnerId = pairing.player1 === target.id ? pairing.player2 : pairing.player1;
         const partner = await message.client.users.fetch(partnerId);
         const totalGames = pairing.wins + pairing.losses;
         const winRate = ((pairing.wins / totalGames) * 100).toFixed(1);

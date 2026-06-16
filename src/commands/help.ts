@@ -29,7 +29,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
     lines: [
       '`+turbolb` — tracked turbo leaderboard',
       '`+turbostats` — your tracked turbo stats',
-      '`+turbostudy` — hidden Turbo rank correlation study',
+      '`+turbostudy` — hidden Turbo rank correlation study (`scorecard` for accuracy)',
       '`+turborank [@user]` — estimated hidden turbo rank',
       '`+turborank calibrate` — calibrate from match history',
       '`+turborank calibrateall` — owner-only recalibrate everyone',
@@ -39,13 +39,10 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbovs @p1 @p2` — compare two hidden Turbo profiles',
       '`+turboclimb` — biggest estimate movers over calibrations',
       '`+turbosquad @user` — frequent tracked Turbo teammates',
-      '`+turbofacts` — quick dataset takeaways',
-      '`+turboscorecard` — estimator validation from rank changes',
       '`+turbowinrate [@user|steamId]` — win rate by lobby bracket & party size',
       '`+turboitems [hero] [@user]` — key item timings on a hero (turbo-adjusted)',
       '`+topheros [@user]` — best turbo heroes (4 weeks)',
-      '`+turbopairs` — best turbo duos',
-      '`+myturbopairs` — your turbo partnerships',
+      '`+turbopairs [@user]` — best turbo duos (global, or a player\'s)',
     ],
   },
   {

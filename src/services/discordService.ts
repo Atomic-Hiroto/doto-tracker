@@ -95,10 +95,12 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.turboStudy(message, args, userDataService, turboStatsService);
       break;
     case Commands.TURBO_PAIRINGS:
-      await commandHandlers.turboPairings(message, turboStatsService);
-      break;
-    case Commands.MY_TURBO_PAIRINGS:
-      await commandHandlers.myTurboPairings(message, turboStatsService);
+      // +turbopairs = global board; +turbopairs @user / me = personal duos
+      if (message.mentions.users.size > 0 || ['me', 'my', 'mine'].includes(rawSubcommand ?? '')) {
+        await commandHandlers.myTurboPairings(message, turboStatsService);
+      } else {
+        await commandHandlers.turboPairings(message, turboStatsService);
+      }
       break;
     case Commands.TURBO_RANK:
       await commandHandlers.turboRank(message, args, userDataService);
@@ -114,12 +116,6 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       break;
     case Commands.TURBO_SQUAD:
       await commandHandlers.turboSquad(message, args, userDataService, turboStatsService);
-      break;
-    case Commands.TURBO_FACTS:
-      await commandHandlers.turboFacts(message);
-      break;
-    case Commands.TURBO_SCORECARD:
-      await commandHandlers.turboScorecard(message);
       break;
     case Commands.TURBO_WINRATE:
       await commandHandlers.turboWinRate(message, args, userDataService);
