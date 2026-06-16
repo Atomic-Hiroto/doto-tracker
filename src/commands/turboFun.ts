@@ -206,8 +206,14 @@ export async function turboClimb(message: Message) {
 
     if (rows.length === 0) return message.reply('Not enough calibration history yet. Run bulk recalibration over time, then `+turboclimb` will show movement.');
 
-    const climbers = [...rows].sort((a, b) => b.delta - a.delta).slice(0, 8);
-    const fallers = [...rows].sort((a, b) => a.delta - b.delta).slice(0, 8);
+    const climbers = rows
+      .filter(r => r.delta > 0)
+      .sort((a, b) => b.delta - a.delta)
+      .slice(0, 8);
+    const fallers = rows
+      .filter(r => r.delta < 0)
+      .sort((a, b) => a.delta - b.delta)
+      .slice(0, 8);
     const line = (r: typeof rows[number]) => `**${r.name}** — ${fmtLean(r.delta)} (${r.first.medal} → ${r.last.medal})`;
 
     const embed = new EmbedBuilder()
@@ -215,8 +221,8 @@ export async function turboClimb(message: Message) {
       .setTitle('⛰️ Turbo Climb')
       .setDescription('Movement across saved calibration snapshots. This gets better every time `+turborank calibrateall` is run on different days.')
       .addFields(
-        { name: 'Biggest Climbers', value: fitLines(climbers.map(line), 'None'), inline: false },
-        { name: 'Biggest Drops', value: fitLines(fallers.map(line), 'None'), inline: false },
+        { name: 'Biggest Climbers', value: fitLines(climbers.map(line), 'No positive movement yet.'), inline: false },
+        { name: 'Biggest Drops', value: fitLines(fallers.map(line), 'No negative movement yet.'), inline: false },
       )
       .setTimestamp();
 
