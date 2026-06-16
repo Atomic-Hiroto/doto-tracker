@@ -198,6 +198,24 @@ function isHighQuality(row: StudyRow): boolean {
   return !row.estimate.partyFallback && row.estimate.confidence >= 70 && row.estimate.soloSampleSize >= 15;
 }
 
+/**
+ * Immortal-ranked players sit above the turbo estimator's resolution ceiling
+ * (turbo lobby averages top out ~4–4.5k), so their gaps are structural, not
+ * estimator error. Splitting them out keeps the headline error honest.
+ */
+function isCeiling(row: StudyRow): boolean {
+  return Math.floor(row.visibleRankTier / 10) === 8;
+}
+
+/** MAE / RMSE / median gap for a subset of rows (null if empty). */
+function errorStats(rows: StudyRow[]): { n: number; mae: number; rmse: number; medianGap: number | null } | null {
+  if (rows.length === 0) return null;
+  const gaps = rows.map((r) => r.estimate.estimatedMMR - r.visibleMMR);
+  const mae = gaps.reduce((s, g) => s + Math.abs(g), 0) / gaps.length;
+  const rmse = Math.sqrt(gaps.reduce((s, g) => s + g * g, 0) / gaps.length);
+  return { n: rows.length, mae, rmse, medianGap: median(gaps) };
+}
+
 function daysSince(ms: number): number {
   return Math.floor((Date.now() - ms) / 86400000);
 }
@@ -359,6 +377,16 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
     const rmse = Math.sqrt(gaps.reduce((s, gap) => s + gap * gap, 0) / gaps.length);
     const fit = linearFit(rows);
 
+    // Segment the error: the measurable range (Herald–Divine) vs the ceiling
+    // (Immortal), which the estimator structurally can't resolve. Without this
+    // split the Immortal tail dominates MAE/slope and makes the estimator look
+    // worse than it is for the players it actually handles.
+    const measurableRows = rows.filter((r) => !isCeiling(r));
+    const ceilingRows = rows.filter(isCeiling);
+    const measurableStats = errorStats(measurableRows);
+    const ceilingStats = errorStats(ceilingRows);
+    const measurableFit = linearFit(measurableRows);
+
     const rankCorr = pearson(rows, (r) => r.visibleMMR, (r) => r.estimate.estimatedMMR);
     const highQualityCorr = pearson(highQualityRows, (r) => r.visibleMMR, (r) => r.estimate.estimatedMMR);
     const weightedCorr = weightedPearson(rows);
@@ -427,6 +455,24 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       else if (fit.slope > 1.1) fitNote = `Slope ${fit.slope.toFixed(2)} > 1 → estimates fan out vs ranked.`;
       else fitNote = `Slope ${fit.slope.toFixed(2)} ≈ 1 → roughly uniform offset of ${fmtMmr(fit.intercept)}.`;
     }
+
+    // Error split by what the estimator can actually measure.
+    const rangeLines: string[] = [];
+    if (measurableStats) {
+      rangeLines.push(
+        `✅ **Measurable (Herald–Divine, ${measurableStats.n}):** MAE **${Math.round(measurableStats.mae)} MMR**, ` +
+        `median **${fmtMmr(measurableStats.medianGap)}**` +
+        (measurableFit ? `, slope **${measurableFit.slope.toFixed(2)}** (R² ${measurableFit.r2.toFixed(2)})` : '') +
+        ' — this is the estimator\'s real accuracy.',
+      );
+    }
+    if (ceilingStats) {
+      rangeLines.push(
+        `🧢 **Ceiling (Immortal, ${ceilingStats.n}):** MAE **${Math.round(ceilingStats.mae)} MMR** — ` +
+        'beyond turbo\'s resolution. Lobbies top out ~4–4.5k, so these can\'t be separated; treat as "elite, unmeasurable", not error.',
+      );
+    }
+    const rangeNote = rangeLines.length ? rangeLines.join('\n') : 'Not enough data to segment by range.';
 
     // Trend vs the previous run (persisted), then record this run.
     const prevSnap = loadStudyHistory().slice(-1)[0];
@@ -504,6 +550,7 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
             (fit ? `Fit: **Turbo ~= ${fit.slope.toFixed(2)} x Ranked ${fit.intercept >= 0 ? '+' : '-'} ${Math.abs(Math.round(fit.intercept))}** | R² **${fit.r2.toFixed(2)}**` : 'Fit: n/a'),
           inline: false,
         },
+        { name: 'Error by Range', value: rangeNote, inline: false },
         { name: 'Estimator Health', value: healthLines.join('\n'), inline: false },
         { name: 'Bias by Ranked Bracket', value: bracketLines.join('\n'), inline: false },
         { name: 'Fit Interpretation', value: fitNote, inline: false },
