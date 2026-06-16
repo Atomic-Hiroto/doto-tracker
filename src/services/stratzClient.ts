@@ -467,6 +467,37 @@ export async function fetchPlayerHeroItemTimings(
   }
 }
 
+/**
+ * Average item *completion* timings for a hero from Stratz (normal/ranked games — Stratz
+ * does not track Turbo item timings). Returns itemId -> average purchase minute.
+ * `itemFullPurchase` comes back as a week/bracket/time-bucket histogram, so we weight-average it.
+ */
+export async function fetchHeroItemBenchmarks(heroId: number): Promise<Map<number, number>> {
+  if (!STRATZ_API_KEY) return new Map();
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      { query: `{ heroStats { itemFullPurchase(heroId: ${Math.trunc(heroId)}) { itemId time matchCount } } }` },
+      { headers: STRATZ_HEADERS, timeout: 30000 },
+    );
+    const rows = response.data?.data?.heroStats?.itemFullPurchase ?? [];
+    const acc = new Map<number, { t: number; n: number }>();
+    for (const r of rows) {
+      if (r?.time == null || !r?.matchCount) continue;
+      const e = acc.get(r.itemId) ?? { t: 0, n: 0 };
+      e.t += r.time * r.matchCount; // time is in minutes
+      e.n += r.matchCount;
+      acc.set(r.itemId, e);
+    }
+    const out = new Map<number, number>();
+    for (const [id, { t, n }] of acc) if (n > 0) out.set(id, t / n);
+    return out;
+  } catch (error: any) {
+    logger.error(`Stratz hero item benchmark error for ${heroId}:`, error?.response?.data ?? error?.message ?? error);
+    return new Map();
+  }
+}
+
 /** Resolves a Steam account's display name + current ranked medal via Stratz. */
 export async function fetchStratzPlayerProfile(
   steamAccountId: number,
