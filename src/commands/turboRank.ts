@@ -434,7 +434,10 @@ async function turboRankCalibrate(message: Message, args: string[], userDataServ
 
     if (!estimate) {
       return progressMsg.edit(
-        `❌ Calibration failed for **${target.name}** — not enough turbo matches with visible rank data.`,
+        `❌ Calibration failed for **${target.name}** — not enough Turbo matches with visible rank data.\n\n`
+        + 'Most often this means **match data is private**. In Dota 2: **Settings → Options → Advanced → Expose Public Match Data → ON**, '
+        + 'then play (or wait for) a few **solo-queue Turbo** games so opponents\' medals are visible. Re-run `+turborank calibrate` after that.\n'
+        + '_(New accounts may simply not have enough recent solo Turbo games yet.)_',
       );
     }
 
