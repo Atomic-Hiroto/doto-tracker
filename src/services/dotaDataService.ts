@@ -11,6 +11,9 @@ interface ItemData {
     id: number;
     dname: string;
     img?: string;
+    cost?: number | null;
+    qual?: string;
+    components?: string[] | null;
 }
 
 // OpenDota item icons live behind cdn.steamstatic.com (the cloudflare host
@@ -148,6 +151,18 @@ class DotaDataService {
         if (itemId === 0) return 'Empty Slot';
         const item = this.items.get(itemId);
         return item ? item.dname : 'Unknown Item';
+    }
+
+    /** Item metadata for build analysis. isKey = a finished/notable item worth showing in a build. */
+    getItemMeta(itemId: number): { name: string; cost: number; isKey: boolean } | undefined {
+        const item = this.items.get(itemId);
+        if (!item) return undefined;
+        const cost = item.cost ?? 0;
+        const hasComponents = Array.isArray(item.components) && item.components.length > 0;
+        // Finished/built item (BKB, boots upgrades, cores) or a notable whole-buy (Blink, qual "component").
+        // Excludes raw components, consumables, and cheap parts via the cost gate.
+        const isKey = cost >= 1400 && (hasComponents || item.qual === 'component');
+        return { name: item.dname, cost, isKey };
     }
 
     getItemImageUrl(itemId: number): string | undefined {
