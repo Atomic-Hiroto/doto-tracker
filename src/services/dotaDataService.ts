@@ -14,6 +14,7 @@ interface ItemData {
     cost?: number | null;
     qual?: string;
     components?: string[] | null;
+    internalName?: string;
 }
 
 // OpenDota item icons live behind cdn.steamstatic.com (the cloudflare host
@@ -99,8 +100,9 @@ class DotaDataService {
         try {
             const response = await opendotaClient.get<Record<string, ItemData>>('/constants/items');
             this.items.clear();
-            for (const item of Object.values(response.data)) {
+            for (const [internalName, item] of Object.entries(response.data)) {
                 if (item.id !== undefined) {
+                    item.internalName = internalName;
                     this.items.set(item.id, item);
                 }
             }
@@ -163,6 +165,17 @@ class DotaDataService {
         // Excludes raw components, consumables, and cheap parts via the cost gate.
         const isKey = cost >= 1400 && (hasComponents || item.qual === 'component');
         return { name: item.dname, cost, isKey };
+    }
+
+    /** Internal (OpenDota) name of an item, e.g. "black_king_bar". */
+    getItemInternalName(itemId: number): string | undefined {
+        return this.items.get(itemId)?.internalName;
+    }
+
+    /** Internal names of the components an item is built from. */
+    getItemComponentNames(itemId: number): string[] {
+        const c = this.items.get(itemId)?.components;
+        return Array.isArray(c) ? c : [];
     }
 
     getItemImageUrl(itemId: number): string | undefined {

@@ -474,23 +474,40 @@ export async function fetchPlayerHeroItemTimings(
  */
 export async function fetchHeroItemBenchmarks(heroId: number): Promise<Map<number, number>> {
   if (!STRATZ_API_KEY) return new Map();
+  const h = Math.trunc(heroId);
   try {
     const response = await axios.post(
       STRATZ_GQL,
-      { query: `{ heroStats { itemFullPurchase(heroId: ${Math.trunc(heroId)}) { itemId time matchCount } } }` },
+      { query: `{ heroStats {
+        itemFullPurchase(heroId: ${h}) { itemId time matchCount }
+        itemBootPurchase(heroId: ${h}) { itemId time matchCount }
+      } }` },
       { headers: STRATZ_HEADERS, timeout: 30000 },
     );
-    const rows = response.data?.data?.heroStats?.itemFullPurchase ?? [];
+    const out = new Map<number, number>();
+
+    // itemFullPurchase: histogram, `time` is a per-row MINUTE value -> weight-average by matchCount.
     const acc = new Map<number, { t: number; n: number }>();
-    for (const r of rows) {
+    for (const r of response.data?.data?.heroStats?.itemFullPurchase ?? []) {
       if (r?.time == null || !r?.matchCount) continue;
       const e = acc.get(r.itemId) ?? { t: 0, n: 0 };
-      e.t += r.time * r.matchCount; // time is in minutes
+      e.t += r.time * r.matchCount;
       e.n += r.matchCount;
       acc.set(r.itemId, e);
     }
-    const out = new Map<number, number>();
-    for (const [id, { t, n }] of acc) if (n > 0) out.set(id, t / n);
+    for (const [id, { t, n }] of acc) if (n >= 200) out.set(id, t / n);
+
+    // itemBootPurchase: one row per boot, `time` is TOTAL seconds -> avg seconds / 60 = minutes.
+    const boot = new Map<number, { t: number; n: number }>();
+    for (const r of response.data?.data?.heroStats?.itemBootPurchase ?? []) {
+      if (r?.time == null || !r?.matchCount) continue;
+      const e = boot.get(r.itemId) ?? { t: 0, n: 0 };
+      e.t += r.time;
+      e.n += r.matchCount;
+      boot.set(r.itemId, e);
+    }
+    for (const [id, { t, n }] of boot) if (n >= 200) out.set(id, t / n / 60);
+
     return out;
   } catch (error: any) {
     logger.error(`Stratz hero item benchmark error for ${heroId}:`, error?.response?.data ?? error?.message ?? error);
