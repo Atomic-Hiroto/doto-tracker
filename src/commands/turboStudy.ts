@@ -5,7 +5,7 @@ import { TurboRankEstimate } from '../models/TurboRank';
 import { TurboStatsService } from '../services/turboStatsService';
 import { UserDataService } from '../services/userDataService';
 import { opendotaClient } from '../services/apiClient';
-import { renderTurboStudyScatter, renderTurboStudyResidual, renderTurboLadder } from '../services/chartService';
+import { renderTurboStudyScatter, renderTurboStudyResidual } from '../services/chartService';
 import { logger } from '../services/loggerService';
 
 interface StudyCandidate {
@@ -394,24 +394,14 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       })),
       fit ? { slope: fit.slope, intercept: fit.intercept } : null,
     );
-    const ladder = renderTurboLadder(
-      candidates.map((c) => ({
-        label: c.name,
-        mmr: c.estimate.estimatedMMR,
-        confidence: c.estimate.confidence,
-        partyFallback: c.estimate.partyFallback,
-        stale: daysSince(c.estimate.lastUpdated) > 30,
-      })),
-    );
     const scatterAttachment = new AttachmentBuilder(scatter, { name: 'turbo-study.png' });
     const residualAttachment = new AttachmentBuilder(residual, { name: 'turbo-bias.png' });
-    const ladderAttachment = new AttachmentBuilder(ladder, { name: 'turbo-ladder.png' });
     const csvAttachment = new AttachmentBuilder(toCsv(candidates), { name: 'turbo-study.csv' });
 
     const embed = new EmbedBuilder()
-      .setColor('#7c3aed')
+      .setColor('#2563eb')
       .setTitle('📊 Turbo Study')
-      .setDescription('Correlation and health report for hidden Turbo rank estimates. CSV export attached for deeper review.')
+      .setDescription('Diagnostic report for hidden Turbo rank estimates. Includes regression, residuals, estimator health, and CSV export.')
       .addFields(
         {
           name: 'Coverage',
@@ -439,10 +429,10 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
           inline: false,
         },
         { name: 'Estimator Health', value: healthLines.join('\n'), inline: false },
-        { name: '📈 Bias by Ranked Bracket', value: bracketLines.join('\n'), inline: false },
-        { name: '🔬 Fit Read', value: fitNote, inline: false },
-        { name: '🎯 Calibration Extremes', value: extremesLine, inline: true },
-        { name: '⏱️ Trend vs Last Run', value: trendLine, inline: true },
+        { name: 'Bias by Ranked Bracket', value: bracketLines.join('\n'), inline: false },
+        { name: 'Fit Interpretation', value: fitNote, inline: false },
+        { name: 'Calibration Extremes', value: extremesLine, inline: true },
+        { name: 'Trend vs Last Run', value: trendLine, inline: true },
         { name: 'Largest Gaps', value: fitLines(largestGaps, 'No large gaps found.'), inline: false },
         { name: 'Next Actions', value: fitLines(actionLines, 'No immediate study actions.'), inline: false },
         {
@@ -454,7 +444,7 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       .setImage('attachment://turbo-study.png')
       .setTimestamp();
 
-    await progress.edit({ content: null, embeds: [embed], files: [scatterAttachment, residualAttachment, ladderAttachment, csvAttachment] });
+    await progress.edit({ content: null, embeds: [embed], files: [scatterAttachment, residualAttachment, csvAttachment] });
   } catch (error) {
     logger.error('Error in turbo study command:', error);
     await message.reply('An error occurred while building the Turbo study. Please try again later.');

@@ -860,7 +860,7 @@ function studyMedalColor(mmr: number): string {
 }
 
 function studyPointColor(p: { partyFallback?: boolean; stale?: boolean; confidence: number }): string {
-    return p.partyFallback ? '#ef4444' : p.stale ? '#f59e0b' : p.confidence < 50 ? '#9ca3af' : '#a78bfa';
+    return p.partyFallback ? '#dc2626' : p.stale ? '#d97706' : p.confidence < 50 ? '#6b7280' : '#2563eb';
 }
 
 function roundRectPath(ctx: any, x: number, y: number, w: number, h: number, r: number) {
@@ -883,10 +883,7 @@ export function renderTurboStudyScatter(
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
 
-    const bg = ctx.createLinearGradient(0, 0, 0, H);
-    bg.addColorStop(0, '#181826');
-    bg.addColorStop(1, '#101019');
-    ctx.fillStyle = bg;
+    ctx.fillStyle = '#f8fafc';
     ctx.fillRect(0, 0, W, H);
 
     if (points.length < 2) {
@@ -906,31 +903,22 @@ export function renderTurboStudyScatter(
     const sx = (x: number) => P + ((x - low) / range) * plotW;
     const sy = (y: number) => H - P - ((y - low) / range) * plotH;
 
-    // Medal bands (horizontal, keyed to the Turbo / Y axis).
-    for (let i = 0; i < STUDY_MEDALS.length; i++) {
-        const m = STUDY_MEDALS[i];
-        const top = i + 1 < STUDY_MEDALS.length ? STUDY_MEDALS[i + 1].floor : STUDY_TOP_MMR;
-        if (m.floor > high) continue;
-        const yTop = sy(Math.min(top, high));
-        const yBot = sy(m.floor);
-        ctx.fillStyle = m.color + '1f';
-        ctx.fillRect(P, yTop, plotW, yBot - yTop);
-        ctx.fillStyle = m.color + 'cc';
-        ctx.font = '11px sans-serif';
-        ctx.textAlign = 'right';
-        if (yBot - yTop > 12) ctx.fillText(m.name, W - P - 6, (yTop + yBot) / 2 + 4);
-    }
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(P, P, plotW, plotH);
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(P, P, plotW, plotH);
 
     // Grid + axis ticks.
     ctx.font = '12px sans-serif';
     for (let v = low; v <= high; v += 500) {
         const x = sx(v);
         const y = sy(v);
-        ctx.strokeStyle = '#ffffff10';
+        ctx.strokeStyle = '#e5e7eb';
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(x, P); ctx.lineTo(x, H - P); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(W - P, y); ctx.stroke();
-        ctx.fillStyle = '#7b7b96';
+        ctx.fillStyle = '#475569';
         ctx.textAlign = 'center';
         ctx.fillText(String(v), x, H - P + 20);
         ctx.textAlign = 'right';
@@ -938,7 +926,7 @@ export function renderTurboStudyScatter(
     }
 
     // Identity line (perfect agreement).
-    ctx.strokeStyle = '#f59e0b';
+    ctx.strokeStyle = '#334155';
     ctx.lineWidth = 2;
     ctx.setLineDash([8, 6]);
     ctx.beginPath(); ctx.moveTo(sx(low), sy(low)); ctx.lineTo(sx(high), sy(high)); ctx.stroke();
@@ -948,7 +936,7 @@ export function renderTurboStudyScatter(
     if (opts.fit) {
         const y0 = opts.fit.slope * low + opts.fit.intercept;
         const y1 = opts.fit.slope * high + opts.fit.intercept;
-        ctx.strokeStyle = '#22d3ee';
+        ctx.strokeStyle = '#0891b2';
         ctx.lineWidth = 2.5;
         ctx.beginPath(); ctx.moveTo(sx(low), sy(y0)); ctx.lineTo(sx(high), sy(y1)); ctx.stroke();
     }
@@ -960,24 +948,26 @@ export function renderTurboStudyScatter(
         const radius = 5 + Math.min(7, Math.sqrt(Math.max(0, point.sampleSize ?? 0)));
         if (point.outlier) {
             ctx.beginPath(); ctx.arc(x, y, radius + 4, 0, Math.PI * 2);
-            ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 2; ctx.stroke();
         }
         ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2);
         ctx.fillStyle = studyPointColor(point); ctx.fill();
-        ctx.strokeStyle = '#ffffffdd'; ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.font = '11px sans-serif';
-        ctx.fillStyle = '#e8e8f0';
-        ctx.textAlign = 'left';
-        ctx.fillText(point.label.slice(0, 14), x + radius + 4, y + 4);
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
+        if (point.outlier || point.partyFallback || point.stale) {
+            ctx.font = '11px sans-serif';
+            ctx.fillStyle = '#111827';
+            ctx.textAlign = 'left';
+            ctx.fillText(point.label.slice(0, 14), x + radius + 4, y + 4);
+        }
     }
 
     // Title + axis labels.
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#111827';
     ctx.font = 'bold 21px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(opts.title, W / 2, 32);
     ctx.font = '13px sans-serif';
-    ctx.fillStyle = '#a5a5c0';
+    ctx.fillStyle = '#334155';
     ctx.fillText(opts.xLabel, W / 2, H - 18);
     ctx.save(); ctx.translate(20, H / 2); ctx.rotate(-Math.PI / 2);
     ctx.fillText(opts.yLabel, 0, 0); ctx.restore();
@@ -988,18 +978,18 @@ export function renderTurboStudyScatter(
     const legendLine = (color: string, dashed: boolean, label: string) => {
         ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.setLineDash(dashed ? [6, 4] : []);
         ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 18, ly); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#c7c7d9'; ctx.fillText(label, lx + 24, ly + 4); lx += 30 + ctx.measureText(label).width + 16;
+        ctx.fillStyle = '#334155'; ctx.fillText(label, lx + 24, ly + 4); lx += 30 + ctx.measureText(label).width + 16;
     };
     const legendDot = (color: string, label: string) => {
         ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx + 5, ly, 5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#c7c7d9'; ctx.fillText(label, lx + 14, ly + 4); lx += 14 + ctx.measureText(label).width + 16;
+        ctx.fillStyle = '#334155'; ctx.fillText(label, lx + 14, ly + 4); lx += 14 + ctx.measureText(label).width + 16;
     };
-    legendLine('#f59e0b', true, 'equal');
-    if (opts.fit) legendLine('#22d3ee', false, 'trend');
-    legendDot('#a78bfa', 'solid');
-    legendDot('#9ca3af', 'low conf');
-    legendDot('#ef4444', 'party');
-    ctx.fillStyle = '#8b8ba8'; ctx.fillText('(size = solo games)', lx, ly + 4);
+    legendLine('#334155', true, 'perfect agreement');
+    if (opts.fit) legendLine('#0891b2', false, 'least-squares fit');
+    legendDot('#2563eb', 'normal');
+    legendDot('#6b7280', 'low confidence');
+    legendDot('#dc2626', 'party fallback');
+    ctx.fillStyle = '#64748b'; ctx.fillText('point size = solo games; red ring = >=900 MMR gap', lx, ly + 4);
 
     return canvas.toBuffer('image/png');
 }
@@ -1012,10 +1002,10 @@ export function renderTurboStudyResidual(
     const W = 980, H = 420, P = 70;
     const canvas = createCanvas(W, H);
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#101019'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, W, H);
 
     if (points.length < 2) {
-        ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#111827'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText('Not enough data', W / 2, H / 2); return canvas.toBuffer('image/png');
     }
 
@@ -1026,31 +1016,50 @@ export function renderTurboStudyResidual(
     const sx = (x: number) => P + (x / Math.max(1, maxX)) * plotW;
     const sy = (g: number) => P + plotH / 2 - (g / yTop) * (plotH / 2);
 
-    // Shaded over/under regions.
-    ctx.fillStyle = '#a78bfa10'; ctx.fillRect(P, P, plotW, plotH / 2);
-    ctx.fillStyle = '#60a5fa10'; ctx.fillRect(P, P + plotH / 2, plotW, plotH / 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(P, P, plotW, plotH);
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(P, P, plotW, plotH);
 
     // Grid.
     ctx.font = '12px sans-serif';
     for (let g = -yTop; g <= yTop; g += 250) {
         const y = sy(g);
-        ctx.strokeStyle = g === 0 ? '#ffffff55' : '#ffffff10';
+        ctx.strokeStyle = g === 0 ? '#334155' : '#e5e7eb';
         ctx.lineWidth = g === 0 ? 2 : 1;
         ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(W - P, y); ctx.stroke();
-        ctx.fillStyle = '#7b7b96'; ctx.textAlign = 'right';
+        ctx.fillStyle = '#475569'; ctx.textAlign = 'right';
         ctx.fillText((g > 0 ? '+' : '') + g, P - 8, y + 4);
     }
     for (let v = 0; v <= maxX; v += 500) {
         const x = sx(v);
-        ctx.fillStyle = '#7b7b96'; ctx.textAlign = 'center';
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, P); ctx.lineTo(x, H - P); ctx.stroke();
+        ctx.fillStyle = '#475569'; ctx.textAlign = 'center';
         ctx.fillText(String(v), x, H - P + 20);
+    }
+
+    // Practical outlier thresholds used by the study summary.
+    for (const threshold of [-900, 900]) {
+        if (Math.abs(threshold) > yTop) continue;
+        const y = sy(threshold);
+        ctx.strokeStyle = '#dc2626';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 5]);
+        ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(W - P, y); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#991b1b';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${threshold > 0 ? '+' : ''}${threshold} outlier threshold`, P + 8, y - 5);
     }
 
     // Trend line of the gap itself (slope-1 minus identity already baked into fit).
     if (fit) {
         const g0 = (fit.slope * 0 + fit.intercept) - 0;
         const g1 = (fit.slope * maxX + fit.intercept) - maxX;
-        ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#0891b2'; ctx.lineWidth = 2.5;
         ctx.beginPath(); ctx.moveTo(sx(0), sy(g0)); ctx.lineTo(sx(maxX), sy(g1)); ctx.stroke();
     }
 
@@ -1058,21 +1067,20 @@ export function renderTurboStudyResidual(
         const x = sx(p.rankedMMR), y = sy(p.gap);
         ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2);
         ctx.fillStyle = studyPointColor(p); ctx.fill();
-        ctx.strokeStyle = '#ffffffdd'; ctx.lineWidth = 1.3; ctx.stroke();
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.3; ctx.stroke();
         if (Math.abs(p.gap) >= 700) {
-            ctx.fillStyle = '#e8e8f0'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+            ctx.fillStyle = '#111827'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
             ctx.fillText(p.label.slice(0, 12), x + 9, y + 3);
         }
     }
 
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#111827'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('Estimate Bias — gap (Turbo − Ranked) vs Ranked', W / 2, 28);
-    ctx.font = '13px sans-serif'; ctx.fillStyle = '#a5a5c0';
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#334155';
     ctx.fillText('Ranked medal estimate (MMR)', W / 2, H - 16);
-    ctx.textAlign = 'left'; ctx.fillStyle = '#a78bfa'; ctx.font = '11px sans-serif';
-    ctx.fillText('▲ Turbo over ranked', P + 6, P + 16);
-    ctx.fillStyle = '#60a5fa';
-    ctx.fillText('▼ Turbo under ranked', P + 6, H - P - 8);
+    ctx.textAlign = 'left'; ctx.fillStyle = '#334155'; ctx.font = '11px sans-serif';
+    ctx.fillText('positive = Turbo estimate above visible ranked medal', P + 6, P + 16);
+    ctx.fillText('negative = Turbo estimate below visible ranked medal', P + 6, H - P - 8);
 
     return canvas.toBuffer('image/png');
 }
