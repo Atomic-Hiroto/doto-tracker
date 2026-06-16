@@ -2,20 +2,32 @@ import { EmbedBuilder, Message } from 'discord.js';
 import { UserDataService } from '../services/userDataService';
 import { turboRankService } from '../services/turboRankService';
 import { dotaDataService } from '../services/dotaDataService';
-import { fetchPlayerTopTurboHero, fetchPlayerHeroItemTimings } from '../services/stratzClient';
+import { fetchPlayerTopTurboHero, fetchPlayerHeroItemTimings, fetchHeroItemBenchmarks } from '../services/stratzClient';
 import { logger } from '../services/loggerService';
 
-// Per-hero key-item timings from a player's Turbo games, with a "normal-equivalent"
-// column. Turbo doubles all gold & XP (Dota 2 Wiki turbo factor = 2), so you reach an
-// item's cost in HALF the time — the normal-game-equivalent timing is turbo timing × 2.
+// Per-hero key-item timings from a player's Turbo games, benchmarked against the playerbase.
+//   YOU    = the player's average completion time in Turbo
+//   PAR    = what an average player hits it at in Turbo = ranked average ÷ 2 (Turbo doubles gold)
+//   RANKED = Stratz's real ranked/normal-game average (Stratz has no Turbo item data)
 
 const TURBO_GOLD_FACTOR = 2;
 const MATCH_SAMPLE = 20;
 
-function fmtTime(sec: number): string {
+function fmtSec(sec: number): string {
   const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+}
+function fmtMin(min: number): string {
+  const m = Math.floor(min);
+  return `${m}:${String(Math.round((min - m) * 60)).padStart(2, '0')}`;
+}
+function verdict(youMin: number, parMin: number | null): string {
+  if (parMin == null) return ' ';
+  const d = youMin - parMin; // negative = faster than an average turbo player
+  if (d <= -3) return '🔥';
+  if (d <= -1) return '🟢';
+  if (d < 1) return '🟡';
+  return '🔴';
 }
 
 function splitArgs(args: string[]): { playerToken: string | null; heroQuery: string } {
@@ -53,8 +65,7 @@ export async function turboItems(message: Message, args: string[], userDataServi
     const target = await resolvePlayer(message, playerToken, userDataService);
     if ('error' in target) return message.reply(target.error);
 
-    // ensure hero/item constants are loaded before using the sync lookups
-    await dotaDataService.getItemName(1);
+    await dotaDataService.getItemName(1); // ensure constants loaded for sync lookups
 
     let heroId: number | null = null;
     let heroName = '';
@@ -75,63 +86,75 @@ export async function turboItems(message: Message, args: string[], userDataServi
       heroName = await dotaDataService.getHeroName(heroId);
     }
 
-    const matches = await fetchPlayerHeroItemTimings(Number(target.steamId), heroId, MATCH_SAMPLE);
+    const [matches, benchmarks] = await Promise.all([
+      fetchPlayerHeroItemTimings(Number(target.steamId), heroId, MATCH_SAMPLE),
+      fetchHeroItemBenchmarks(heroId),
+    ]);
     if (matches.length === 0) {
-      return loading.edit(`No parsed Turbo **${heroName}** games found for **${target.name}** (Stratz may not have item data for their recent games).`);
+      return loading.edit(`No parsed Turbo **${heroName}** games found for **${target.name}**.`);
     }
 
-    // aggregate: per key item -> games-built count + avg first-completion time
-    const perItem = new Map<string, { count: number; sumSec: number; cost: number }>();
+    // aggregate per key item (by itemId so we can join the benchmark)
+    const perItem = new Map<number, { name: string; count: number; sumSec: number }>();
     let durSum = 0;
     for (const match of matches) {
       durSum += match.durationSeconds;
-      const firstByName = new Map<string, { sec: number; cost: number }>();
+      const firstById = new Map<number, number>();
       for (const p of match.purchases) {
         const meta = dotaDataService.getItemMeta(p.itemId);
         if (!meta || !meta.isKey) continue;
-        const sec = Math.max(0, p.time); // clamp pre-horn (negative) buys to 0
-        const cur = firstByName.get(meta.name);
-        if (!cur || sec < cur.sec) firstByName.set(meta.name, { sec, cost: meta.cost });
+        const sec = Math.max(0, p.time);
+        const cur = firstById.get(p.itemId);
+        if (cur == null || sec < cur) firstById.set(p.itemId, sec);
       }
-      for (const [name, v] of firstByName) {
-        const e = perItem.get(name) ?? { count: 0, sumSec: 0, cost: v.cost };
-        e.count++; e.sumSec += v.sec; e.cost = v.cost;
-        perItem.set(name, e);
+      for (const [itemId, sec] of firstById) {
+        const meta = dotaDataService.getItemMeta(itemId)!;
+        const e = perItem.get(itemId) ?? { name: meta.name, count: 0, sumSec: 0 };
+        e.count++; e.sumSec += sec;
+        perItem.set(itemId, e);
       }
     }
 
     const games = matches.length;
-    const minGames = Math.max(2, Math.ceil(games * 0.25)); // built in ≥25% of games
-    let rows = [...perItem.entries()]
-      .filter(([, e]) => e.count >= minGames)
-      .map(([name, e]) => ({ name, count: e.count, avgSec: e.sumSec / e.count }))
-      .sort((a, b) => a.avgSec - b.avgSec); // chronological build order
-    if (rows.length === 0) {
-      // fall back to the most common items if nothing cleared the threshold
-      rows = [...perItem.entries()]
-        .map(([name, e]) => ({ name, count: e.count, avgSec: e.sumSec / e.count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 8)
-        .sort((a, b) => a.avgSec - b.avgSec);
-    }
-    rows = rows.slice(0, 10);
+    const minGames = Math.max(2, Math.ceil(games * 0.25));
+    let entries = [...perItem.entries()].filter(([, e]) => e.count >= minGames);
+    if (entries.length === 0) entries = [...perItem.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 8);
 
-    const W = 16;
-    const header = `${'ITEM'.padEnd(W)} ${'BUILT'.padStart(5)} ${'TURBO'.padStart(5)} ${'NORM×2'.padStart(6)}`;
+    const rows = entries
+      .map(([itemId, e]) => {
+        const youMin = e.sumSec / e.count / 60;
+        const rankedMin = benchmarks.get(itemId) ?? null;
+        const parMin = rankedMin != null ? rankedMin / TURBO_GOLD_FACTOR : null;
+        return { name: e.name, count: e.count, youMin, parMin, rankedMin };
+      })
+      .sort((a, b) => a.youMin - b.youMin)
+      .slice(0, 10);
+
+    const rated = rows.filter(r => r.parMin != null);
+    const faster = rated.filter(r => r.youMin < r.parMin! - 0.5).length;
+
+    const W = 14;
+    const header = `${'ITEM'.padEnd(W)}${'YOU'.padStart(6)}${'PAR'.padStart(6)}${'RANKED'.padStart(7)}`;
     const lines = rows.map(r =>
-      `${r.name.slice(0, W).padEnd(W)} ${`${r.count}/${games}`.padStart(5)} ${fmtTime(r.avgSec).padStart(5)} ${fmtTime(r.avgSec * TURBO_GOLD_FACTOR).padStart(6)}`,
+      `${r.name.slice(0, W).padEnd(W)}${fmtMin(r.youMin).padStart(6)}`
+      + `${(r.parMin != null ? fmtMin(r.parMin) : '—').padStart(6)}`
+      + `${(r.rankedMin != null ? fmtMin(r.rankedMin) : '—').padStart(7)} ${verdict(r.youMin, r.parMin)}`,
     );
-    const avgDur = fmtTime(durSum / games);
+
+    const hype = rated.length
+      ? `\n⚡ You beat an average Turbo player's pace on **${faster}/${rated.length}** key items.`
+      : '';
 
     const embed = new EmbedBuilder()
       .setColor('#f59e0b')
       .setTitle(`🛠️ Turbo Item Timings — ${heroName}`)
       .setDescription(
-        `**${target.name}** · ${games} recent Turbo games · avg game ${avgDur}\n`
-        + `Timings = when each key item **completes**. Turbo doubles gold & XP, so **NORM×2** = the comparable normal-game timing.`,
+        `**${target.name}** · ${games} Turbo games · avg game ${fmtSec(durSum / games)}\n`
+        + '`YOU` your turbo timing · `PAR` average player in turbo · `RANKED` ranked-game average.'
+        + hype,
       )
-      .addFields({ name: 'Key item build', value: '```\n' + header + '\n' + lines.join('\n') + '\n```', inline: false })
-      .setFooter({ text: 'Turbo factor ×2 (Dota 2 Wiki) · NORM×2 = turbo timing × 2 · items built in ≥25% of games' })
+      .addFields({ name: 'When you complete each item', value: '```\n' + header + '\n' + lines.join('\n') + '\n```', inline: false })
+      .setFooter({ text: 'PAR = RANKED ÷2 (turbo doubles gold) — Stratz has no turbo item data, so RANKED is the real benchmark · 🔥faster 🟢good 🟡par 🔴slower · ≥25% of games' })
       .setTimestamp();
 
     await loading.edit({ content: '', embeds: [embed] });
