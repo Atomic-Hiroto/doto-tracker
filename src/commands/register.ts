@@ -1,17 +1,23 @@
 import { Message } from 'discord.js';
 import { Replies } from '../constants';
 import { UserDataService } from '../services/userDataService';
-import { isValidSteamId } from '../utils/validators';
+import { normalizeSteamId } from '../utils/validators';
 
 export async function register(message: Message, args: string[], userDataService: UserDataService) {
   if (args.length !== 1) {
     return message.reply(Replies.PROVIDE_STEAM_ID);
   }
 
-  const steamId = args[0];
+  const steamId = normalizeSteamId(args[0]);
 
-  if (!isValidSteamId(steamId)) {
-    return message.reply('Invalid Steam ID. Please provide a valid 32-bit Steam ID.');
+  if (!steamId) {
+    return message.reply(
+      "I couldn't read that Steam ID. You can give me any of these:\n"
+      + '• your **Friend ID / 32-bit ID** (e.g. `428786815`)\n'
+      + '• your **SteamID64** (e.g. `76561198389052543`)\n'
+      + '• your **profile URL** (`steamcommunity.com/profiles/...`) or a **Dotabuff/OpenDota** link\n\n'
+      + "If you only have a vanity URL (`steamcommunity.com/id/yourname`), open your **OpenDota** or **Dotabuff** page and copy the number from the URL — I can't resolve vanity names.",
+    );
   }
 
   const existingDiscordUser = userDataService.getUserByDiscordId(message.author.id);
