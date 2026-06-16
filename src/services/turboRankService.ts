@@ -549,6 +549,7 @@ export class TurboRankService {
     seedSteamId: string,
     minCoOccurrence = 3,
     matchSampleSize = 200,
+    includeTracked = false,
   ): Promise<{
     candidates: Array<{ steamId: string; coOccurrences: number; seasonRank: number | null }>;
     matchesScanned: number;
@@ -590,7 +591,9 @@ export class TurboRankService {
 
     const candidates = [...tally.entries()]
       .filter(([steamId, v]) =>
-        v.count >= minCoOccurrence && v.seasonRank != null && !this.getPlayerBySteamId(steamId))
+        v.count >= minCoOccurrence
+        && v.seasonRank != null
+        && (includeTracked || !this.getPlayerBySteamId(steamId)))
       .map(([steamId, v]) => ({ steamId, coOccurrences: v.count, seasonRank: v.seasonRank }))
       .sort((a, b) => b.coOccurrences - a.coOccurrences);
 
@@ -616,11 +619,24 @@ export class TurboRankService {
   }
 
   /** All players with estimates, sorted by MMR descending. */
-  getAllEstimates(): Array<{ discordId: string; steamId: string; steamName?: string; estimate: TurboRankEstimate }> {
+  getAllEstimates(): Array<{ discordId: string; steamId: string; steamName?: string; discovered?: boolean; estimate: TurboRankEstimate }> {
     return this.data.players
       .filter(p => p.estimate != null)
-      .map(p => ({ discordId: p.discordId, steamId: p.steamId, steamName: p.steamName, estimate: p.estimate! }))
+      .map(p => ({ discordId: p.discordId, steamId: p.steamId, steamName: p.steamName, discovered: p.discovered, estimate: p.estimate! }))
       .sort((a, b) => b.estimate.estimatedMMR - a.estimate.estimatedMMR);
+  }
+
+  /**
+   * Mark a player as peer-discovered (or clear it). Discovery sets true so the
+   * player is hidden from the default leaderboard; a manual calibrate clears it
+   * to "promote" someone onto the board. No-op if the player doesn't exist.
+   */
+  setDiscovered(steamId: string, value: boolean): void {
+    const player = this.data.players.find(p => p.steamId === steamId);
+    if (!player) return;
+    if (value) player.discovered = true;
+    else delete player.discovered;
+    this.save();
   }
 
   getObservations(discordId: string): TurboRankObservation[] {

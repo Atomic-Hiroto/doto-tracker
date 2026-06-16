@@ -67,6 +67,12 @@ export interface TurboRankPlayerData {
   steamId: string;
   /** Resolved Stratz display name (so unregistered players show a name, not an id). */
   steamName?: string;
+  /**
+   * True when this player was auto-added by peer discovery (a recurring teammate
+   * of a seed player), rather than registered or manually calibrated. Hidden from
+   * the default leaderboard; a manual `+turborank calibrate` clears the flag.
+   */
+  discovered?: boolean;
   observations: TurboRankObservation[];
   estimate: TurboRankEstimate | null;
 }
