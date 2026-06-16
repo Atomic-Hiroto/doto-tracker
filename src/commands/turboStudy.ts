@@ -146,6 +146,38 @@ function fmtMmr(value: number | null | undefined): string {
   return `${value >= 0 ? '+' : ''}${Math.round(value)} MMR`;
 }
 
+/**
+ * Plain-language version of the headline stats, so readers who don't know what
+ * "correlation" or "R²" mean still get the takeaway. Reflects the live numbers.
+ */
+function plainEnglish(rankCorr: number | null, fit: { slope: number; r2: number } | null): string {
+  const lines: string[] = [];
+  if (rankCorr != null) {
+    const c = Math.abs(rankCorr);
+    const strength = c >= 0.8 ? 'strong' : c >= 0.6 ? 'solid' : c >= 0.4 ? 'modest' : 'weak';
+    const verdict = c >= 0.6 ? 'Yes' : c >= 0.4 ? 'Somewhat' : 'Not really';
+    lines.push(
+      `**Does ranked skill carry into Turbo?** ${verdict} — the link is **${rankCorr.toFixed(2)} out of 1.00** (${strength}). ` +
+      `If we know your ranked medal we can predict your Turbo level fairly well, and vice-versa. Good ranked players are good in Turbo; weak ones are weak.`,
+    );
+  }
+  if (fit) {
+    const pct = Math.round(fit.r2 * 100);
+    lines.push(
+      `**How much of your Turbo skill is just your ranked medal?** About **${pct}%** of it. ` +
+      `The other ${100 - pct}% is Turbo's own chaos plus how much you actually play it.`,
+    );
+    if (fit.slope < 0.9) {
+      lines.push(
+        `**Why are the dots flatter than the diagonal?** Turbo *squashes* the skill gap (slope ${fit.slope.toFixed(2)} below 1): ` +
+        `weaker players look a bit better than their medal, and the very best flatten out at the top — Turbo can't tell an Ancient from an Immortal.`,
+      );
+    }
+  }
+  if (lines.length === 0) return 'Not enough data yet for a plain-language read.';
+  return lines.join('\n\n');
+}
+
 function fitLines(lines: string[], emptyText: string, limit = 1000): string {
   if (lines.length === 0) return emptyText;
   const selected: string[] = [];
@@ -403,6 +435,11 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       .setTitle('📊 Turbo Study')
       .setDescription('Diagnostic report for hidden Turbo rank estimates. Includes regression, residuals, estimator health, and CSV export.')
       .addFields(
+        {
+          name: '🟢 In Plain English',
+          value: plainEnglish(rankCorr, fit),
+          inline: false,
+        },
         {
           name: 'Coverage',
           value:
