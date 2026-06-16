@@ -150,7 +150,12 @@ function fmtMmr(value: number | null | undefined): string {
  * Plain-language version of the headline stats, so readers who don't know what
  * "correlation" or "R²" mean still get the takeaway. Reflects the live numbers.
  */
-function plainEnglish(rankCorr: number | null, fit: { slope: number; r2: number } | null): string {
+function plainEnglish(
+  rankCorr: number | null,
+  fit: { slope: number; r2: number } | null,
+  measurableFit: { slope: number; r2: number } | null,
+  ceilingCount: number,
+): string {
   const lines: string[] = [];
   if (rankCorr != null) {
     const c = Math.abs(rankCorr);
@@ -167,12 +172,17 @@ function plainEnglish(rankCorr: number | null, fit: { slope: number; r2: number 
       `**How much of your Turbo skill is just your ranked medal?** About **${pct}%** of it. ` +
       `The other ${100 - pct}% is Turbo's own chaos plus how much you actually play it.`,
     );
-    if (fit.slope < 0.9) {
-      lines.push(
-        `**Why are the dots flatter than the diagonal?** Turbo *squashes* the skill gap (slope ${fit.slope.toFixed(2)} below 1): ` +
-        `weaker players look a bit better than their medal, and the very best flatten out at the top — Turbo can't tell an Ancient from an Immortal.`,
-      );
+  }
+  // Use the *measurable* slope (Immortals excluded) so we don't overstate
+  // compression — and name the ceiling as its own separate effect.
+  const compFit = measurableFit ?? fit;
+  if (compFit && compFit.slope < 0.9) {
+    let p = `**Why are the dots flatter than the diagonal?** Two separate things. ` +
+      `Through Divine, Turbo compresses the skill gap only mildly (slope **${compFit.slope.toFixed(2)}** — weaker players look a bit better than their medal).`;
+    if (ceilingCount > 0) {
+      p += ` Then the very best (**${ceilingCount}** Immortal${ceilingCount > 1 ? 's' : ''}) hit a hard **ceiling**: Turbo lobbies top out around 4–4.5k MMR, so above Divine the estimator can't tell an Ancient from an Immortal — that's why the top looks flat.`;
     }
+    lines.push(p);
   }
   if (lines.length === 0) return 'Not enough data yet for a plain-language read.';
   return lines.join('\n\n');
@@ -454,6 +464,9 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       if (fit.slope < 0.9) fitNote = `Slope ${fit.slope.toFixed(2)} < 1 → low ranks over-estimated, high ranks compressed (classic unranked-drop bias).`;
       else if (fit.slope > 1.1) fitNote = `Slope ${fit.slope.toFixed(2)} > 1 → estimates fan out vs ranked.`;
       else fitNote = `Slope ${fit.slope.toFixed(2)} ≈ 1 → roughly uniform offset of ${fmtMmr(fit.intercept)}.`;
+      if (measurableFit && Math.abs(measurableFit.slope - fit.slope) >= 0.05) {
+        fitNote += ` _(Immortal ceiling drags this down — measurable-range slope is **${measurableFit.slope.toFixed(2)}**.)_`;
+      }
     }
 
     // Error split by what the estimator can actually measure.
@@ -522,7 +535,7 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
       .addFields(
         {
           name: '🟢 In Plain English',
-          value: plainEnglish(rankCorr, fit),
+          value: plainEnglish(rankCorr, fit, measurableFit, ceilingRows.length),
           inline: false,
         },
         {
