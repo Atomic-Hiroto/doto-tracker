@@ -213,6 +213,23 @@ const HOW_TEXT =
   '• **Lobby completeness** — a lobby where 8 players are ranked is far more reliable than one with 3, so thin, mostly-unranked lobbies are down-weighted instead of trusted blindly.\n' +
   '• **Honest uncertainty** — the confidence % and likely range scale with how much solid data backs the estimate, so a 3-game read shows low confidence and a wider range rather than false precision.';
 
+/**
+ * Turbo-lean line: how far above/below their visible ranked medal the player
+ * actually plays in turbo. The headline finding of the whole estimator.
+ */
+function formatLean(estimate: { lean?: number | null; rankedTier?: number | null }): string | null {
+  if (estimate.lean == null || !estimate.rankedTier) return null;
+  const rankedMedal = rankTierToMedal(estimate.rankedTier);
+  const lean = estimate.lean;
+  if (lean >= 150) {
+    return `📈 Plays **+${lean}** MMR above their **${rankedMedal}** ranked medal in turbo.`;
+  }
+  if (lean <= -150) {
+    return `📉 Plays **${lean}** MMR below their **${rankedMedal}** ranked medal in turbo.`;
+  }
+  return `Plays right around their **${rankedMedal}** ranked medal in turbo.`;
+}
+
 /** Dota rank medal icon (medal tier only — the star count is shown in the text). */
 function medalIconUrl(tier: number): string {
   const t = Math.min(8, Math.max(1, tier));
@@ -228,6 +245,8 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
   if (estimate.rangeLow && estimate.rangeHigh && estimate.rangeLow !== estimate.rangeHigh) {
     desc.push(`Likely range: ${estimate.rangeLow} – ${estimate.rangeHigh}`);
   }
+  const leanLine = formatLean(estimate);
+  if (leanLine) desc.push(leanLine);
   if (estimate.partyFallback) {
     desc.push('_Party-based estimate — this player never solo-queues, so it may be skewed by stackmates._');
   }
