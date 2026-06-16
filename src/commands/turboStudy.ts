@@ -338,13 +338,19 @@ const STUDY_BRACKETS = [
   { name: 'Ancient+ (3850+)', lo: 3850, hi: Infinity },
 ];
 
-export async function turboStudy(message: Message, userDataService: UserDataService, turboStatsService: TurboStatsService) {
+export async function turboStudy(message: Message, args: string[], userDataService: UserDataService, turboStatsService: TurboStatsService) {
   try {
-    const estimates = turboRankService.getAllEstimates();
+    const crewOnly = ['friends', 'crew', 'mine', 'squad'].includes((args[0] ?? '').toLowerCase());
+    const estimates = turboRankService.getAllEstimates()
+      .filter(e => !crewOnly || !e.discovered);
     const registeredUsers = userDataService.getAllUsers();
 
     if (estimates.length < 3) {
-      return message.reply('Need at least 3 players with calibrated `+turborank` estimates to run a study.');
+      return message.reply(
+        crewOnly
+          ? 'Need at least 3 non-discovered players for a crew study. Calibrate more of your group, or run `+turbostudy` for everyone.'
+          : 'Need at least 3 players with calibrated `+turborank` estimates to run a study.',
+      );
     }
 
     const progress = await message.reply('📊 Building Turbo study... fetching visible ranked medals for calibrated players.');
@@ -487,6 +493,16 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
     }
     const rangeNote = rangeLines.length ? rangeLines.join('\n') : 'Not enough data to segment by range.';
 
+    // Two quick leaderboards from the same data — both axes are available.
+    const topTurbo = [...rows]
+      .sort((a, b) => b.estimate.estimatedMMR - a.estimate.estimatedMMR)
+      .slice(0, 8)
+      .map((r, i) => `${i + 1}. **${r.name}** — ${r.estimate.medal} _(~${r.estimate.estimatedMMR})_`);
+    const topRanked = [...rows]
+      .sort((a, b) => b.visibleMMR - a.visibleMMR)
+      .slice(0, 8)
+      .map((r, i) => `${i + 1}. **${r.name}** — ${rankTierToMedal(r.visibleRankTier)} _(~${Math.round(r.visibleMMR)})_`);
+
     // Trend vs the previous run (persisted), then record this run.
     const prevSnap = loadStudyHistory().slice(-1)[0];
     const trendLine =
@@ -530,8 +546,12 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
 
     const embed = new EmbedBuilder()
       .setColor('#2563eb')
-      .setTitle('📊 Turbo Study')
-      .setDescription('Diagnostic report for hidden Turbo rank estimates. Includes regression, residuals, estimator health, and CSV export.')
+      .setTitle(crewOnly ? '📊 Turbo Study — Crew' : '📊 Turbo Study')
+      .setDescription(
+        crewOnly
+          ? 'Crew-only report (discovered randoms excluded). Hidden Turbo rank estimates with regression, residuals, and leaderboards.'
+          : 'Diagnostic report for hidden Turbo rank estimates. Includes regression, residuals, estimator health, and CSV export.',
+      )
       .addFields(
         {
           name: '🟢 In Plain English',
@@ -545,6 +565,8 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
             `Missing visible ranked medal: **${missingVisible.length}** | registered uncalibrated: **${uncalibratedRegistered.length}**`,
           inline: false,
         },
+        { name: '🏆 Top Turbo (estimated)', value: fitLines(topTurbo, '—'), inline: true },
+        { name: '🎖️ Top Ranked (visible MMR)', value: fitLines(topRanked, '—'), inline: true },
         {
           name: 'Correlations',
           value:
