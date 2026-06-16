@@ -15,9 +15,44 @@ function emptyBucket(): Bucket { return { wins: 0, games: 0 }; }
 function pct(b: Bucket): string {
   return b.games > 0 ? `${Math.round((b.wins / b.games) * 100)}%` : '—';
 }
-function bucketLine(label: string, b: Bucket): string {
-  if (b.games === 0) return `**${label}** — no games`;
-  return `**${label}** — ${pct(b)}  (${b.wins}-${b.games - b.wins}, ${b.games} games)`;
+/** 10-cell win-rate bar, e.g. 60% -> ██████░░░░ */
+function bar(b: Bucket): string {
+  if (b.games === 0) return '·'.repeat(10);
+  const filled = Math.max(0, Math.min(10, Math.round((b.wins / b.games) * 10)));
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+}
+/** Aligned monospace row: "Divine      48g  █████░░░░░  46%" */
+function row(label: string, b: Bucket): string {
+  if (b.games === 0) return `${label.padEnd(11)}${'0g'.padStart(5)}`;
+  return `${label.padEnd(11)}${(b.games + 'g').padStart(5)}  ${bar(b)} ${(pct(b)).padStart(4)}`;
+}
+
+type BracketSlot = { all: Bucket; solo: Bucket; party: Bucket };
+type SizeSplit = { solo: Bucket; duo: Bucket; squad: Bucket; partyNA: Bucket };
+
+function buildSummary(
+  overall: Bucket,
+  order: [number, BracketSlot][],
+  bySize: SizeSplit,
+): string {
+  const p = overall.games ? overall.wins / overall.games : 0.5;
+  const verdict = p >= 0.55 ? 'winning more than they lose'
+    : p <= 0.45 ? 'losing more than they win'
+    : 'holding their own (~50/50)';
+
+  const sizes: [string, Bucket][] = [
+    ['solo queue', bySize.solo], ['duos', bySize.duo],
+    ['3-stacks', bySize.squad], ['groups', bySize.partyNA],
+  ];
+  const dom = [...sizes].sort((a, b) => b[1].games - a[1].games)[0];
+
+  const strong = order
+    .filter(([, b]) => b.all.games >= 10)
+    .sort((a, b) => (b[1].all.wins / b[1].all.games) - (a[1].all.wins / a[1].all.games))[0];
+  const strongTxt = strong ? ` Best in **${MEDAL_NAMES[strong[0]]}** lobbies (${pct(strong[1].all)}).` : '';
+
+  return `**${overall.games}** Turbo games in the last year · overall **${pct(overall)}** — ${verdict}.\n`
+    + `Mostly plays in **${dom[0]}**.${strongTxt}`;
 }
 
 /** Average lobby medal tier (1-8) for a match: prefer averageRank, fall back to opponent seasonRanks. */
@@ -96,8 +131,8 @@ export async function turboWinRate(message: Message, args: string[], userDataSer
     }
 
     // bracket (medal tier) → overall / solo / party buckets
-    const byBracket = new Map<number, { all: Bucket; solo: Bucket; party: Bucket }>();
-    const bySize = { solo: emptyBucket(), duo: emptyBucket(), squad: emptyBucket() };
+    const byBracket = new Map<number, BracketSlot>();
+    const bySize: SizeSplit = { solo: emptyBucket(), duo: emptyBucket(), squad: emptyBucket(), partyNA: emptyBucket() };
     const overall = emptyBucket();
 
     const tally = (match: any, isPartyGame: boolean) => {
@@ -121,42 +156,40 @@ export async function turboWinRate(message: Message, args: string[], userDataSer
         const size = knownPartySize(match, target.steamId);
         if (size === 2) add(bySize.duo);
         else if (size != null && size >= 3) add(bySize.squad);
-        // unknown-size party games count in overall + bracket but not the size split
+        else add(bySize.partyNA); // party game Stratz won't confirm a size for
       }
     };
 
     solo.forEach(m => tally(m, false));
     party.forEach(m => tally(m, true));
 
-    const bracketLines = [...byBracket.entries()]
-      .sort((a, b) => b[0] - a[0])
-      .map(([tier, b]) => {
-        const medal = MEDAL_NAMES[tier] ?? `Tier ${tier}`;
-        const soloTxt = b.solo.games ? `solo ${pct(b.solo)} (${b.solo.games})` : '';
-        const partyTxt = b.party.games ? `party ${pct(b.party)} (${b.party.games})` : '';
-        const split = [soloTxt, partyTxt].filter(Boolean).join(' · ');
-        return `**${medal}** — ${pct(b.all)}  (${b.all.wins}-${b.all.games - b.all.wins}, ${b.all.games}g)${split ? `\n   └ ${split}` : ''}`;
-      });
+    const order = [...byBracket.entries()].sort((a, b) => b[0] - a[0]);
+    const bracketTable = order.map(([tier, b]) => row(MEDAL_NAMES[tier] ?? `Tier ${tier}`, b.all)).join('\n');
+
+    const sizeTable = [
+      row('Solo', bySize.solo),
+      bySize.duo.games ? row('Duo', bySize.duo) : null,
+      row('3-Stack+', bySize.squad),
+      bySize.partyNA.games ? row('Group (?)', bySize.partyNA) : null,
+    ].filter(Boolean).join('\n');
 
     const embed = new EmbedBuilder()
       .setColor('#38bdf8')
       .setTitle(`🎯 Turbo Win Rate — ${target.name}`)
-      .setDescription(
-        `Last 12 months · **${overall.games}** games · overall **${pct(overall)}** (${overall.wins}-${overall.games - overall.wins})`,
-      )
+      .setDescription(buildSummary(overall, order, bySize))
       .addFields(
-        { name: 'By Lobby Bracket', value: bracketLines.join('\n') || 'Not enough rank-visible lobbies.', inline: false },
         {
-          name: 'By Party Size',
-          value: [
-            bucketLine('Solo', bySize.solo),
-            bucketLine('Duo', bySize.duo),
-            bucketLine('3-Stack+', bySize.squad),
-          ].join('\n'),
+          name: '📊 Win rate by lobby bracket',
+          value: '```\n' + (bracketTable || 'Not enough rank-visible lobbies.') + '\n```',
+          inline: false,
+        },
+        {
+          name: '👥 Win rate by party size',
+          value: '```\n' + sizeTable + '\n```',
           inline: false,
         },
       )
-      .setFooter({ text: 'Bracket = average lobby medal. Solo via Stratz solo filter; party sizes from confirmed Stratz party data.' })
+      .setFooter({ text: 'Bars show win rate · last 12 months · "Group (size?)" = party games Stratz won\'t confirm a size for' })
       .setTimestamp();
 
     await loading.edit({ content: '', embeds: [embed] });
