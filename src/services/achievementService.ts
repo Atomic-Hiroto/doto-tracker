@@ -25,27 +25,27 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
     { id: 'no_lifer', name: 'No Lifer', emoji: '🛌', description: 'Play 1000 tracked matches' },
 
     // ── Kills (win) ───────────────────────────────────────────────────────────
-    { id: 'carry_enjoyer', name: 'Carry Enjoyer', emoji: '👑', description: 'Win with 15+ kills in one game' },
-    { id: 'bloodthirsty', name: 'Bloodthirsty', emoji: '🗡️', description: 'Win with 20+ kills in one game' },
-    { id: 'massacre', name: 'Massacre', emoji: '🩸', description: 'Win with 25+ kills in one game' },
+    { id: 'carry_enjoyer', name: 'Carry Enjoyer', emoji: '👑', description: 'Win with 10+ kills in one game' },
+    { id: 'bloodthirsty', name: 'Bloodthirsty', emoji: '🗡️', description: 'Win with 13+ kills in one game' },
+    { id: 'massacre', name: 'Massacre', emoji: '🩸', description: 'Win with 16+ kills in one game' },
+    { id: 'unstoppable', name: 'Unstoppable', emoji: '⚔️', description: 'Win with 19+ kills in one game' },
+    { id: 'god_of_slaughter', name: 'God of Slaughter', emoji: '💀', description: 'Win with 22+ kills in one game' },
+    { id: 'kill_legend', name: 'Living Legend', emoji: '☠️', description: 'Win with 25+ kills in one game' },
     { id: 'thirty_bomb', name: 'Thirty Bomb', emoji: '💣', description: 'Win with 30+ kills in one game' },
-    { id: 'unstoppable', name: 'Unstoppable', emoji: '⚔️', description: 'Win with 35+ kills in one game' },
-    { id: 'god_of_slaughter', name: 'God of Slaughter', emoji: '💀', description: 'Win with 40+ kills in one game' },
-    { id: 'kill_legend', name: 'Living Legend', emoji: '☠️', description: 'Win with 50+ kills in one game' },
 
     // ── Assists (win) ─────────────────────────────────────────────────────────
-    { id: 'team_player', name: 'Team Player', emoji: '🤝', description: 'Win with 15+ assists in one game' },
-    { id: 'support_god', name: 'Support God', emoji: '💚', description: 'Win a game with 20+ assists' },
-    { id: 'guardian_angel', name: 'Guardian Angel', emoji: '😇', description: 'Win with 25+ assists in one game' },
-    { id: 'assist_master', name: 'Assist Master', emoji: '🎗️', description: 'Win with 30+ assists in one game' },
-    { id: 'battle_medic', name: 'Battle Medic', emoji: '🚑', description: 'Win a game with 35+ assists' },
-    { id: 'hand_of_god', name: 'Hand of God', emoji: '✋', description: 'Win with 40+ assists in one game' },
-    { id: 'the_saint', name: 'The Saint', emoji: '🕊️', description: 'Win with 50+ assists in one game' },
+    { id: 'team_player', name: 'Team Player', emoji: '🤝', description: 'Win with 14+ assists in one game' },
+    { id: 'support_god', name: 'Support God', emoji: '💚', description: 'Win a game with 18+ assists' },
+    { id: 'guardian_angel', name: 'Guardian Angel', emoji: '😇', description: 'Win with 22+ assists in one game' },
+    { id: 'assist_master', name: 'Assist Master', emoji: '🎗️', description: 'Win with 26+ assists in one game' },
+    { id: 'battle_medic', name: 'Battle Medic', emoji: '🚑', description: 'Win a game with 30+ assists' },
+    { id: 'hand_of_god', name: 'Hand of God', emoji: '✋', description: 'Win with 34+ assists in one game' },
+    { id: 'the_saint', name: 'The Saint', emoji: '🕊️', description: 'Win with 40+ assists in one game' },
 
     // ── Deaths while still winning ────────────────────────────────────────────
-    { id: 'feeder_redeemed', name: 'Feeder Redeemed', emoji: '🔄', description: 'Win a game with 10+ deaths' },
-    { id: 'unkillable_feeder', name: 'Unkillable Feeder', emoji: '🧟', description: 'Win a game with 15+ deaths' },
-    { id: 'int_diff', name: 'Int Diff', emoji: '🤡', description: 'Win a game despite 20+ deaths' },
+    { id: 'feeder_redeemed', name: 'Feeder Redeemed', emoji: '🔄', description: 'Win a game with 9+ deaths' },
+    { id: 'unkillable_feeder', name: 'Unkillable Feeder', emoji: '🧟', description: 'Win a game with 13+ deaths' },
+    { id: 'int_diff', name: 'Int Diff', emoji: '🤡', description: 'Win a game despite 16+ deaths' },
 
     // ── KDA combos (win) ──────────────────────────────────────────────────────
     { id: 'clean_sweep', name: 'Clean Sweep', emoji: '🧹', description: 'Win a game with 0 deaths' },
@@ -59,35 +59,35 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
     { id: 'raid_boss', name: 'Raid Boss', emoji: '🛡️', description: 'Win with 20+ kills and 20+ assists' },
 
     // ── Farm / economy (any game) ─────────────────────────────────────────────
-    { id: 'gold_digger', name: 'Gold Digger', emoji: '💰', description: 'Hit 600+ GPM in a game' },
-    { id: 'midas_touch', name: 'Midas Touch', emoji: '🤑', description: 'Hit 800+ GPM in a game' },
-    { id: 'greedy', name: 'Greedy', emoji: '🪙', description: 'Hit 1000+ GPM in a game' },
-    { id: 'economy_god', name: 'Economy God', emoji: '🏦', description: 'Hit 1200+ GPM in a game' },
-    { id: 'money_printer', name: 'Money Printer', emoji: '🖨️', description: 'Hit 1400+ GPM in a game' },
-    { id: 'farmhand', name: 'Farmhand', emoji: '🌾', description: 'Get 250+ last hits in a game' },
-    { id: 'last_hit_machine', name: 'Last-Hit Machine', emoji: '🚜', description: 'Get 400+ last hits in a game' },
-    { id: 'creep_god', name: 'Creep God', emoji: '🌽', description: 'Get 600+ last hits in a game' },
-    { id: 'free_real_estate', name: 'Free Real Estate', emoji: '🏡', description: 'Get 800+ last hits in a game' },
+    { id: 'gold_digger', name: 'Gold Digger', emoji: '💰', description: 'Hit 1100+ GPM in a game' },
+    { id: 'midas_touch', name: 'Midas Touch', emoji: '🤑', description: 'Hit 1350+ GPM in a game' },
+    { id: 'greedy', name: 'Greedy', emoji: '🪙', description: 'Hit 1550+ GPM in a game' },
+    { id: 'economy_god', name: 'Economy God', emoji: '🏦', description: 'Hit 1750+ GPM in a game' },
+    { id: 'money_printer', name: 'Money Printer', emoji: '🖨️', description: 'Hit 1950+ GPM in a game' },
+    { id: 'farmhand', name: 'Farmhand', emoji: '🌾', description: 'Get 150+ last hits in a game' },
+    { id: 'last_hit_machine', name: 'Last-Hit Machine', emoji: '🚜', description: 'Get 230+ last hits in a game' },
+    { id: 'creep_god', name: 'Creep God', emoji: '🌽', description: 'Get 320+ last hits in a game' },
+    { id: 'free_real_estate', name: 'Free Real Estate', emoji: '🏡', description: 'Get 420+ last hits in a game' },
 
     // ── Experience ────────────────────────────────────────────────────────────
-    { id: 'fast_learner', name: 'Fast Learner', emoji: '📗', description: 'Hit 700+ XPM in a game' },
-    { id: 'scholar', name: 'Scholar', emoji: '🎓', description: 'Hit 900+ XPM in a game' },
-    { id: 'galaxy_brain', name: 'Galaxy Brain', emoji: '🧠', description: 'Hit 1100+ XPM in a game' },
+    { id: 'fast_learner', name: 'Fast Learner', emoji: '📗', description: 'Hit 1900+ XPM in a game' },
+    { id: 'scholar', name: 'Scholar', emoji: '🎓', description: 'Hit 2300+ XPM in a game' },
+    { id: 'galaxy_brain', name: 'Galaxy Brain', emoji: '🧠', description: 'Hit 2700+ XPM in a game' },
 
     // ── Damage & healing ──────────────────────────────────────────────────────
-    { id: 'damage_dealer', name: 'Damage Dealer', emoji: '💥', description: 'Deal 40k+ hero damage in a game' },
-    { id: 'nuker', name: 'Nuker', emoji: '☢️', description: 'Deal 60k+ hero damage in a game' },
-    { id: 'devastation', name: 'Devastation', emoji: '🌶️', description: 'Deal 80k+ hero damage in a game' },
+    { id: 'damage_dealer', name: 'Damage Dealer', emoji: '💥', description: 'Deal 30k+ hero damage in a game' },
+    { id: 'nuker', name: 'Nuker', emoji: '☢️', description: 'Deal 55k+ hero damage in a game' },
+    { id: 'devastation', name: 'Devastation', emoji: '🌶️', description: 'Deal 78k+ hero damage in a game' },
     { id: 'apocalypse', name: 'Apocalypse', emoji: '🔆', description: 'Deal 100k+ hero damage in a game' },
     { id: 'field_medic', name: 'Field Medic', emoji: '➕', description: 'Heal 5k+ in a game' },
     { id: 'field_hospital', name: 'Field Hospital', emoji: '🏥', description: 'Heal 12k+ in a game' },
     { id: 'lifesaver', name: 'Lifesaver', emoji: '💗', description: 'Heal 20k+ in a game' },
 
     // ── Game length (win) ─────────────────────────────────────────────────────
-    { id: 'gg_ez', name: 'GG EZ', emoji: '😎', description: 'Win a game in under 12 minutes' },
-    { id: 'blitzkrieg', name: 'Blitzkrieg', emoji: '🏎️', description: 'Win a game in under 15 minutes' },
-    { id: 'endurance', name: 'Endurance', emoji: '⏳', description: 'Win a game over 45 minutes long' },
-    { id: 'trench_warfare', name: 'Trench Warfare', emoji: '🕰️', description: 'Win a game over 60 minutes long' },
+    { id: 'gg_ez', name: 'GG EZ', emoji: '😎', description: 'Win a game in under 13 minutes' },
+    { id: 'blitzkrieg', name: 'Blitzkrieg', emoji: '🏎️', description: 'Win a game in under 16 minutes' },
+    { id: 'endurance', name: 'Endurance', emoji: '⏳', description: 'Win a game over 38 minutes long' },
+    { id: 'trench_warfare', name: 'Trench Warfare', emoji: '🕰️', description: 'Win a game over 48 minutes long' },
 
     // ── Party (win) ───────────────────────────────────────────────────────────
     { id: 'lone_wolf', name: 'Lone Wolf', emoji: '🐺', description: 'Win a solo-queue game' },
@@ -143,27 +143,27 @@ const RARITY_BY_ID: Record<string, Rarity> = {
     // uncommon
     century_club: 'uncommon', bloodthirsty: 'uncommon', support_god: 'uncommon', feeder_redeemed: 'uncommon',
     clean_sweep: 'uncommon', midas_touch: 'uncommon', last_hit_machine: 'uncommon', scholar: 'uncommon',
-    nuker: 'uncommon', field_hospital: 'uncommon', endurance: 'uncommon', squad_goals: 'uncommon',
+    nuker: 'uncommon', field_hospital: 'uncommon', endurance: 'rare', squad_goals: 'uncommon',
     on_fire: 'uncommon', hero_collector: 'uncommon', turbo_centurion: 'uncommon', climbing: 'uncommon',
     // rare
     marathoner: 'rare', massacre: 'rare', guardian_angel: 'rare', unkillable_feeder: 'rare',
     flawless_execution: 'rare', one_man_army: 'rare', pure_support: 'rare', greedy: 'rare',
     creep_god: 'rare', galaxy_brain: 'rare', devastation: 'rare', lifesaver: 'rare',
-    blitzkrieg: 'rare', trench_warfare: 'rare', blazing: 'rare', jack_of_all: 'rare',
+    blitzkrieg: 'rare', trench_warfare: 'legendary', blazing: 'rare', jack_of_all: 'rare',
     turbo_lifer: 'rare', overlord: 'rare',
     // mythical
-    veteran: 'mythical', thirty_bomb: 'mythical', assist_master: 'mythical', int_diff: 'mythical',
+    veteran: 'mythical', thirty_bomb: 'arcana', assist_master: 'mythical', int_diff: 'mythical',
     untouchable: 'mythical', glass_cannon: 'mythical', triple_threat: 'mythical', economy_god: 'mythical',
     free_real_estate: 'mythical', gg_ez: 'mythical', inferno_streak: 'mythical', apex_predator: 'mythical',
     turbo_maniac: 'mythical',
     // legendary
-    no_lifer: 'legendary', unstoppable: 'legendary', battle_medic: 'legendary', godlike_kda: 'legendary',
+    no_lifer: 'legendary', unstoppable: 'mythical', battle_medic: 'legendary', godlike_kda: 'legendary',
     raid_boss: 'legendary', money_printer: 'legendary', apocalypse: 'legendary', godlike_streak: 'legendary',
     the_completionist: 'legendary', turbo_legend: 'legendary', turbo_titan: 'legendary',
     // immortal
-    god_of_slaughter: 'immortal', hand_of_god: 'immortal', beyond_godlike: 'immortal',
+    god_of_slaughter: 'legendary', hand_of_god: 'immortal', beyond_godlike: 'immortal',
     // arcana
-    kill_legend: 'arcana', the_saint: 'arcana', rampage_streak: 'arcana',
+    kill_legend: 'immortal', the_saint: 'arcana', rampage_streak: 'arcana',
 };
 
 export function rarityOf(id: string): Rarity {
@@ -276,27 +276,27 @@ class AchievementService {
         }
 
         // Kills (win)
-        if (won && K >= 15) tryUnlock('carry_enjoyer');
-        if (won && K >= 20) tryUnlock('bloodthirsty');
-        if (won && K >= 25) tryUnlock('massacre');
+        if (won && K >= 10) tryUnlock('carry_enjoyer');
+        if (won && K >= 13) tryUnlock('bloodthirsty');
+        if (won && K >= 16) tryUnlock('massacre');
         if (won && K >= 30) tryUnlock('thirty_bomb');
-        if (won && K >= 35) tryUnlock('unstoppable');
-        if (won && K >= 40) tryUnlock('god_of_slaughter');
-        if (won && K >= 50) tryUnlock('kill_legend');
+        if (won && K >= 19) tryUnlock('unstoppable');
+        if (won && K >= 22) tryUnlock('god_of_slaughter');
+        if (won && K >= 25) tryUnlock('kill_legend');
 
         // Assists (win)
-        if (won && A >= 15) tryUnlock('team_player');
-        if (won && A >= 20) tryUnlock('support_god');
-        if (won && A >= 25) tryUnlock('guardian_angel');
-        if (won && A >= 30) tryUnlock('assist_master');
-        if (won && A >= 35) tryUnlock('battle_medic');
-        if (won && A >= 40) tryUnlock('hand_of_god');
-        if (won && A >= 50) tryUnlock('the_saint');
+        if (won && A >= 14) tryUnlock('team_player');
+        if (won && A >= 18) tryUnlock('support_god');
+        if (won && A >= 22) tryUnlock('guardian_angel');
+        if (won && A >= 26) tryUnlock('assist_master');
+        if (won && A >= 30) tryUnlock('battle_medic');
+        if (won && A >= 34) tryUnlock('hand_of_god');
+        if (won && A >= 40) tryUnlock('the_saint');
 
         // Deaths (win)
-        if (won && D >= 10) tryUnlock('feeder_redeemed');
-        if (won && D >= 15) tryUnlock('unkillable_feeder');
-        if (won && D >= 20) tryUnlock('int_diff');
+        if (won && D >= 9) tryUnlock('feeder_redeemed');
+        if (won && D >= 13) tryUnlock('unkillable_feeder');
+        if (won && D >= 16) tryUnlock('int_diff');
 
         // KDA combos (win)
         if (won && D === 0) tryUnlock('clean_sweep');
@@ -311,29 +311,29 @@ class AchievementService {
 
         // Farm / economy (any game)
         if (ctx.gpm !== undefined) {
-            if (ctx.gpm >= 600) tryUnlock('gold_digger');
-            if (ctx.gpm >= 800) tryUnlock('midas_touch');
-            if (ctx.gpm >= 1000) tryUnlock('greedy');
-            if (ctx.gpm >= 1200) tryUnlock('economy_god');
-            if (ctx.gpm >= 1400) tryUnlock('money_printer');
+            if (ctx.gpm >= 1100) tryUnlock('gold_digger');
+            if (ctx.gpm >= 1350) tryUnlock('midas_touch');
+            if (ctx.gpm >= 1550) tryUnlock('greedy');
+            if (ctx.gpm >= 1750) tryUnlock('economy_god');
+            if (ctx.gpm >= 1950) tryUnlock('money_printer');
         }
         if (ctx.lastHits !== undefined) {
-            if (ctx.lastHits >= 250) tryUnlock('farmhand');
-            if (ctx.lastHits >= 400) tryUnlock('last_hit_machine');
-            if (ctx.lastHits >= 600) tryUnlock('creep_god');
-            if (ctx.lastHits >= 800) tryUnlock('free_real_estate');
+            if (ctx.lastHits >= 150) tryUnlock('farmhand');
+            if (ctx.lastHits >= 230) tryUnlock('last_hit_machine');
+            if (ctx.lastHits >= 320) tryUnlock('creep_god');
+            if (ctx.lastHits >= 420) tryUnlock('free_real_estate');
         }
         if (ctx.xpm !== undefined) {
-            if (ctx.xpm >= 700) tryUnlock('fast_learner');
-            if (ctx.xpm >= 900) tryUnlock('scholar');
-            if (ctx.xpm >= 1100) tryUnlock('galaxy_brain');
+            if (ctx.xpm >= 1900) tryUnlock('fast_learner');
+            if (ctx.xpm >= 2300) tryUnlock('scholar');
+            if (ctx.xpm >= 2700) tryUnlock('galaxy_brain');
         }
 
         // Damage & healing (any game)
         if (ctx.heroDamage !== undefined) {
-            if (ctx.heroDamage >= 40000) tryUnlock('damage_dealer');
-            if (ctx.heroDamage >= 60000) tryUnlock('nuker');
-            if (ctx.heroDamage >= 80000) tryUnlock('devastation');
+            if (ctx.heroDamage >= 30000) tryUnlock('damage_dealer');
+            if (ctx.heroDamage >= 55000) tryUnlock('nuker');
+            if (ctx.heroDamage >= 78000) tryUnlock('devastation');
             if (ctx.heroDamage >= 100000) tryUnlock('apocalypse');
         }
         if (ctx.heroHealing !== undefined) {
@@ -344,10 +344,10 @@ class AchievementService {
 
         // Game length (win)
         if (won && ctx.durationMin !== undefined && ctx.durationMin > 0) {
-            if (ctx.durationMin < 12) tryUnlock('gg_ez');
-            if (ctx.durationMin < 15) tryUnlock('blitzkrieg');
-            if (ctx.durationMin >= 45) tryUnlock('endurance');
-            if (ctx.durationMin >= 60) tryUnlock('trench_warfare');
+            if (ctx.durationMin < 13) tryUnlock('gg_ez');
+            if (ctx.durationMin < 16) tryUnlock('blitzkrieg');
+            if (ctx.durationMin >= 38) tryUnlock('endurance');
+            if (ctx.durationMin >= 48) tryUnlock('trench_warfare');
         }
 
         // Party (win)
