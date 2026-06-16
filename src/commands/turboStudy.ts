@@ -202,16 +202,55 @@ function daysSince(ms: number): number {
   return Math.floor((Date.now() - ms) / 86400000);
 }
 
-async function fetchVisibleRankMMR(steamId: string): Promise<{ rankTier: number; mmr: number } | null> {
-  try {
-    const response = await opendotaClient.get<{ rank_tier?: number }>(`/players/${steamId}`);
-    const rankTier = response.data?.rank_tier;
-    const mmr = rankTier ? rankTierToMMR(rankTier) : null;
-    return rankTier && mmr != null ? { rankTier, mmr } : null;
-  } catch (error) {
-    logger.warn(`Turbo study profile fetch failed for ${steamId}:`, error);
-    return null;
+/**
+ * Immortal (tier 80) has no medal stars, so rankTierToMMR pins every Immortal —
+ * a top-1000 ladder player and a just-qualified one — to the same floor (~5420),
+ * which badly understates the strong ones and flattens the whole high end of the
+ * study. Spread them out using the OpenDota leaderboard rank instead.
+ *
+ * Curve fit to known anchors (leaderboard rank → MMR): #4903≈7.0k, #3205≈7.2k,
+ * #959≈8.0k → `mmr ≈ 12200 − 613·ln(rank)`. Off-leaderboard Immortals (no rank
+ * returned — usually just-qualified) sit at the Immortal entry floor.
+ */
+const IMMORTAL_FLOOR_MMR = 5620;
+function immortalMMRFromLeaderboard(leaderboardRank: number | null | undefined): number {
+  if (!leaderboardRank || leaderboardRank <= 0) return IMMORTAL_FLOOR_MMR;
+  const est = 12200 - 613 * Math.log(leaderboardRank);
+  return Math.max(IMMORTAL_FLOOR_MMR, Math.round(est));
+}
+
+/**
+ * Resolve a player's visible *ranked* MMR for the study's x-axis.
+ *
+ * Prefers the Stratz `seasonRank` captured at calibration time (`estimate.rankedTier`):
+ * it's the same source the turbo estimate used, it's generally fresher than OpenDota's
+ * `rank_tier` (which only updates on a profile re-parse), and it needs no extra call.
+ * OpenDota is hit only when we need a leaderboard rank to de-compress an Immortal, or
+ * as a fallback when Stratz never captured a medal.
+ */
+async function fetchVisibleRankMMR(
+  steamId: string,
+  stratzTier: number | null | undefined,
+): Promise<{ rankTier: number; mmr: number } | null> {
+  let rankTier = stratzTier && stratzTier > 0 ? stratzTier : null;
+  let leaderboardRank: number | null = null;
+
+  const needsOpenDota = rankTier == null || Math.floor(rankTier / 10) === 8;
+  if (needsOpenDota) {
+    try {
+      const response = await opendotaClient.get<{ rank_tier?: number; leaderboard_rank?: number }>(`/players/${steamId}`);
+      if (rankTier == null && response.data?.rank_tier) rankTier = response.data.rank_tier;
+      leaderboardRank = response.data?.leaderboard_rank ?? null;
+    } catch (error) {
+      logger.warn(`Turbo study profile fetch failed for ${steamId}:`, error);
+    }
   }
+
+  if (!rankTier) return null;
+  const mmr = Math.floor(rankTier / 10) === 8
+    ? immortalMMRFromLeaderboard(leaderboardRank)
+    : rankTierToMMR(rankTier);
+  return mmr != null ? { rankTier, mmr } : null;
 }
 
 function toCsv(candidates: StudyCandidate[]): Buffer {
@@ -289,7 +328,7 @@ export async function turboStudy(message: Message, userDataService: UserDataServ
         progress.edit(`📊 Building Turbo study... checked ${i}/${estimates.length} calibrated players.`).catch(() => {});
       }
 
-      const visible = await fetchVisibleRankMMR(entry.steamId);
+      const visible = await fetchVisibleRankMMR(entry.steamId, entry.estimate.rankedTier);
       const user = entry.discordId ? await message.client.users.fetch(entry.discordId).catch(() => null) : null;
       const stats = entry.discordId ? turboStatsService.getPlayerStats(entry.discordId) : undefined;
       const turboGames = stats ? stats.wins + stats.losses : undefined;
