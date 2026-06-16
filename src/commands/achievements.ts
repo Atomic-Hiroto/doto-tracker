@@ -42,55 +42,57 @@ export async function achievements(message: Message, args: string[], userDataSer
         const total = ACHIEVEMENTS.length;
         const count = unlocked.length;
 
-        const byRarityDesc = (aId: string, bId: string) => RARITY_META[rarityOf(bId)].order - RARITY_META[rarityOf(aId)].order;
-
-        // Unlocked achievements (rarest first)
-        const unlockedLines = unlocked.length > 0
-            ? fitField(
-                [...unlocked]
-                    .sort((a, b) => byRarityDesc(a.def.id, b.def.id))
-                    .map(({ def }) => `${RARITY_META[rarityOf(def.id)].emoji} ${def.emoji} **${def.name}** — *${def.description}*`),
-                '_No achievements yet — go play some games!_')
-            : '_No achievements yet — go play some games!_';
-
-        // Locked achievements (show easiest/most-common first as the next targets)
+        const RARITY_ORDER: Rarity[] = ['arcana', 'immortal', 'legendary', 'mythical', 'rare', 'uncommon', 'common'];
         const locked = ACHIEVEMENTS.filter(a => !unlockedIds.has(a.id));
-        const lockedLines = locked.length > 0
-            ? fitField(
-                [...locked]
-                    .sort((a, b) => byRarityDesc(b.id, a.id))
-                    .map(a => `🔒 ${RARITY_META[rarityOf(a.id)].emoji} ~~${a.name}~~ — *${a.description}*`),
-                '🎊 All achievements unlocked! You are GOATED!')
-            : '🎊 All achievements unlocked! You are GOATED!';
 
         const completionBar = (() => {
             const filled = Math.round((count / total) * 10);
             return '🟦'.repeat(filled) + '⬜'.repeat(10 - filled) + ` ${count}/${total}`;
         })();
 
-        // Rarity haul: unlocked / total per tier, rarest first, skipping empties.
-        const rarityHaul = (() => {
-            const order: Rarity[] = ['arcana', 'immortal', 'legendary', 'mythical', 'rare', 'uncommon', 'common'];
-            return order
-                .map(r => {
-                    const got = unlocked.filter(u => rarityOf(u.def.id) === r).length;
-                    const tot = ACHIEVEMENTS.filter(a => rarityOf(a.id) === r).length;
-                    return got > 0 ? `${RARITY_META[r].emoji} ${got}/${tot}` : null;
-                })
-                .filter(Boolean)
-                .join('  ') || '—';
-        })();
+        // Legend so the colours mean something (rarest -> commonest).
+        const legend = RARITY_ORDER.map(r => `${RARITY_META[r].emoji} ${RARITY_META[r].label}`).join(' › ');
+
+        // Unlocked, grouped under named rarity headers (only tiers you've earned in).
+        const unlockedSection = RARITY_ORDER
+            .map(r => {
+                const got = unlocked.filter(u => rarityOf(u.def.id) === r);
+                if (got.length === 0) return null;
+                const tot = ACHIEVEMENTS.filter(a => rarityOf(a.id) === r).length;
+                const names = got.map(u => `${u.def.emoji} ${u.def.name}`).join(' · ');
+                return `${RARITY_META[r].emoji} **${RARITY_META[r].label}** — ${got.length}/${tot}\n${names}`;
+            })
+            .filter(Boolean)
+            .join('\n\n');
+        const unlockedValue = (unlockedSection || '_No achievements yet — go play some games!_').slice(0, 1020);
+
+        // Locked: how many remain per tier + a few easy next targets, instead of a wall.
+        const remainByTier = RARITY_ORDER
+            .map(r => {
+                const n = locked.filter(a => rarityOf(a.id) === r).length;
+                return n > 0 ? `${RARITY_META[r].emoji} ${n}` : null;
+            })
+            .filter(Boolean)
+            .join(' · ');
+        const nextTargets = locked
+            .filter(a => rarityOf(a.id) === 'common' || rarityOf(a.id) === 'uncommon')
+            .slice(0, 6)
+            .map(a => `${a.emoji} **${a.name}** — *${a.description}*`)
+            .join('\n');
+        const lockedValue = locked.length === 0
+            ? '🎊 All achievements unlocked! You are GOATED!'
+            : `**Remaining:** ${remainByTier}\n\n**Easy next targets:**\n${nextTargets || '_Only the hard ones left — respect._'}`;
 
         const embed = new EmbedBuilder()
             .setColor(count === total ? '#fbbf24' : '#6366f1')
             .setTitle(`🏆 Achievement Trophy Case — ${targetUser.username}`)
-            .setDescription(`**Progress:** ${completionBar}\n**Rarity haul:** ${rarityHaul}`)
+            .setDescription(`**Progress:** ${completionBar}\n**Rarity:** ${legend}`)
             .setThumbnail(targetUser.displayAvatarURL())
             .addFields(
-                { name: `✅ Unlocked (${count})`, value: unlockedLines, inline: false },
-                { name: `🔒 Locked (${locked.length})`, value: lockedLines, inline: false },
+                { name: `✅ Unlocked (${count}/${total})`, value: unlockedValue, inline: false },
+                { name: `🔒 Still to earn (${locked.length})`, value: lockedValue, inline: false },
             )
-            .setFooter({ text: 'Achievements are tracked from bot-detected matches' })
+            .setFooter({ text: 'Rarest → Common · achievements tracked from bot-detected matches' })
             .setTimestamp();
 
         await message.reply({ embeds: [embed] });
