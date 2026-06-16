@@ -13,6 +13,11 @@ import { logger } from '../services/loggerService';
 const TURBO_GOLD_FACTOR = 2;
 const MATCH_SAMPLE = 20;
 
+// Pure build-up pieces that are never the "key item" anyone wants a timing for.
+// (Most components are removed by the component-collapse below; this catches stragglers
+//  whose final item wasn't built often enough to trigger the collapse.)
+const EXCLUDE_COMPONENTS = new Set(['perseverance', 'sange', 'yasha', 'kaya', 'skull_basher']);
+
 function fmtSec(sec: number): string {
   const m = Math.floor(sec / 60);
   return `${m}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
@@ -113,6 +118,17 @@ export async function turboItems(message: Message, args: string[], userDataServi
         e.count++; e.sumSec += sec;
         perItem.set(itemId, e);
       }
+    }
+
+    // Collapse to final items: drop any built item that is a component of another built item
+    // (e.g. Skull Basher -> Abyssal, Yasha/Kaya -> Yasha & Kaya), plus known build-up pieces.
+    const consumed = new Set<string>();
+    for (const itemId of perItem.keys()) {
+      for (const c of dotaDataService.getItemComponentNames(itemId)) consumed.add(c);
+    }
+    for (const itemId of [...perItem.keys()]) {
+      const internal = dotaDataService.getItemInternalName(itemId);
+      if (internal && (consumed.has(internal) || EXCLUDE_COMPONENTS.has(internal))) perItem.delete(itemId);
     }
 
     const games = matches.length;
