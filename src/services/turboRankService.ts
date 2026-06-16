@@ -422,10 +422,32 @@ export class TurboRankService {
       logger.info(`Stratz solo turbo matches: ${soloMatches.length} for ${steamId}`);
 
       const observations: TurboRankObservation[] = [];
+      let usedOldGames = false;
       for (let i = 0; i < soloMatches.length; i++) {
         onProgress?.(i + 1, soloMatches.length, 'Processing solo matches…');
         const obs = this.extractObservationFromStratz(soloMatches[i], steamAccountId, true);
         if (obs) observations.push(obs);
+      }
+
+      // No solo games in the last year — before giving up on solo, reach back to
+      // the player's last active stretch: fetch their most recent solo games with
+      // no date cap, then keep a 1-year window anchored on their *newest* game.
+      // Heavily down-weighted by recency decay and flagged as historical.
+      if (observations.length === 0) {
+        onProgress?.(0, 0, 'No recent solo games — checking older history…');
+        const oldSolo = await fetchPlayerTurboMatches(steamAccountId, 100, 0, null, false);
+        logger.info(`Stratz old solo turbo matches (reach-back): ${oldSolo.length} for ${steamId}`);
+        if (oldSolo.length) {
+          const latestTs = Math.max(...oldSolo.map((m: any) => m.startDateTime || 0));
+          const windowStart = latestTs - 365 * 24 * 3600;
+          const withinWindow = oldSolo.filter((m: any) => (m.startDateTime || 0) >= windowStart);
+          for (let i = 0; i < withinWindow.length; i++) {
+            onProgress?.(i + 1, withinWindow.length, 'Processing older solo matches…');
+            const obs = this.extractObservationFromStratz(withinWindow[i], steamAccountId, true);
+            if (obs) observations.push(obs);
+          }
+          if (observations.length > 0) usedOldGames = true;
+        }
       }
 
       // Only fall back to party games if there is no solo signal at all.
@@ -447,6 +469,7 @@ export class TurboRankService {
 
       player.observations = observations;
       player.estimate = this.computeEstimate(observations, profile.seasonRank);
+      if (player.estimate) player.estimate.oldGamesFallback = usedOldGames;
       this.data.lastCalibrated = Date.now();
       this.save();
       if (player.estimate) logCalibrationSnapshot(player, player.estimate);
