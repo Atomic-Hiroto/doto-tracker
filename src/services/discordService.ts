@@ -124,6 +124,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_WINRATE:
       await commandHandlers.turboWinRate(message, args, userDataService);
       break;
+    case Commands.TURBO_ITEMS:
+      await commandHandlers.turboItems(message, args, userDataService);
+      break;
     case Commands.TOGGLE_SHARED_CONTEXT:
       await commandHandlers.toggleSharedContext(message, args);
       break;

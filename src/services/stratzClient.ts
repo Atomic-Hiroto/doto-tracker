@@ -387,6 +387,86 @@ export async function fetchPlayerTurboMatches(
   }
 }
 
+const STRATZ_HEADERS = {
+  Authorization: `Bearer ${STRATZ_API_KEY}`,
+  'Content-Type': 'application/json',
+  'User-Agent': 'STRATZ_API',
+  Accept: 'application/json',
+};
+
+/** The player's most-played Turbo hero over their recent matches, or null. */
+export async function fetchPlayerTopTurboHero(steamAccountId: number, sample = 40): Promise<number | null> {
+  if (!STRATZ_API_KEY) return null;
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: `query ($id: Long!, $take: Int!) { player(steamAccountId: $id) { matches(request: { gameModeIds: [23], take: $take, orderBy: DESC }) { players { steamAccountId heroId } } } }`,
+        variables: { id: steamAccountId, take: sample },
+      },
+      { headers: STRATZ_HEADERS, timeout: 30000 },
+    );
+    const matches = response.data?.data?.player?.matches ?? [];
+    const tally = new Map<number, number>();
+    for (const m of matches) {
+      const me = (m.players ?? []).find((p: any) => String(p.steamAccountId) === String(steamAccountId));
+      if (me?.heroId != null) tally.set(me.heroId, (tally.get(me.heroId) ?? 0) + 1);
+    }
+    let top: number | null = null, best = 0;
+    for (const [hero, n] of tally) if (n > best) { best = n; top = hero; }
+    return top;
+  } catch (error: any) {
+    logger.error(`Stratz top-turbo-hero error for ${steamAccountId}:`, error?.response?.data ?? error?.message ?? error);
+    return null;
+  }
+}
+
+export interface TurboHeroMatchItems {
+  matchId: number;
+  durationSeconds: number;
+  purchases: { time: number; itemId: number }[];
+}
+
+/** Bulk-fetches a player's Turbo matches on one hero, each with that player's item-purchase timings. */
+export async function fetchPlayerHeroItemTimings(
+  steamAccountId: number,
+  heroId: number,
+  take = 20,
+): Promise<TurboHeroMatchItems[]> {
+  if (!STRATZ_API_KEY) return [];
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: `query ($id: Long!, $take: Int!) {
+          player(steamAccountId: $id) {
+            matches(request: { gameModeIds: [23], heroIds: [${Math.trunc(heroId)}], take: $take, orderBy: DESC }) {
+              id
+              durationSeconds
+              players { steamAccountId stats { itemPurchases { time itemId } } }
+            }
+          }
+        }`,
+        variables: { id: steamAccountId, take },
+      },
+      { headers: STRATZ_HEADERS, timeout: 30000 },
+    );
+    if (response.data?.errors) {
+      logger.warn(`Stratz hero item timings errors for ${steamAccountId}/${heroId}:`, JSON.stringify(response.data.errors).slice(0, 200));
+    }
+    const matches = response.data?.data?.player?.matches ?? [];
+    return matches
+      .map((m: any): TurboHeroMatchItems => {
+        const me = (m.players ?? []).find((p: any) => String(p.steamAccountId) === String(steamAccountId));
+        return { matchId: m.id, durationSeconds: m.durationSeconds ?? 0, purchases: me?.stats?.itemPurchases ?? [] };
+      })
+      .filter((x: TurboHeroMatchItems) => x.purchases.length > 0);
+  } catch (error: any) {
+    logger.error(`Stratz hero item timings fetch error for ${steamAccountId}/${heroId}:`, error?.response?.data ?? error?.message ?? error);
+    return [];
+  }
+}
+
 /** Resolves a Steam account's display name + current ranked medal via Stratz. */
 export async function fetchStratzPlayerProfile(
   steamAccountId: number,

@@ -42,6 +42,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbofacts` — quick dataset takeaways',
       '`+turboscorecard` — estimator validation from rank changes',
       '`+turbowinrate [@user|steamId]` — win rate by lobby bracket & party size',
+      '`+turboitems [hero] [@user]` — key item timings on a hero (turbo-adjusted)',
       '`+topheros [@user]` — best turbo heroes (4 weeks)',
       '`+turbopairs` — best turbo duos',
       '`+myturbopairs` — your turbo partnerships',
