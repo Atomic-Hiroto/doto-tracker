@@ -16,7 +16,11 @@ import { safeTyping } from '../utils/channelHelpers';
 
 const MIN_RANKED_GAMES = 5;
 const DEFAULT_WINDOW_DAYS = 60;
-const SHRINK_K = 25; // empirical-Bayes pseudo-games — how hard small samples regress to baseline
+const WINDOWED_SHRINK_MIN = 12;
+const WINDOWED_SHRINK_MAX = 35;
+const LIFETIME_SHRINK_MIN = 18;
+const LIFETIME_PROVEN_SHRINK_MIN = 35;
+const LIFETIME_SHRINK_MAX = 60;
 
 // turbo percentile thresholds: good ≈ p85, elite ≈ p97 (1000 pooled crew games)
 const IMPACT: Record<string, { good: number; elite: number; fmt: (v: number) => string }> = {
@@ -73,6 +77,37 @@ function bestImpact(metrics: string[], avgs: Record<string, number | undefined>)
 }
 
 interface HeroAgg { heroId: number; games: number; win: number; rows: any[]; }
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function percentile(values: number[], p: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * p) - 1));
+  return sorted[idx];
+}
+
+function chooseShrinkK(windowDays: number, totalGames: number, heroGames: number[]): number {
+  const regularHeroGames = percentile(heroGames, 0.8);
+
+  if (windowDays === Infinity) {
+    // Lifetime views should value proven mains, but newer players should not need
+    // 45+ games before any hero can move away from baseline.
+    const minK = totalGames >= 2500 ? LIFETIME_PROVEN_SHRINK_MIN : LIFETIME_SHRINK_MIN;
+    const poolK = totalGames >= 2500 ? totalGames / 90 : Math.sqrt(totalGames) * 0.9;
+    const distributionCap = Math.max(minK, regularHeroGames);
+    return clamp(Math.round(Math.min(poolK, distributionCap)), minK, LIFETIME_SHRINK_MAX);
+  }
+
+  // Recent windows need to stay responsive. Scale with both activity and window
+  // length, then cap it by what a regular high-use hero actually looks like here.
+  const boundedDays = clamp(windowDays, 14, 180);
+  const poolK = Math.sqrt(totalGames) * Math.sqrt(boundedDays / DEFAULT_WINDOW_DAYS) * 1.15;
+  const distributionCap = Math.max(MIN_RANKED_GAMES * 2.5, regularHeroGames * 0.75);
+  return clamp(Math.round(Math.min(poolK, distributionCap)), WINDOWED_SHRINK_MIN, WINDOWED_SHRINK_MAX);
+}
 
 export async function tophero(message: Message, args: string[], userDataService: UserDataService) {
   let discordId = message.author.id;
@@ -135,12 +170,15 @@ export async function tophero(message: Message, args: string[], userDataService:
     // an 8-game hot streak shouldn't out-rank heroes you've won on 300+ times.
     const minGames = windowDays === Infinity ? 15 : MIN_RANKED_GAMES;
 
-    const ranked = [...byHero.values()].filter(h => h.games >= minGames).map(h => {
+    const candidates = [...byHero.values()].filter(h => h.games >= minGames);
+    const shrinkK = chooseShrinkK(windowDays, totalGames, candidates.map(h => h.games));
+
+    const ranked = candidates.map(h => {
       const wr = h.win / h.games;
       const edge = wr - baselineWR;
-      // Empirical-Bayes shrinkage toward the player's own baseline: SHRINK_K pseudo-games
+      // Empirical-Bayes shrinkage toward the player's own baseline: shrinkK pseudo-games
       // pull small samples to the mean so they can't spike to #1 on a tiny sample.
-      const shrunk = (h.win + SHRINK_K * baselineWR) / (h.games + SHRINK_K);
+      const shrunk = (h.win + shrinkK * baselineWR) / (h.games + shrinkK);
       const preScore = shrunk * 100 + Math.min(h.games, 200) * 0.01;
       return { ...h, wr, edge, preScore };
     }).sort((a, b) => b.preScore - a.preScore);
@@ -223,7 +261,7 @@ export async function tophero(message: Message, args: string[], userDataService:
       .setTitle(`⚡ Top Turbo Heroes: ${targetUser.username}`)
       .setDescription(
         `📅 **${spanDays}** (from last game) · baseline WR **${Math.round(baselineWR * 100)}%** over ${totalGames} games\n`
-        + `Ranked by **sample-adjusted win rate** (small samples regress to your baseline). Min ${minGames} games. Impact is role-aware context.`,
+        + `Ranked by **sample-adjusted win rate** (${shrinkK} baseline pseudo-games). Min ${minGames} games. Impact is role-aware context.`,
       )
       .setThumbnail(targetUser.displayAvatarURL())
       .addFields(heroLines.length ? heroLines : [{ name: 'Not enough data', value: `No hero with ${minGames}+ turbo games in this window. Try \`+topheros all\`.`, inline: false }]);
