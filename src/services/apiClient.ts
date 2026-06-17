@@ -4,7 +4,7 @@ import { logger } from './loggerService';
 
 const opendotaClient = axios.create({
     baseURL: 'https://api.opendota.com/api',
-    timeout: 30000,
+    timeout: 60000,
 });
 
 axiosRetry(opendotaClient, {
