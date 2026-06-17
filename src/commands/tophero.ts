@@ -131,8 +131,9 @@ export async function tophero(message: Message, args: string[], userDataService:
     safeTyping(message.channel);
 
     // `all` pulls deep history (the 500 cap was silently truncating veteran players'
-    // lifetime hero counts); windowed views only need the recent slice.
-    const fetchLimit = windowDays === Infinity ? 5000 : 500;
+    // lifetime hero counts); windowed views scale with the days requested to capture
+    // history for active players (e.g. 360 days could be 2000+ games).
+    const fetchLimit = windowDays === Infinity ? 5000 : Math.min(5000, Math.max(500, windowDays * 10));
     const matches = await opendotaClient.get<any[]>(
       `/players/${user.steamId}/matches?game_mode=23&significant=0&limit=${fetchLimit}`
       + '&project=hero_id&project=start_time&project=assists&project=gold_per_min'
