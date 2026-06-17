@@ -1210,3 +1210,129 @@ export function renderTurboLadder(
 
     return canvas.toBuffer('image/png');
 }
+
+export interface HeroBalancePoint {
+    label: string;
+    rankedWR: number;   // 0..1
+    turboWR: number;    // 0..1
+    size: number;       // marker radius driver (e.g. sqrt of games)
+    highlight?: boolean; // draw the hero's name (reserved for biggest movers)
+}
+
+/**
+ * Ranked WR (x) vs Turbo WR (y) per hero, with a y=x agreement diagonal.
+ * Dots above the line are turbo-favoured, below are turbo-suppressed; only
+ * highlighted heroes get labels so the 100+ hero cloud stays readable.
+ */
+export function renderTurboHeroBalanceScatter(
+    points: HeroBalancePoint[],
+    opts: { title: string },
+): Buffer {
+    const W = 1120, H = 720, P = 88;
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0b1120'; ctx.fillRect(0, 0, W, H);
+
+    if (points.length < 2) {
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('Not enough data', W / 2, H / 2);
+        return canvas.toBuffer('image/png');
+    }
+
+    // Auto-range around the data, snapped to whole percents, padded, clamped to [30,70].
+    const all = points.flatMap((p) => [p.rankedWR * 100, p.turboWR * 100]);
+    const low = Math.max(30, Math.floor((Math.min(...all) - 2)));
+    const high = Math.min(70, Math.ceil((Math.max(...all) + 2)));
+    const range = Math.max(1, high - low);
+    const plotW = W - P * 2, plotH = H - P * 2;
+    const sx = (v: number) => P + ((v - low) / range) * plotW;
+    const sy = (v: number) => H - P - ((v - low) / range) * plotH;
+
+    ctx.fillStyle = '#111827'; ctx.fillRect(P, P, plotW, plotH);
+    ctx.strokeStyle = '#334155'; ctx.lineWidth = 1.5; ctx.strokeRect(P, P, plotW, plotH);
+
+    // Grid + ticks every 5%.
+    ctx.font = '12px sans-serif';
+    const tickStart = Math.ceil(low / 5) * 5;
+    for (let v = tickStart; v <= high; v += 5) {
+        const x = sx(v), y = sy(v);
+        ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, P); ctx.lineTo(x, H - P); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(P, y); ctx.lineTo(W - P, y); ctx.stroke();
+        ctx.fillStyle = '#cbd5e1'; ctx.textAlign = 'center';
+        ctx.fillText(`${v}%`, x, H - P + 20);
+        ctx.textAlign = 'right'; ctx.fillText(`${v}%`, P - 8, y + 4);
+    }
+
+    // 50% reference lines (true coin-flip).
+    if (50 >= low && 50 <= high) {
+        ctx.strokeStyle = '#475569'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
+        ctx.beginPath(); ctx.moveTo(sx(50), P); ctx.lineTo(sx(50), H - P); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(P, sy(50)); ctx.lineTo(W - P, sy(50)); ctx.stroke();
+        ctx.setLineDash([]);
+    }
+
+    // y=x agreement diagonal (same WR in both modes).
+    ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 2; ctx.setLineDash([8, 6]);
+    ctx.beginPath(); ctx.moveTo(sx(low), sy(low)); ctx.lineTo(sx(high), sy(high)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Dots: green above diagonal (turbo-favoured), red below.
+    const rendered: Array<HeroBalancePoint & { px: number; py: number; r: number }> = [];
+    for (const p of points) {
+        const px = sx(p.rankedWR * 100), py = sy(p.turboWR * 100);
+        const r = 4 + Math.min(8, Math.sqrt(Math.max(0, p.size)));
+        rendered.push({ ...p, px, py, r });
+        const fav = p.turboWR - p.rankedWR;
+        ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fillStyle = fav >= 0 ? '#34d399cc' : '#f87171cc'; ctx.fill();
+        ctx.strokeStyle = '#f8fafc'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    // Label only highlighted (biggest-mover) heroes to keep the cloud legible.
+    const placed: Array<{ x: number; y: number; w: number; h: number }> = [];
+    const offsets = [[10, -16], [10, 8], [-90, -16], [-90, 8], [0, -28], [0, 24]];
+    ctx.font = '12px sans-serif';
+    for (const p of rendered.filter((q) => q.highlight)) {
+        const w = Math.min(170, Math.ceil(ctx.measureText(p.label).width) + 10), h = 18;
+        let best = { x: p.px + p.r + 6, y: p.py - 13, w, h }, bestScore = Infinity;
+        for (const [dx, dy] of offsets) {
+            const x = Math.max(P + 4, Math.min(W - P - w - 4, p.px + dx));
+            const y = Math.max(P + 4, Math.min(H - P - h - 4, p.py + dy));
+            const box = { x, y, w, h };
+            if (!placed.some((q) => boxesOverlap(box, q))) { best = box; break; }
+            const score = placed.reduce((s, q) => s + overlapArea(box, q), 0);
+            if (score < bestScore) { best = box; bestScore = score; }
+        }
+        placed.push(best);
+        ctx.strokeStyle = '#64748b99'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(p.px, p.py); ctx.lineTo(best.x + best.w / 2, best.y + best.h / 2); ctx.stroke();
+        ctx.fillStyle = '#020617dd'; roundRectPath(ctx, best.x, best.y, best.w, best.h, 4); ctx.fill();
+        ctx.strokeStyle = '#475569'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = '#f8fafc'; ctx.textAlign = 'left';
+        ctx.fillText(p.label, best.x + 5, best.y + 13, best.w - 10);
+    }
+
+    // Title + axis labels.
+    ctx.fillStyle = '#f8fafc'; ctx.font = 'bold 21px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(opts.title, W / 2, 32);
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#cbd5e1';
+    ctx.fillText('Ranked win rate', W / 2, H - 18);
+    ctx.save(); ctx.translate(20, H / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Turbo win rate', 0, 0); ctx.restore();
+
+    // Legend.
+    let lx = P; const ly = 52; ctx.textAlign = 'left'; ctx.font = '12px sans-serif';
+    const dot = (color: string, label: string) => {
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx + 5, ly, 5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#cbd5e1'; ctx.fillText(label, lx + 14, ly + 4); lx += 14 + ctx.measureText(label).width + 18;
+    };
+    ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx + 18, ly); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#cbd5e1'; ctx.fillText('same WR (y=x)', lx + 24, ly + 4); lx += 30 + ctx.measureText('same WR (y=x)').width + 18;
+    dot('#34d399', 'turbo-favoured');
+    dot('#f87171', 'turbo-suppressed');
+    ctx.fillStyle = '#94a3b8'; ctx.fillText('dot size = games played', lx, ly + 4);
+
+    return canvas.toBuffer('image/png');
+}

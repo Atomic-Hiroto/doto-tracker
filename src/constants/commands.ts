@@ -12,6 +12,7 @@ export enum Commands {
     TURBO_LEADERBOARD = "turbolb",
     TURBO_STATS = "turbostats",
     TURBO_STUDY = "turbostudy",
+    TURBO_STUDY_HEROES = "turbostudyheros",
     TURBO_PAIRINGS = "turbopairs",
     TURBO_RANK = "turborank",
     TURBO_LEAN = "turbolean",
