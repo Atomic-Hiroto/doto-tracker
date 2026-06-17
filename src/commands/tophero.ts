@@ -230,9 +230,6 @@ export async function tophero(message: Message, args: string[], userDataService:
       const edgePct = `${h.edge >= 0 ? '+' : ''}${Math.round(h.edge * 100)}%`;
       const flags: string[] = [];
       if (h.games < 8) flags.push('⚠ small sample');
-      // "carried?" only for genuinely low impact (<80% of the good bar) — not a near-miss
-      // like a carry at 98% of the threshold, which is a fine performance.
-      if (h.wr >= 0.6 && h.imp && h.imp.q === 0 && h.imp.ratio < 0.8) flags.push('⚠ low impact (carried?)');
       const qLabel = h.imp
         ? (h.imp.q === 2 ? ' (elite)' : h.imp.q === 1 ? ' (strong)' : h.imp.ratio >= 0.85 ? ' (solid)' : '')
         : '';
