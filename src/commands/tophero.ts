@@ -142,7 +142,7 @@ export async function tophero(message: Message, args: string[], userDataService:
       if (e.response) {
         logger.error(`Status: ${e.response.status}, Data:`, e.response.data);
       }
-      return [];
+      throw new Error('Failed to fetch matches from OpenDota (possibly rate limited).');
     });
 
     if (matches.length === 0) {
