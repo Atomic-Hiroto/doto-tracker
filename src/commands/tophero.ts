@@ -173,9 +173,18 @@ export async function tophero(message: Message, args: string[], userDataService:
     const baselineWR = totalWins / totalGames;
     const avgOf = (rows: any[], f: string) => rows.length ? rows.reduce((s, r) => s + Number(r[f] || 0), 0) / rows.length : undefined;
 
-    // The career ('all') view has abundant data, so demand a real sample to qualify —
-    // an 8-game hot streak shouldn't out-rank heroes you've won on 300+ times.
-    const minGames = windowDays === Infinity ? 15 : MIN_RANKED_GAMES;
+    // The career ('all') view has abundant data, so demand a real sample to qualify.
+    // For windowed views, scale the minimum up based on the window length (up to 15),
+    // but bounded by the player's actual total game volume so low-activity players
+    // aren't left with empty rankings.
+    let minGames = MIN_RANKED_GAMES;
+    if (windowDays === Infinity) {
+      minGames = 15;
+    } else {
+      const timeScale = Math.round(windowDays / 24); // 360d -> 15 games, 180d -> 8 games
+      const volumeScale = Math.max(MIN_RANKED_GAMES, Math.floor(totalGames / 20)); // 200g -> 10 games
+      minGames = Math.max(MIN_RANKED_GAMES, Math.min(15, timeScale, volumeScale));
+    }
 
     const candidates = [...byHero.values()].filter(h => h.games >= minGames);
     const shrinkK = chooseShrinkK(windowDays, totalGames, candidates.map(h => h.games));
