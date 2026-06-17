@@ -94,6 +94,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_STUDY:
       await commandHandlers.turboStudy(message, args, userDataService, turboStatsService);
       break;
+    case Commands.TURBO_STUDY_HEROES:
+      await commandHandlers.turboStudyHeroes(message, args);
+      break;
     case Commands.TURBO_PAIRINGS:
       // +turbopairs = global board; +turbopairs @user / me = personal duos
       if (message.mentions.users.size > 0 || ['me', 'my', 'mine'].includes(rawSubcommand ?? '')) {
