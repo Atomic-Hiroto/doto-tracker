@@ -4,6 +4,7 @@ import { UserDataService } from '../services/userDataService';
 import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
+import { fetchPlayerTurboPositions } from '../services/stratzClient';
 import { safeTyping } from '../utils/channelHelpers';
 
 // "Top turbo heroes" ranked the way an analyst would defend it:
@@ -162,14 +163,18 @@ export async function tophero(message: Message, args: string[], userDataService:
       return { ...h, imp, gpm: avgs.gpm, score: h.preScore + impBonus };
     }).sort((a, b) => b.score - a.score).slice(0, topN);
 
+    // Stratz-inferred position per hero (one call). Falls back to GPM if Stratz has no sample.
+    const posByHero = await fetchPlayerTurboPositions(Number(user.steamId)).catch(() => new Map<number, string>());
+
     const heroLines = await Promise.all(scored.map(async (h, i) => {
       const heroName = await dotaDataService.getHeroName(h.heroId);
       const roles = dotaDataService.getHeroRoles(h.heroId);
-      // Tag by how the player actually farmed it (GPM), not the hero's canon role.
+      // Prefer Stratz's actual position; else infer core/support from the player's farm (GPM).
       const playedCore = (h.gpm ?? 0) >= CORE_GPM;
-      const roleTag = playedCore
-        ? (CORE_ROLE_PREF.find(r => roles.includes(r)) ?? 'Core')
-        : (roles.includes('Support') ? 'Support' : (roles[0] ?? 'Flex'));
+      const roleTag = posByHero.get(h.heroId)
+        ?? (playedCore
+          ? (CORE_ROLE_PREF.find(r => roles.includes(r)) ?? 'Core')
+          : (roles.includes('Support') ? 'Support' : (roles[0] ?? 'Flex')));
       const edgePct = `${h.edge >= 0 ? '+' : ''}${Math.round(h.edge * 100)}%`;
       const flags: string[] = [];
       if (h.games < 8) flags.push('⚠ small sample');
@@ -210,7 +215,7 @@ export async function tophero(message: Message, args: string[], userDataService:
     if (promisingLine) embed.addFields({ name: '🌱 Promising (need 5+ games)', value: promisingLine, inline: false });
 
     embed
-      .setFooter({ text: `Steam ID: ${user.steamId} · role = your farm priority · +topheros 90 / all (window) · top10 (more heroes)` })
+      .setFooter({ text: `Steam ID: ${user.steamId} · role = your actual position · +topheros 90 / all (window) · top10 (more heroes)` })
       .setURL(`https://www.opendota.com/players/${user.steamId}/heroes?game_mode=23`)
       .setTimestamp();
 
