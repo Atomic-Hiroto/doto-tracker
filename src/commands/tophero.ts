@@ -16,7 +16,7 @@ import { safeTyping } from '../utils/channelHelpers';
 
 const MIN_RANKED_GAMES = 5;
 const DEFAULT_WINDOW_DAYS = 60;
-const Z = 1.96;
+const SHRINK_K = 25; // empirical-Bayes pseudo-games — how hard small samples regress to baseline
 
 // turbo percentile thresholds: good ≈ p85, elite ≈ p97 (1000 pooled crew games)
 const IMPACT: Record<string, { good: number; elite: number; fmt: (v: number) => string }> = {
@@ -41,15 +41,6 @@ const CORE_GPM = 700;
 const CORE_ROLE_PREF = ['Carry', 'Initiator', 'Nuker', 'Disabler', 'Pusher', 'Durable', 'Escape'];
 const MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 const MAX_TOP = 10;
-
-function wilson(wins: number, n: number): number {
-  if (n === 0) return 0;
-  const p = wins / n;
-  const denom = 1 + (Z * Z) / n;
-  const centre = p + (Z * Z) / (2 * n);
-  const margin = Z * Math.sqrt((p * (1 - p) + (Z * Z) / (4 * n)) / n);
-  return (centre - margin) / denom;
-}
 
 function bestImpact(heroId: number, avgs: Record<string, number | undefined>) {
   const metrics = new Set<string>();
@@ -126,11 +117,17 @@ export async function tophero(message: Message, args: string[], userDataService:
     const baselineWR = totalWins / totalGames;
     const avgOf = (rows: any[], f: string) => rows.length ? rows.reduce((s, r) => s + Number(r[f] || 0), 0) / rows.length : undefined;
 
-    const ranked = [...byHero.values()].filter(h => h.games >= MIN_RANKED_GAMES).map(h => {
+    // The career ('all') view has abundant data, so demand a real sample to qualify —
+    // an 8-game hot streak shouldn't out-rank heroes you've won on 300+ times.
+    const minGames = windowDays === Infinity ? 15 : MIN_RANKED_GAMES;
+
+    const ranked = [...byHero.values()].filter(h => h.games >= minGames).map(h => {
       const wr = h.win / h.games;
-      const w = wilson(h.win, h.games);
       const edge = wr - baselineWR;
-      const preScore = w * 100 + Math.max(-10, Math.min(12, edge * 25)) + Math.min(h.games, 100) * 0.02;
+      // Empirical-Bayes shrinkage toward the player's own baseline: SHRINK_K pseudo-games
+      // pull small samples to the mean so they can't spike to #1 on a tiny sample.
+      const shrunk = (h.win + SHRINK_K * baselineWR) / (h.games + SHRINK_K);
+      const preScore = shrunk * 100 + Math.min(h.games, 200) * 0.01;
       return { ...h, wr, edge, preScore };
     }).sort((a, b) => b.preScore - a.preScore);
 
@@ -196,8 +193,10 @@ export async function tophero(message: Message, args: string[], userDataService:
       };
     }));
 
+    // Heroes below the qualifying gate but winning — shown as promising small samples
+    // (in the career view this catches hot streaks like an 8-game 88% hero).
     const promising = [...byHero.values()]
-      .filter(h => h.games >= 2 && h.games < MIN_RANKED_GAMES && h.win / h.games >= 0.6)
+      .filter(h => h.games >= 3 && h.games < minGames && h.win / h.games >= 0.6)
       .sort((a, b) => (b.win / b.games) - (a.win / a.games))
       .slice(0, 4);
     const promisingLine = promising.length
@@ -210,12 +209,12 @@ export async function tophero(message: Message, args: string[], userDataService:
       .setTitle(`⚡ Top Turbo Heroes: ${targetUser.username}`)
       .setDescription(
         `📅 **${spanDays}** (from last game) · baseline WR **${Math.round(baselineWR * 100)}%** over ${totalGames} games\n`
-        + 'Ranked by **confidence-adjusted win rate** (Wilson) + your edge over baseline. Impact is role-aware context.',
+        + `Ranked by **sample-adjusted win rate** (small samples regress to your baseline). Min ${minGames} games. Impact is role-aware context.`,
       )
       .setThumbnail(targetUser.displayAvatarURL())
-      .addFields(heroLines.length ? heroLines : [{ name: 'Not enough data', value: `No hero with ${MIN_RANKED_GAMES}+ turbo games in this window. Try \`+topheros all\`.`, inline: false }]);
+      .addFields(heroLines.length ? heroLines : [{ name: 'Not enough data', value: `No hero with ${minGames}+ turbo games in this window. Try \`+topheros all\`.`, inline: false }]);
 
-    if (promisingLine) embed.addFields({ name: '🌱 Promising (need 5+ games)', value: promisingLine, inline: false });
+    if (promisingLine) embed.addFields({ name: `🌱 Promising — small sample (under ${minGames} games)`, value: promisingLine, inline: false });
 
     embed
       .setFooter({ text: `Steam ID: ${user.steamId} · role = your actual position · +topheros 90 / all (window) · top10 (more heroes)` })
