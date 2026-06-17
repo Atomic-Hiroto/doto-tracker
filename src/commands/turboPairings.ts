@@ -13,7 +13,7 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
     const embed = new EmbedBuilder()
       .setColor('#ff6b6b')
       .setTitle('🤝 Best Turbo Duos')
-      .setDescription('Top player pairings by turbo rating (min 3 games together)')
+      .setDescription('Top player pairings by Wilson-score win rate (min 3 games together)\n🔬 = provisional (under 10 games)')
       .setTimestamp();
 
     let pairingsText = '';
@@ -27,8 +27,9 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
         const winRate = ((pairing.wins / totalGames) * 100).toFixed(1);
         
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-        
-        pairingsText += `${medal} **${user1.username}** + **${user2.username}**\n`;
+        const provisional = totalGames < 10 ? ' 🔬' : '';
+
+        pairingsText += `${medal} **${user1.username}** + **${user2.username}**${provisional}\n`;
         pairingsText += `   Rating: ${pairing.rating} | W/L: ${pairing.wins}/${pairing.losses} (${winRate}%)\n\n`;
       } catch (userError) {
         logger.warn(`Could not fetch users for pairing ${pairing.player1} + ${pairing.player2}:`, userError);
