@@ -137,7 +137,13 @@ export async function tophero(message: Message, args: string[], userDataService:
       `/players/${user.steamId}/matches?game_mode=23&significant=0&limit=${fetchLimit}`
       + '&project=hero_id&project=start_time&project=assists&project=gold_per_min'
       + '&project=xp_per_min&project=last_hits&project=hero_damage&project=hero_healing',
-    ).then(r => r.data || []).catch(() => []);
+    ).then(r => r.data || []).catch((e: any) => {
+      logger.error(`OpenDota API error for ${user.steamId}:`, e.message);
+      if (e.response) {
+        logger.error(`Status: ${e.response.status}, Data:`, e.response.data);
+      }
+      return [];
+    });
 
     if (matches.length === 0) {
       return message.reply(`No turbo games found for ${targetUser.username}. Play some turbo! ⚡`);
