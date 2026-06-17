@@ -42,10 +42,24 @@ const CORE_ROLE_PREF = ['Carry', 'Initiator', 'Nuker', 'Disabler', 'Pusher', 'Du
 const MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
 const MAX_TOP = 10;
 
-function bestImpact(heroId: number, avgs: Record<string, number | undefined>) {
-  const metrics = new Set<string>();
-  for (const r of dotaDataService.getHeroRoles(heroId)) for (const m of ROLE_METRICS[r] ?? []) metrics.add(m);
-  if (metrics.size === 0) metrics.add('gpm');
+// Which stats define "impact" for the position the player ACTUALLY played (from Stratz).
+// A safelane carry is judged on farm — never on stun duration — so a stun-capable carry
+// like Wraith King doesn't get an off-role "elite stuns" bonus that distorts the ranking.
+const POSITION_METRICS: Record<string, string[]> = {
+  Safelane: ['gpm', 'lastHits'],
+  Mid: ['gpm', 'heroDamage'],
+  Offlane: ['stuns', 'heroDamage'],
+  'Soft Sup': ['stuns', 'assists'],
+  'Hard Sup': ['assists', 'healing'],
+};
+
+/** Impact metrics to judge a hero by: Stratz position first, else farm-priority (GPM) split. */
+function metricsFor(posLabel: string | undefined, gpm: number | undefined): string[] {
+  if (posLabel && POSITION_METRICS[posLabel]) return POSITION_METRICS[posLabel];
+  return (gpm ?? 0) >= CORE_GPM ? ['gpm', 'lastHits', 'heroDamage'] : ['stuns', 'assists', 'healing'];
+}
+
+function bestImpact(metrics: string[], avgs: Record<string, number | undefined>) {
   let best: { metric: string; q: number; ratio: number; text: string } | null = null;
   for (const m of metrics) {
     const v = avgs[m];
@@ -133,12 +147,15 @@ export async function tophero(message: Message, args: string[], userDataService:
 
     const top = ranked.slice(0, Math.min(ranked.length, topN + 2));
 
-    // Parsed sample (stun seconds) only for the heroes we may display that actually
-    // have a stun-based role metric — skips needless per-match fetches for pure carries.
+    // Stratz-inferred position per hero (one call). Drives both the role tag AND which
+    // stats we judge impact by, so a carry is never rated on stun duration.
+    const posByHero = await fetchPlayerTurboPositions(Number(user.steamId)).catch(() => new Map<number, string>());
+    const impactMetrics = (h: HeroAgg) => metricsFor(posByHero.get(h.heroId), avgOf(h.rows, 'gold_per_min'));
+
+    // Stun seconds (per-match parse) only for heroes whose judged metrics include stuns.
     const stunsByHero = new Map<number, number>();
     await Promise.all(top.map(async h => {
-      const needsStuns = dotaDataService.getHeroRoles(h.heroId).some(r => (ROLE_METRICS[r] ?? []).includes('stuns'));
-      if (!needsStuns) return;
+      if (!impactMetrics(h).includes('stuns')) return;
       const vals = await Promise.all(h.rows.slice(0, 3).map(r =>
         opendotaClient.get<any>(`/matches/${r.match_id}`).then(res => {
           const p = (res.data.players || []).find((pl: any) => String(pl.account_id || '') === String(user.steamId));
@@ -158,13 +175,10 @@ export async function tophero(message: Message, args: string[], userDataService:
         healing: avgOf(h.rows, 'hero_healing'),
         stuns: stunsByHero.get(h.heroId),
       };
-      const imp = bestImpact(h.heroId, avgs);
+      const imp = bestImpact(impactMetrics(h), avgs);
       const impBonus = imp ? (imp.q === 2 ? 2 : imp.q === 1 ? 1 : 0) : 0;
       return { ...h, imp, gpm: avgs.gpm, score: h.preScore + impBonus };
     }).sort((a, b) => b.score - a.score).slice(0, topN);
-
-    // Stratz-inferred position per hero (one call). Falls back to GPM if Stratz has no sample.
-    const posByHero = await fetchPlayerTurboPositions(Number(user.steamId)).catch(() => new Map<number, string>());
 
     const heroLines = await Promise.all(scored.map(async (h, i) => {
       const heroName = await dotaDataService.getHeroName(h.heroId);
