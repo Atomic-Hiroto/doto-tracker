@@ -33,6 +33,13 @@ const ROLE_METRICS: Record<string, string[]> = {
   Support: ['assists', 'healing'],
   Nuker: ['heroDamage'],
 };
+// Role tag follows the player's actual farm priority, not the hero's stereotype:
+// averaging >=700 GPM on a hero in turbo means you played it as a core (so a
+// mid/offlane Ogre never reads "Support"). Pick the most apt core descriptor.
+const CORE_GPM = 700;
+const CORE_ROLE_PREF = ['Carry', 'Initiator', 'Nuker', 'Disabler', 'Pusher', 'Durable', 'Escape'];
+const MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+const MAX_TOP = 10;
 
 function wilson(wins: number, n: number): number {
   if (n === 0) return 0;
@@ -71,9 +78,13 @@ export async function tophero(message: Message, args: string[], userDataService:
   const user = userDataService.getUserByDiscordId(discordId);
   if (!user) return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
 
-  // Window in days back from the player's latest game. Default 60; a number overrides; `all` = no cap.
-  const winArg = args.find(a => !a.startsWith('<@'))?.toLowerCase();
-  const windowDays = winArg === 'all' ? Infinity : (winArg && /^\d+$/.test(winArg) ? Number(winArg) : DEFAULT_WINDOW_DAYS);
+  // Parse args (mentions excluded). `topN` controls how many heroes show (default 5, max 10);
+  // a bare number or `all` controls the day window back from the player's latest game.
+  const tokens = args.filter(a => !a.startsWith('<@')).map(a => a.toLowerCase());
+  const topTok = tokens.find(a => /^top\d+$/.test(a));
+  const topN = topTok ? Math.max(1, Math.min(MAX_TOP, Number(topTok.slice(3)))) : 5;
+  const winArg = tokens.find(a => a === 'all' || /^\d+$/.test(a));
+  const windowDays = winArg === 'all' ? Infinity : (winArg ? Number(winArg) : DEFAULT_WINDOW_DAYS);
 
   try {
     safeTyping(message.channel);
@@ -119,11 +130,14 @@ export async function tophero(message: Message, args: string[], userDataService:
       return { ...h, wr, edge, preScore };
     }).sort((a, b) => b.preScore - a.preScore);
 
-    const top = ranked.slice(0, 6);
+    const top = ranked.slice(0, Math.min(ranked.length, topN + 2));
 
-    // Parsed sample (stun seconds) only for the heroes we may display.
+    // Parsed sample (stun seconds) only for the heroes we may display that actually
+    // have a stun-based role metric — skips needless per-match fetches for pure carries.
     const stunsByHero = new Map<number, number>();
     await Promise.all(top.map(async h => {
+      const needsStuns = dotaDataService.getHeroRoles(h.heroId).some(r => (ROLE_METRICS[r] ?? []).includes('stuns'));
+      if (!needsStuns) return;
       const vals = await Promise.all(h.rows.slice(0, 3).map(r =>
         opendotaClient.get<any>(`/matches/${r.match_id}`).then(res => {
           const p = (res.data.players || []).find((pl: any) => String(pl.account_id || '') === String(user.steamId));
@@ -145,14 +159,17 @@ export async function tophero(message: Message, args: string[], userDataService:
       };
       const imp = bestImpact(h.heroId, avgs);
       const impBonus = imp ? (imp.q === 2 ? 2 : imp.q === 1 ? 1 : 0) : 0;
-      return { ...h, imp, score: h.preScore + impBonus };
-    }).sort((a, b) => b.score - a.score).slice(0, 5);
+      return { ...h, imp, gpm: avgs.gpm, score: h.preScore + impBonus };
+    }).sort((a, b) => b.score - a.score).slice(0, topN);
 
-    const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
     const heroLines = await Promise.all(scored.map(async (h, i) => {
       const heroName = await dotaDataService.getHeroName(h.heroId);
       const roles = dotaDataService.getHeroRoles(h.heroId);
-      const roleTag = roles.find(r => ROLE_METRICS[r]) ?? roles[0] ?? 'Flex';
+      // Tag by how the player actually farmed it (GPM), not the hero's canon role.
+      const playedCore = (h.gpm ?? 0) >= CORE_GPM;
+      const roleTag = playedCore
+        ? (CORE_ROLE_PREF.find(r => roles.includes(r)) ?? 'Core')
+        : (roles.includes('Support') ? 'Support' : (roles[0] ?? 'Flex'));
       const edgePct = `${h.edge >= 0 ? '+' : ''}${Math.round(h.edge * 100)}%`;
       const flags: string[] = [];
       if (h.games < 8) flags.push('⚠ small sample');
@@ -163,7 +180,7 @@ export async function tophero(message: Message, args: string[], userDataService:
         ? (h.imp.q === 2 ? ' (elite)' : h.imp.q === 1 ? ' (strong)' : h.imp.ratio >= 0.85 ? ' (solid)' : '')
         : '';
       return {
-        name: `${medals[i]} ${heroName} — ${h.score.toFixed(1)} · ${roleTag}`,
+        name: `${MEDALS[i] ?? `${i + 1}.`} ${heroName} — ${h.score.toFixed(1)} · ${roleTag}`,
         value: `**${h.games}** games · **${h.win}**W-**${h.games - h.win}**L · **${Math.round(h.wr * 100)}% WR** (${edgePct} vs your ${Math.round(baselineWR * 100)}%)`
           + (h.imp ? `\n💪 ${h.imp.text}${qLabel}` : '')
           + (flags.length ? `\n${flags.join(' · ')}` : ''),
@@ -193,7 +210,7 @@ export async function tophero(message: Message, args: string[], userDataService:
     if (promisingLine) embed.addFields({ name: '🌱 Promising (need 5+ games)', value: promisingLine, inline: false });
 
     embed
-      .setFooter({ text: `Steam ID: ${user.steamId} · score = Wilson WR + edge + role impact · +topheros 90 / all to widen` })
+      .setFooter({ text: `Steam ID: ${user.steamId} · role = your farm priority · +topheros 90 / all (window) · top10 (more heroes)` })
       .setURL(`https://www.opendota.com/players/${user.steamId}/heroes?game_mode=23`)
       .setTimestamp();
 
