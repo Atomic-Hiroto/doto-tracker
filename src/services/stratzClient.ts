@@ -515,6 +515,64 @@ export async function fetchHeroItemBenchmarks(heroId: number): Promise<Map<numbe
   }
 }
 
+// Stratz position enum -> short lane label (POSITION_1 safe carry … POSITION_5 hard support).
+const POSITION_LABEL: Record<string, string> = {
+  POSITION_1: 'Safelane',
+  POSITION_2: 'Mid',
+  POSITION_3: 'Offlane',
+  POSITION_4: 'Soft Sup',
+  POSITION_5: 'Hard Sup',
+};
+
+/**
+ * The player's most-common Stratz-inferred position per Turbo hero, over recent matches.
+ * One call covers the whole command. Returns heroId -> short label ("Mid", "Offlane", …).
+ * Stratz infers position for every match (parsed or not), so coverage is good.
+ */
+export async function fetchPlayerTurboPositions(
+  steamAccountId: number,
+  take = 100,
+): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  if (!STRATZ_API_KEY) return out;
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: `query ($id: Long!, $take: Int!) {
+          player(steamAccountId: $id) {
+            matches(request: { gameModeIds: [23], take: $take, orderBy: DESC }) {
+              players { steamAccountId heroId position }
+            }
+          }
+        }`,
+        variables: { id: steamAccountId, take },
+      },
+      { headers: STRATZ_HEADERS, timeout: 30000 },
+    );
+    const matches = response.data?.data?.player?.matches ?? [];
+    // Tally position votes per hero, then pick the plurality.
+    const votes = new Map<number, Map<string, number>>();
+    for (const m of matches) {
+      const me = (m.players ?? []).find((p: any) => String(p.steamAccountId) === String(steamAccountId));
+      const label = POSITION_LABEL[me?.position];
+      if (me?.heroId == null || !label) continue;
+      const tally = votes.get(me.heroId) ?? new Map<string, number>();
+      tally.set(label, (tally.get(label) ?? 0) + 1);
+      votes.set(me.heroId, tally);
+    }
+    for (const [heroId, tally] of votes) {
+      let best = '', n = 0;
+      for (const [label, count] of tally) if (count > n) { n = count; best = label; }
+      if (best) out.set(heroId, best);
+    }
+    return out;
+  } catch (error: any) {
+    logger.error(`Stratz turbo positions error for ${steamAccountId}:`, error?.response?.data ?? error?.message ?? error);
+    return out;
+  }
+}
+
 /** Resolves a Steam account's display name + current ranked medal via Stratz. */
 export async function fetchStratzPlayerProfile(
   steamAccountId: number,
