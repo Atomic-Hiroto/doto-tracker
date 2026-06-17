@@ -13,7 +13,7 @@ export async function turboLeaderboard(message: Message, turboStatsService: Turb
     const embed = new EmbedBuilder()
       .setColor('#ffd700')
       .setTitle('🏆 Turbo Leaderboard')
-      .setDescription('Top players by turbo rating (min 3 games)')
+      .setDescription('Top players by Wilson-score win rate (min 3 games)\n🔬 = provisional (under 10 games)')
       .setTimestamp();
 
     let leaderboardText = '';
@@ -24,8 +24,9 @@ export async function turboLeaderboard(message: Message, turboStatsService: Turb
       const winRate = ((player.wins / totalGames) * 100).toFixed(1);
       
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      
-      leaderboardText += `${medal} **${user.username}**\n`;
+      const provisional = totalGames < 10 ? ' 🔬' : '';
+
+      leaderboardText += `${medal} **${user.username}**${provisional}\n`;
       leaderboardText += `   Rating: ${player.rating} | W/L: ${player.wins}/${player.losses} (${winRate}%)\n\n`;
     }
 

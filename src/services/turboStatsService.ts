@@ -21,6 +21,7 @@ export class TurboStatsService {
     try {
       if (fs.existsSync(TURBO_STATS_FILE)) {
         this.turboStats = JSON.parse(fs.readFileSync(TURBO_STATS_FILE, 'utf8'));
+        this.recalculateAllRatings();
         logger.info('Turbo stats loaded successfully');
       }
     } catch (error) {
@@ -33,6 +34,31 @@ export class TurboStatsService {
     }
   }
 
+  /**
+   * Recompute every stored rating with the current formula. Lets a change to
+   * calculateRating take effect on existing data without waiting for new games.
+   */
+  private recalculateAllRatings() {
+    let changed = false;
+    for (const player of this.turboStats.playerStats) {
+      const rating = this.calculateRating(player.wins, player.losses);
+      if (rating !== player.rating) {
+        player.rating = rating;
+        changed = true;
+      }
+    }
+    for (const pairing of this.turboStats.pairings) {
+      const rating = this.calculateRating(pairing.wins, pairing.losses);
+      if (rating !== pairing.rating) {
+        pairing.rating = rating;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.saveTurboStats();
+    }
+  }
+
   private saveTurboStats() {
     try {
       fs.writeFileSync(TURBO_STATS_FILE, JSON.stringify(this.turboStats, null, 2));
@@ -41,14 +67,30 @@ export class TurboStatsService {
     }
   }
 
+  /**
+   * Wilson score lower bound for a binomial proportion (95% confidence, z = 1.96),
+   * scaled to 0-100.
+   *
+   * This is the conservative end of the confidence interval for a player's true
+   * win rate: it rewards a high win rate *and* a large sample, while holding down
+   * small samples until they're proven (a 2-0 start can't leapfrog a steady 60%
+   * over 20 games). It converges to the real win rate as games accumulate, so the
+   * ranking tracks skill rather than games played.
+   */
   private calculateRating(wins: number, losses: number): number {
     const totalGames = wins + losses;
     if (totalGames === 0) return 0;
-    
-    const winRate = wins / totalGames;
-    const confidenceFactor = Math.min(totalGames / 20, 1); // Full confidence at 20+ games
-    
-    return Math.round((winRate * 100 * confidenceFactor + (totalGames * 0.1)) * 100) / 100;
+
+    const z = 1.96; // 95% confidence
+    const z2 = z * z;
+    const phat = wins / totalGames;
+
+    const denominator = 1 + z2 / totalGames;
+    const center = phat + z2 / (2 * totalGames);
+    const margin = z * Math.sqrt((phat * (1 - phat) + z2 / (4 * totalGames)) / totalGames);
+    const lowerBound = (center - margin) / denominator;
+
+    return Math.round(lowerBound * 100 * 100) / 100;
   }
 
   updatePlayerStats(discordId: string, steamId: string, won: boolean) {
