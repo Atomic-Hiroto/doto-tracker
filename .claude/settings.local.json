@@ -10,7 +10,9 @@
       "Bash(awk 'NR>=600 && NR<=745 && \\(/^async function/ || /^function/ || /^export/ || /buildAnalyze|prompt =|formatMatchDataForAI|prepareMatch/\\)' /mnt/c/Users/user/Documents/Codingz/doto-tracker/src/commands/aiCommands.ts)",
       "Bash(awk -F: '$1 < 900')",
       "Bash(awk -F: '$1>=446 && $1<=890')",
-      "Bash(git show *)"
+      "Bash(git show *)",
+      "Bash(cp /mnt/c/Users/user/arm-key.key /tmp/arm-key.key)",
+      "Bash(chmod 600 /tmp/arm-key.key)"
     ]
   }
 }
