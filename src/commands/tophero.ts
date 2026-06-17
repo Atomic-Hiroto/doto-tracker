@@ -132,8 +132,9 @@ export async function tophero(message: Message, args: string[], userDataService:
 
     // `all` pulls deep history (the 500 cap was silently truncating veteran players'
     // lifetime hero counts); windowed views scale with the days requested to capture
-    // history for active players (e.g. 360 days could be 2000+ games).
-    const fetchLimit = windowDays === Infinity ? 5000 : Math.min(5000, Math.max(500, windowDays * 10));
+    // history for active players. We cap at 2500 to prevent OpenDota API timeouts on
+    // the unauthenticated tier for massive queries.
+    const fetchLimit = windowDays === Infinity ? 2500 : Math.min(2500, Math.max(500, windowDays * 6));
     const matches = await opendotaClient.get<any[]>(
       `/players/${user.steamId}/matches?game_mode=23&significant=0&limit=${fetchLimit}`
       + '&project=hero_id&project=start_time&project=assists&project=gold_per_min'
