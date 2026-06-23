@@ -507,6 +507,42 @@ export class TurboRankService {
     };
   }
 
+  private weightedObservationsFromCache(observations: TurboRankObservation[]): WeightedObservation[] | null {
+    if (observations.length === 0) return null;
+
+    const now = Date.now() / 1000;
+    const decayLambda = Math.LN2 / (RECENCY_HALF_LIFE_DAYS * 86400);
+    const soloObs = observations.filter(o => o.partySize === 1);
+    const partyFallback = soloObs.length === 0;
+    const targets = partyFallback ? observations : soloObs;
+
+    const weighted: WeightedObservation[] = [];
+    let totalWeight = 0;
+    for (const obs of targets) {
+      const ageSec = Math.max(0, now - obs.timestamp);
+      const recency = Math.exp(-decayLambda * ageSec);
+      const completeness = Math.min(obs.visibleRanks, 9) / 9;
+      const w = recency * completeness * (partyFallback ? obs.partyWeight : 1.0);
+      totalWeight += w;
+      weighted.push({ obs, w });
+    }
+
+    return totalWeight > 0 ? weighted : null;
+  }
+
+  private withCachedExperimental(
+    estimate: TurboRankEstimate,
+    observations: TurboRankObservation[],
+  ): TurboRankEstimate {
+    const weighted = this.weightedObservationsFromCache(observations);
+    if (!weighted) return estimate;
+
+    return {
+      ...estimate,
+      experimental: this.computeExperimentalEstimate(weighted, estimate.estimatedMMR),
+    };
+  }
+
   // ── Public API ───────────────────────────────────────────────────────────
 
   /** Process a single new match (called from match loop). */
@@ -752,12 +788,12 @@ export class TurboRankService {
 
   getEstimate(discordId: string): TurboRankEstimate | null {
     const player = this.data.players.find(p => p.discordId === discordId);
-    return player?.estimate ?? null;
+    return player?.estimate ? this.withCachedExperimental(player.estimate, player.observations) : null;
   }
 
   getEstimateBySteamId(steamId: string): TurboRankEstimate | null {
     const player = this.data.players.find(p => p.steamId === steamId);
-    return player?.estimate ?? null;
+    return player?.estimate ? this.withCachedExperimental(player.estimate, player.observations) : null;
   }
 
   getPlayerBySteamId(steamId: string): TurboRankPlayerData | undefined {
@@ -780,7 +816,13 @@ export class TurboRankService {
   getAllEstimates(): Array<{ discordId: string; steamId: string; steamName?: string; discovered?: boolean; estimate: TurboRankEstimate }> {
     return this.data.players
       .filter(p => p.estimate != null)
-      .map(p => ({ discordId: p.discordId, steamId: p.steamId, steamName: p.steamName, discovered: p.discovered, estimate: p.estimate! }))
+      .map(p => ({
+        discordId: p.discordId,
+        steamId: p.steamId,
+        steamName: p.steamName,
+        discovered: p.discovered,
+        estimate: this.withCachedExperimental(p.estimate!, p.observations),
+      }))
       .sort((a, b) => b.estimate.estimatedMMR - a.estimate.estimatedMMR);
   }
 
