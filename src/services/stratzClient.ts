@@ -433,6 +433,7 @@ export async function fetchPlayerHeroItemTimings(
   steamAccountId: number,
   heroId: number,
   take = 20,
+  timeoutMs = 30000,
 ): Promise<TurboHeroMatchItems[]> {
   if (!STRATZ_API_KEY) return [];
   try {
@@ -451,7 +452,7 @@ export async function fetchPlayerHeroItemTimings(
         }`,
         variables: { id: steamAccountId, take },
       },
-      { headers: STRATZ_HEADERS, timeout: 30000 },
+      { headers: STRATZ_HEADERS, timeout: timeoutMs },
     );
     if (response.data?.errors) {
       logger.warn(`Stratz hero item timings errors for ${steamAccountId}/${heroId}:`, JSON.stringify(response.data.errors).slice(0, 200));

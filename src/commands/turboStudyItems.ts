@@ -7,8 +7,9 @@ import { fetchHeroItemBenchmarks, fetchPlayerHeroItemTimings, TurboHeroMatchItem
 import { turboRankService } from '../services/turboRankService';
 import { UserDataService } from '../services/userDataService';
 
-const MATCH_SAMPLE_PER_PLAYER = 25;
-const FETCH_BATCH_SIZE = 3;
+const MATCH_SAMPLE_PER_PLAYER = 15;
+const FETCH_BATCH_SIZE = 2;
+const PLAYER_FETCH_TIMEOUT_MS = 15000;
 const TURBO_GOLD_FACTOR = 2;
 const EXCLUDE_COMPONENTS = new Set(['perseverance', 'sange', 'yasha', 'kaya', 'skull_basher']);
 const NON_BUILD_ITEMS = new Set(['ultimate_scepter_2', 'aghanims_blessing', 'aghanims_blessing_2']);
@@ -149,7 +150,12 @@ function collapseFinishedItems(match: TurboHeroMatchItems): Map<number, number> 
 }
 
 async function fetchPlayerRows(user: UserData, heroId: number): Promise<StudyMatch[]> {
-  const matches = await fetchPlayerHeroItemTimings(Number(user.steamId), heroId, MATCH_SAMPLE_PER_PLAYER);
+  const matches = await fetchPlayerHeroItemTimings(
+    Number(user.steamId),
+    heroId,
+    MATCH_SAMPLE_PER_PLAYER,
+    PLAYER_FETCH_TIMEOUT_MS,
+  );
   return matches
     .filter((match) => typeof match.won === 'boolean')
     .map((match) => ({
