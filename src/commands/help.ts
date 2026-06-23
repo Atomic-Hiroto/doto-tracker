@@ -32,6 +32,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbostudy` — hidden Turbo rank correlation study (`scorecard` for accuracy)',
       '`+turbostudyheroes [medal]` — Turbo hero balance vs ranked baseline',
       '`+turbostudyparty [crew]` — solo vs party contamination study',
+      '`+turbostudyitems <hero>` — crew item timing signals for a Turbo hero',
       '`+turborank [@user]` — estimated hidden turbo rank',
       '`+turborank calibrate` — calibrate from match history',
       '`+turborank calibrateall` — owner-only recalibrate everyone',
