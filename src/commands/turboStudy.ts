@@ -285,13 +285,17 @@ async function fetchVisibleRankMMR(
 function toCsv(candidates: StudyCandidate[]): Buffer {
   const header = [
     'name', 'discordId', 'steamId', 'rankedMedal', 'rankedApproxMMR',
-    'turboMedal', 'turboMMR', 'gapMMR', 'confidence', 'sampleSize',
+    'turboMedal', 'turboMMR', 'gapMMR', 'experimentalMedal', 'experimentalMMR',
+    'experimentalGapMMR', 'experimentalDeltaMMR', 'robustLobbyMMR', 'sideAdjustedMMR',
+    'sideAdjustmentMMR', 'sideSampleSize', 'confidence', 'sampleSize',
     'soloSampleSize', 'effectiveSample', 'partyFallback', 'lastUpdated',
     'turboScore', 'turboGames', 'turboWinRate',
   ];
   const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const rows = candidates.map((r) => {
     const gap = r.visibleMMR == null ? '' : r.estimate.estimatedMMR - r.visibleMMR;
+    const exp = r.estimate.experimental;
+    const expGap = exp && r.visibleMMR != null ? exp.experimentalMMR - r.visibleMMR : '';
     return [
       r.name,
       r.discordId,
@@ -301,6 +305,14 @@ function toCsv(candidates: StudyCandidate[]): Buffer {
       r.estimate.medal,
       r.estimate.estimatedMMR,
       gap,
+      exp?.medal ?? '',
+      exp?.experimentalMMR ?? '',
+      expGap,
+      exp?.deltaFromCurrent ?? '',
+      exp?.robustLobbyMMR ?? '',
+      exp?.sideAdjustedMMR ?? '',
+      exp?.sideAdjustment ?? '',
+      exp?.sideSampleSize ?? '',
       r.estimate.confidence,
       r.estimate.sampleSize,
       r.estimate.soloSampleSize,
@@ -413,6 +425,37 @@ export async function turboStudy(message: Message, args: string[], userDataServi
     const weightedCorr = weightedPearson(rows);
     const rankOrderCorr = spearman(rows, (r) => r.visibleMMR, (r) => r.estimate.estimatedMMR);
     const scoreCorr = pearson(rows, (r) => r.turboScore, (r) => r.estimate.estimatedMMR);
+    const experimentalPairs = rows
+      .map((r) => ({ row: r, experimental: r.estimate.experimental }))
+      .filter((entry): entry is { row: StudyRow; experimental: NonNullable<TurboRankEstimate['experimental']> } => !!entry.experimental);
+
+    let experimentalStudyLine = 'No experimental estimates yet. Recalibrate players to populate the comparison fields.';
+    let experimentalMoversLine = 'No experimental estimates yet.';
+    if (experimentalPairs.length > 0) {
+      const expGaps = experimentalPairs.map(({ row, experimental }) => experimental.experimentalMMR - row.visibleMMR);
+      const expMae = expGaps.reduce((sum, gap) => sum + Math.abs(gap), 0) / expGaps.length;
+      const expRmse = Math.sqrt(expGaps.reduce((sum, gap) => sum + gap * gap, 0) / expGaps.length);
+      const expAvgDelta = experimentalPairs.reduce((sum, { experimental }) => sum + experimental.deltaFromCurrent, 0) / experimentalPairs.length;
+      const expSideCount = experimentalPairs.filter(({ experimental }) => experimental.sideAdjustedMMR != null).length;
+      const maeDelta = expMae - mae;
+      experimentalStudyLine =
+        `Coverage: **${experimentalPairs.length}/${rows.length}** rows; side-adjusted: **${expSideCount}**\n` +
+        `Current MAE/RMSE: **${Math.round(mae)} / ${Math.round(rmse)} MMR**\n` +
+        `Experimental MAE/RMSE: **${Math.round(expMae)} / ${Math.round(expRmse)} MMR** (${maeDelta >= 0 ? '+' : ''}${Math.round(maeDelta)} MAE)\n` +
+        `Average movement vs current: **${fmtMmr(expAvgDelta)}**\n` +
+        `_Experimental only — current rank and leaderboard still use the existing estimator._`;
+
+      experimentalMoversLine = fitLines(
+        experimentalPairs
+          .slice()
+          .sort((a, b) => Math.abs(b.experimental.deltaFromCurrent) - Math.abs(a.experimental.deltaFromCurrent))
+          .slice(0, 6)
+          .map(({ row, experimental }) =>
+            `**${row.name}**: ${row.estimate.medal} -> ${experimental.medal} (${fmtMmr(experimental.deltaFromCurrent)})`,
+          ),
+        'No movement vs current.',
+      );
+    }
 
     const missingVisible = candidates.filter((r) => r.visibleMMR == null);
     const lowConfidence = rows.filter((r) => r.estimate.confidence < 50);
@@ -592,6 +635,8 @@ export async function turboStudy(message: Message, args: string[], userDataServi
         },
         { name: 'Error by Range', value: rangeNote, inline: false },
         { name: 'Estimator Health', value: healthLines.join('\n'), inline: false },
+        { name: 'Experimental Estimator', value: experimentalStudyLine, inline: false },
+        { name: 'Experimental Movers', value: experimentalMoversLine, inline: false },
         { name: 'Bias by Ranked Bracket', value: bracketLines.join('\n'), inline: false },
         { name: 'Fit Interpretation', value: fitNote, inline: false },
         { name: 'Calibration Extremes', value: extremesLine, inline: true },

@@ -29,6 +29,10 @@ export interface CalibrationSnapshot {
   rankedMMR: number | null;
   /** estimatedMMR − rankedMMR (the turbo-lean), null when unranked. */
   lean: number | null;
+  /** Experimental estimator value, if populated. Not used by live ranking. */
+  experimentalMMR?: number | null;
+  /** experimentalMMR − estimatedMMR, if populated. */
+  experimentalDelta?: number | null;
 }
 
 interface HistoryFile {
@@ -64,6 +68,8 @@ export function logCalibrationSnapshot(player: TurboRankPlayerData, estimate: Tu
       rankedTier: estimate.rankedTier ?? null,
       rankedMMR: estimate.rankedMMR ?? null,
       lean: estimate.lean ?? null,
+      experimentalMMR: estimate.experimental?.experimentalMMR ?? null,
+      experimentalDelta: estimate.experimental?.deltaFromCurrent ?? null,
     };
 
     // Skip if the previous snapshot for this player is identical in the fields
