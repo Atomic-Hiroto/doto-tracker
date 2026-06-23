@@ -335,11 +335,6 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
           : `${estimate.soloSampleSize} solo matches\nEffective sample: **${estimate.effectiveSample}** visible-rank-weighted lobbies`,
         inline: false,
       },
-      ...(experimentalEstimateText(estimate) ? [{
-        name: 'Experimental Estimate',
-        value: experimentalEstimateText(estimate)!,
-        inline: false,
-      }] : []),
       {
         name: estimate.partyFallback ? 'Recent Lobbies' : 'Recent Solo Lobbies',
         value: recentLobbies(observations, estimate.partyFallback),
