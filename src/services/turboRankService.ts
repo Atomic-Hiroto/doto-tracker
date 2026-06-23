@@ -6,6 +6,7 @@ import {
   TurboRankPlayerData,
   TurboRankObservation,
   TurboRankEstimate,
+  TurboRankExperimentalEstimate,
 } from '../models/TurboRank';
 import { fetchPlayerTurboMatches, fetchStratzPlayerProfile } from './stratzClient';
 import { logCalibrationSnapshot } from './turboCalibrationLog';
@@ -124,6 +125,70 @@ function starString(stars: number): string {
   return stars > 0 ? ' ' + '★'.repeat(stars) : '';
 }
 
+interface WeightedObservation {
+  obs: TurboRankObservation;
+  w: number;
+}
+
+function average(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function weightedMean(items: WeightedObservation[], value: (item: WeightedObservation) => number): number {
+  const totalWeight = items.reduce((sum, item) => sum + item.w, 0);
+  if (totalWeight === 0) return 0;
+  return items.reduce((sum, item) => sum + value(item) * item.w, 0) / totalWeight;
+}
+
+function weightedMedian(items: WeightedObservation[], value: (item: WeightedObservation) => number): number {
+  if (items.length === 0) return 0;
+  const sorted = [...items].sort((a, b) => value(a) - value(b));
+  const totalWeight = sorted.reduce((sum, item) => sum + item.w, 0);
+  if (totalWeight === 0) return value(sorted[Math.floor(sorted.length / 2)]);
+
+  let cumulative = 0;
+  for (const item of sorted) {
+    cumulative += item.w;
+    if (cumulative >= totalWeight / 2) return value(item);
+  }
+  return value(sorted[sorted.length - 1]);
+}
+
+function weightedTrimmedMean(
+  items: WeightedObservation[],
+  value: (item: WeightedObservation) => number,
+  trimFraction = 0.1,
+): number {
+  if (items.length < 5) return weightedMean(items, value);
+
+  const sorted = [...items].sort((a, b) => value(a) - value(b));
+  const totalWeight = sorted.reduce((sum, item) => sum + item.w, 0);
+  if (totalWeight === 0) return weightedMean(items, value);
+
+  const lower = totalWeight * trimFraction;
+  const upper = totalWeight * (1 - trimFraction);
+  let cumulative = 0;
+  let keptWeight = 0;
+  let sum = 0;
+
+  for (const item of sorted) {
+    const next = cumulative + item.w;
+    const overlap = Math.max(0, Math.min(next, upper) - Math.max(cumulative, lower));
+    if (overlap > 0) {
+      sum += value(item) * overlap;
+      keptWeight += overlap;
+    }
+    cumulative = next;
+  }
+
+  return keptWeight > 0 ? sum / keptWeight : weightedMean(items, value);
+}
+
 // ── Service ──────────────────────────────────────────────────────────────────
 
 export class TurboRankService {
@@ -196,25 +261,36 @@ export class TurboRankService {
       ? 1
       : Math.max(2, players.filter(p => p.party_id === partyId).length);
 
+    const isRadiant = trackedPlayer.player_slot < 128;
     const tiers: number[] = [];
     const mmrValues: number[] = [];
+    const allyMMRValues: number[] = [];
+    const enemyMMRValues: number[] = [];
     for (const p of players) {
       if (p.account_id && String(p.account_id) === String(steamId)) continue;
       const mmr = rankTierToMMR(p.rank_tier);
       if (mmr != null) {
         mmrValues.push(mmr);
         tiers.push(p.rank_tier);
+        if ((p.player_slot < 128) === isRadiant) {
+          allyMMRValues.push(mmr);
+        } else {
+          enemyMMRValues.push(mmr);
+        }
       }
     }
     if (mmrValues.length < MIN_VISIBLE_RANKS) return null;
 
     const lobbyMMR = mmrValues.reduce((s, v) => s + v, 0) / mmrValues.length;
-    const isRadiant = trackedPlayer.player_slot < 128;
     const won = typeof matchData.radiant_win === 'boolean' ? (isRadiant === matchData.radiant_win) : undefined;
 
     return {
       matchId: matchData.match_id,
       lobbyMMR: Math.round(lobbyMMR),
+      allyMMR: average(allyMMRValues) != null ? Math.round(average(allyMMRValues)!) : null,
+      enemyMMR: average(enemyMMRValues) != null ? Math.round(average(enemyMMRValues)!) : null,
+      allyVisibleRanks: allyMMRValues.length,
+      enemyVisibleRanks: enemyMMRValues.length,
       partySize,
       partyWeight: PARTY_WEIGHTS[Math.min(partySize, 5)] ?? 0.1,
       timestamp: matchData.start_time || Math.floor(Date.now() / 1000),
@@ -248,6 +324,8 @@ export class TurboRankService {
 
     const tiers: number[] = [];
     const mmrValues: number[] = [];
+    const allyMMRValues: number[] = [];
+    const enemyMMRValues: number[] = [];
     for (const p of players) {
       if (p.steamAccountId === steamAccountId) continue;
       const rank = p.steamAccount?.seasonRank;
@@ -255,6 +333,11 @@ export class TurboRankService {
       if (mmr != null) {
         mmrValues.push(mmr);
         tiers.push(rank);
+        if (p.isRadiant === trackedPlayer.isRadiant) {
+          allyMMRValues.push(mmr);
+        } else {
+          enemyMMRValues.push(mmr);
+        }
       }
     }
     if (mmrValues.length < MIN_VISIBLE_RANKS) return null;
@@ -267,6 +350,10 @@ export class TurboRankService {
     return {
       matchId: match.id,
       lobbyMMR: Math.round(lobbyMMR),
+      allyMMR: average(allyMMRValues) != null ? Math.round(average(allyMMRValues)!) : null,
+      enemyMMR: average(enemyMMRValues) != null ? Math.round(average(enemyMMRValues)!) : null,
+      allyVisibleRanks: allyMMRValues.length,
+      enemyVisibleRanks: enemyMMRValues.length,
       partySize,
       partyWeight: PARTY_WEIGHTS[Math.min(partySize, 5)] ?? 0.1,
       timestamp: match.startDateTime || Math.floor(Date.now() / 1000),
@@ -304,7 +391,7 @@ export class TurboRankService {
     let totalWeight = 0;
     let effectiveSample = 0; // visible-rank-weighted, undecayed (reliability of the sample)
 
-    const weighted: Array<{ obs: TurboRankObservation; w: number }> = [];
+    const weighted: WeightedObservation[] = [];
     for (const obs of targets) {
       const ageSec = Math.max(0, now - obs.timestamp);
       const recency = Math.exp(-decayLambda * ageSec);
@@ -318,6 +405,7 @@ export class TurboRankService {
     if (totalWeight === 0) return null;
 
     const estimatedMMR = Math.round(weightedSum / totalWeight);
+    const experimental = this.computeExperimentalEstimate(weighted, estimatedMMR);
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
     // Confidence from the visible-rank-weighted effective sample. ~12 full lobbies -> ~100%.
@@ -353,7 +441,69 @@ export class TurboRankService {
       rankedTier: rankedTier ?? null,
       rankedMMR,
       lean,
+      experimental,
       lastUpdated: Date.now(),
+    };
+  }
+
+  /**
+   * Experimental estimator kept out of production ranking:
+   *  - robustLobbyMMR blends a trimmed weighted mean with weighted median
+   *  - sideAdjustedMMR adds a small result-aware nudge from ally/enemy rank split
+   */
+  private computeExperimentalEstimate(
+    weighted: WeightedObservation[],
+    currentMMR: number,
+  ): TurboRankExperimentalEstimate {
+    const trimmed = weightedTrimmedMean(weighted, item => item.obs.lobbyMMR);
+    const median = weightedMedian(weighted, item => item.obs.lobbyMMR);
+    const robustLobbyMMR = Math.round(trimmed * 0.65 + median * 0.35);
+
+    const sideRows = weighted.filter(({ obs }) =>
+      obs.allyMMR != null
+      && obs.enemyMMR != null
+      && typeof obs.won === 'boolean'
+      && (obs.allyVisibleRanks ?? 0) > 0
+      && (obs.enemyVisibleRanks ?? 0) > 0,
+    );
+
+    let sideAdjustment: number | null = null;
+    let sideAdjustedMMR: number | null = null;
+    if (sideRows.length >= 3) {
+      let residualSum = 0;
+      let residualWeight = 0;
+
+      for (const item of sideRows) {
+        const obs = item.obs;
+        const sideDiff = (obs.enemyMMR ?? 0) - (obs.allyMMR ?? 0);
+        const expectedWin = 1 / (1 + Math.pow(10, sideDiff / 400));
+        const actualWin = obs.won ? 1 : 0;
+        const residual = actualWin - expectedWin;
+        const sideCompleteness = Math.min(
+          ((obs.allyVisibleRanks ?? 0) + (obs.enemyVisibleRanks ?? 0)) / 9,
+          1,
+        );
+        const w = item.w * sideCompleteness;
+        residualSum += residual * w;
+        residualWeight += w;
+      }
+
+      if (residualWeight > 0) {
+        sideAdjustment = Math.round(clamp((residualSum / residualWeight) * 260, -180, 180));
+        sideAdjustedMMR = robustLobbyMMR + sideAdjustment;
+      }
+    }
+
+    const experimentalMMR = Math.round(sideAdjustedMMR ?? robustLobbyMMR);
+    return {
+      rawLobbyMMR: currentMMR,
+      robustLobbyMMR,
+      sideAdjustedMMR,
+      experimentalMMR,
+      medal: mmrToMedal(experimentalMMR).medal,
+      deltaFromCurrent: experimentalMMR - currentMMR,
+      sideAdjustment,
+      sideSampleSize: sideRows.length,
     };
   }
 

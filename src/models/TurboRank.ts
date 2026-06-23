@@ -3,6 +3,14 @@ export interface TurboRankObservation {
   matchId: number;
   /** Average MMR of the *visible-ranked* other players in the lobby. */
   lobbyMMR: number;
+  /** Average visible MMR of same-team players, excluding the tracked player. */
+  allyMMR?: number | null;
+  /** Average visible MMR of enemy players. */
+  enemyMMR?: number | null;
+  /** Visible ranked same-team players, excluding the tracked player. */
+  allyVisibleRanks?: number;
+  /** Visible ranked enemy players. */
+  enemyVisibleRanks?: number;
   /** How many party members the tracked player had (1 = solo). */
   partySize: number;
   /** Weight derived from party size (1.0 solo → 0.001 five-stack). Only used in party fallback. */
@@ -15,6 +23,25 @@ export interface TurboRankObservation {
   tiers: number[];
   /** Whether the tracked player won the match (display only — not used in the estimate). */
   won?: boolean;
+}
+
+/** Non-authoritative estimator outputs used for comparison and validation only. */
+export interface TurboRankExperimentalEstimate {
+  /** The current production estimate, copied here as the raw baseline. */
+  rawLobbyMMR: number;
+  /** Robust lobby read using median/trimmed averaging to reduce outlier impact. */
+  robustLobbyMMR: number;
+  /** Optional result-aware side adjustment from ally/enemy rank split. */
+  sideAdjustedMMR?: number | null;
+  /** The experimental headline value. Not used for rank, lean, or leaderboards. */
+  experimentalMMR: number;
+  medal: string;
+  /** experimentalMMR - estimatedMMR. */
+  deltaFromCurrent: number;
+  /** Average side/result nudge in MMR, when side data exists. */
+  sideAdjustment?: number | null;
+  /** Number of observations with usable ally/enemy split and outcome. */
+  sideSampleSize: number;
 }
 
 /** Computed rank estimate for a player. */
@@ -56,6 +83,8 @@ export interface TurboRankEstimate {
    * Null when the player has no visible ranked medal to compare against.
    */
   lean?: number | null;
+  /** Experimental comparison read. Not used for ranking or leaderboard ordering. */
+  experimental?: TurboRankExperimentalEstimate;
   /** Unix ms when estimate was last computed. */
   lastUpdated: number;
 }

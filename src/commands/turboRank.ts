@@ -257,6 +257,26 @@ function formatLean(estimate: { lean?: number | null; rankedTier?: number | null
   return `Plays right around their **${rankedMedal}** ranked medal in turbo.`;
 }
 
+function formatMmrDelta(value: number): string {
+  return `${value >= 0 ? '+' : ''}${Math.round(value)} MMR`;
+}
+
+function experimentalEstimateText(estimate: TurboRankEstimate): string | null {
+  const exp = estimate.experimental;
+  if (!exp) return null;
+
+  const sideLine = exp.sideAdjustedMMR != null
+    ? `Side/result adjustment: **${formatMmrDelta(exp.sideAdjustment ?? 0)}** from ${exp.sideSampleSize} game(s) with ally/enemy rank split.`
+    : `Side/result adjustment: pending (${exp.sideSampleSize}/3 usable side-split games).`;
+
+  return [
+    `Experimental read: **${exp.medal}** (~${exp.experimentalMMR}) (${formatMmrDelta(exp.deltaFromCurrent)} vs current).`,
+    `Robust lobby read: **~${exp.robustLobbyMMR}**.`,
+    sideLine,
+    '_Not used for the official rank, lean, or leaderboard._',
+  ].join('\n');
+}
+
 /** Dota rank medal icon (medal tier only — the star count is shown in the text). */
 function medalIconUrl(tier: number): string {
   const t = Math.min(8, Math.max(1, tier));
@@ -315,6 +335,11 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
           : `${estimate.soloSampleSize} solo matches\nEffective sample: **${estimate.effectiveSample}** visible-rank-weighted lobbies`,
         inline: false,
       },
+      ...(experimentalEstimateText(estimate) ? [{
+        name: 'Experimental Estimate',
+        value: experimentalEstimateText(estimate)!,
+        inline: false,
+      }] : []),
       {
         name: estimate.partyFallback ? 'Recent Lobbies' : 'Recent Solo Lobbies',
         value: recentLobbies(observations, estimate.partyFallback),
@@ -349,7 +374,10 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
     const type = obs.partySize === 1 ? 'solo' : `${obs.partySize}-stack`;
     const outcome = obs.won === true ? 'W' : obs.won === false ? 'L' : '-';
     const date = formatMatchDate(obs.timestamp);
-    return `${matchLink(obs.matchId)} · **${mmrToMedal(obs.lobbyMMR).medal}** · ${type} · ${outcome} · ${obs.visibleRanks}/9 ranks · ${date}`;
+    const side = obs.allyMMR != null && obs.enemyMMR != null
+      ? ` · ally ${mmrToMedal(obs.allyMMR).medal} (${obs.allyVisibleRanks ?? 0}) vs enemy ${mmrToMedal(obs.enemyMMR).medal} (${obs.enemyVisibleRanks ?? 0})`
+      : '';
+    return `${matchLink(obs.matchId)} · **${mmrToMedal(obs.lobbyMMR).medal}** · ${type} · ${outcome} · ${obs.visibleRanks}/9 ranks${side} · ${date}`;
   });
 
   return new EmbedBuilder()
@@ -371,6 +399,11 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
         value: qualityFlags.length ? qualityFlags.join(', ') : 'No major flags.',
         inline: false,
       },
+      ...(experimentalEstimateText(estimate) ? [{
+        name: 'Experimental Estimate',
+        value: experimentalEstimateText(estimate)!,
+        inline: false,
+      }] : []),
       {
         name: 'Recent Used Matches',
         value: fitLines(lines, '_No usable observations_'),
