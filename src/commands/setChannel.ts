@@ -1,8 +1,9 @@
 import { Message, TextChannel } from 'discord.js';
+import { ProcessConstants } from '../constants';
 import { ChannelDataService } from '../services/channelDataService';
 import { logger } from '../services/loggerService';
 
-const BOT_OWNER_ID = '78168838910246912';
+const BOT_OWNER_ID = ProcessConstants.BOT_OWNER_ID;
 
 export async function setChannel(message: Message, channelDataService: ChannelDataService) {
     if (message.author.id !== BOT_OWNER_ID) {

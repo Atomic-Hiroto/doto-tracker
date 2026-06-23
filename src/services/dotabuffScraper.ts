@@ -210,7 +210,11 @@ export async function fetchDotabuffTurboMeta(): Promise<LaneMeta[]> {
         }
     }
 
-    cachedResult = { data: results, fetchedAt: now };
+    if (results.some((lane) => lane.heroes.length > 0)) {
+        cachedResult = { data: results, fetchedAt: now };
+    } else {
+        logger.warn('Dotabuff: no lane data scraped; not caching empty meta result');
+    }
     return results;
 }
 
