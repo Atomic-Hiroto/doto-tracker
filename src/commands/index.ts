@@ -10,6 +10,7 @@ export { turboLeaderboard, turboStats } from './turboLeaderboard';
 export { turboStudy } from './turboStudy';
 export { turboStudyHeroes } from './turboStudyHeroes';
 export { turboStudyParty } from './turboStudyParty';
+export { turboStudyItems } from './turboStudyItems';
 export { turboPairings, myTurboPairings } from './turboPairings';
 export { turboRank } from './turboRank';
 export { turboLean, turboVs, turboClimb, turboSquad } from './turboFun';

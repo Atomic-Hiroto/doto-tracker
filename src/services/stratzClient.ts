@@ -424,6 +424,7 @@ export async function fetchPlayerTopTurboHero(steamAccountId: number, sample = 4
 export interface TurboHeroMatchItems {
   matchId: number;
   durationSeconds: number;
+  won?: boolean;
   purchases: { time: number; itemId: number }[];
 }
 
@@ -443,7 +444,8 @@ export async function fetchPlayerHeroItemTimings(
             matches(request: { gameModeIds: [23], heroIds: [${Math.trunc(heroId)}], take: $take, orderBy: DESC }) {
               id
               durationSeconds
-              players { steamAccountId stats { itemPurchases { time itemId } } }
+              didRadiantWin
+              players { steamAccountId isRadiant stats { itemPurchases { time itemId } } }
             }
           }
         }`,
@@ -458,7 +460,10 @@ export async function fetchPlayerHeroItemTimings(
     return matches
       .map((m: any): TurboHeroMatchItems => {
         const me = (m.players ?? []).find((p: any) => String(p.steamAccountId) === String(steamAccountId));
-        return { matchId: m.id, durationSeconds: m.durationSeconds ?? 0, purchases: me?.stats?.itemPurchases ?? [] };
+        const won = typeof m.didRadiantWin === 'boolean' && typeof me?.isRadiant === 'boolean'
+          ? me.isRadiant === m.didRadiantWin
+          : undefined;
+        return { matchId: m.id, durationSeconds: m.durationSeconds ?? 0, won, purchases: me?.stats?.itemPurchases ?? [] };
       })
       .filter((x: TurboHeroMatchItems) => x.purchases.length > 0);
   } catch (error: any) {
@@ -602,4 +607,3 @@ export async function fetchStratzPlayerProfile(
     return { name: null, seasonRank: null };
   }
 }
-
