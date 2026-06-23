@@ -15,6 +15,7 @@ const NON_BUILD_ITEMS = new Set(['ultimate_scepter_2', 'aghanims_blessing', 'agh
 
 interface StudyMatch {
   matchId: number;
+  steamId: string;
   playerName: string;
   durationSeconds: number;
   won: boolean;
@@ -42,6 +43,19 @@ interface ItemSignal {
   fastEdge: number | null;
 }
 
+interface PlayerHeroScore {
+  steamId: string;
+  playerName: string;
+  games: number;
+  wins: number;
+  shrunkWr: number;
+  paceSeconds: number | null;
+  paceSamples: number;
+  fastHits: number;
+  fastAttempts: number;
+  score: number;
+}
+
 function isNonBuild(internal: string): boolean {
   return NON_BUILD_ITEMS.has(internal) || internal.includes('blessing');
 }
@@ -59,6 +73,18 @@ function pct(bucket: Bucket): string {
 function pp(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return 'n/a';
   return `${value >= 0 ? '+' : ''}${Math.round(value * 100)}pp`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function fmtSignedPace(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds)) return 'pace n/a';
+  if (Math.abs(seconds) < 30) return 'on crew pace';
+  return seconds > 0
+    ? `${fmtMinFromSec(seconds)} faster`
+    : `${fmtMinFromSec(Math.abs(seconds))} slower`;
 }
 
 function median(values: number[]): number | null {
@@ -128,6 +154,7 @@ async function fetchPlayerRows(user: UserData, heroId: number): Promise<StudyMat
     .filter((match) => typeof match.won === 'boolean')
     .map((match) => ({
       matchId: match.matchId,
+      steamId: user.steamId,
       playerName: playerName(user),
       durationSeconds: match.durationSeconds,
       won: match.won!,
@@ -234,6 +261,84 @@ function commonItemLine(signal: ItemSignal): string {
   return `**${signal.name}** — ${signal.count} buys, ${buyWr} WR, median ${fmtMinFromSec(signal.medianAll)}`;
 }
 
+function choosePlayerScoreItems(signals: ItemSignal[]): ItemSignal[] {
+  const chosen = new Map<number, ItemSignal>();
+  for (const signal of signals
+    .filter((s) => (s.fastEdge ?? 0) > 0 && s.count >= 4)
+    .sort((a, b) => (b.fastEdge ?? 0) - (a.fastEdge ?? 0))) {
+    chosen.set(signal.itemId, signal);
+    if (chosen.size >= 4) break;
+  }
+  for (const signal of [...signals].sort((a, b) => b.count - a.count)) {
+    if (chosen.size >= 4) break;
+    chosen.set(signal.itemId, signal);
+  }
+  return [...chosen.values()];
+}
+
+function buildPlayerScores(matches: StudyMatch[], signals: ItemSignal[], baselineWr: number): PlayerHeroScore[] {
+  const scoreItems = choosePlayerScoreItems(signals);
+  if (scoreItems.length === 0) return [];
+
+  const byPlayer = new Map<string, StudyMatch[]>();
+  for (const match of matches) {
+    byPlayer.set(match.steamId, [...(byPlayer.get(match.steamId) ?? []), match]);
+  }
+
+  const shrinkK = 5;
+  return [...byPlayer.entries()]
+    .map(([steamId, playerMatches]) => {
+      const games = playerMatches.length;
+      const wins = playerMatches.filter((match) => match.won).length;
+      const shrunkWr = (wins + shrinkK * baselineWr) / (games + shrinkK);
+      const playerName = playerMatches[0]?.playerName ?? `Steam ${steamId}`;
+
+      const paceDeltas: number[] = [];
+      let fastHits = 0;
+      let fastAttempts = 0;
+      for (const signal of scoreItems) {
+        const times = playerMatches
+          .map((match) => match.firstByItem.get(signal.itemId))
+          .filter((time): time is number => time != null);
+        const playerMedian = median(times);
+        if (playerMedian != null) paceDeltas.push(signal.medianAll - playerMedian);
+        for (const time of times) {
+          fastAttempts++;
+          if (time <= signal.cutoff) fastHits++;
+        }
+      }
+
+      const paceSeconds = median(paceDeltas);
+      const fastRate = fastAttempts > 0 ? fastHits / fastAttempts : baselineWr;
+      const paceBonus = paceSeconds == null ? 0 : clamp(paceSeconds / 60, -5, 5) * 1.25;
+      const fastBonus = (fastRate - 0.5) * 8;
+      const score = shrunkWr * 100 + paceBonus + fastBonus + Math.min(games, 12) * 0.15;
+
+      return {
+        steamId,
+        playerName,
+        games,
+        wins,
+        shrunkWr,
+        paceSeconds,
+        paceSamples: paceDeltas.length,
+        fastHits,
+        fastAttempts,
+        score,
+      };
+    })
+    .filter((row) => row.games >= 2)
+    .sort((a, b) => b.score - a.score);
+}
+
+function playerScoreLine(row: PlayerHeroScore, index: number): string {
+  const wr = Math.round((row.wins / row.games) * 100);
+  const shrunk = Math.round(row.shrunkWr * 100);
+  const sample = row.games < 5 ? ' · small sample' : '';
+  const fast = row.fastAttempts > 0 ? ` · fast hits ${row.fastHits}/${row.fastAttempts}` : '';
+  return `**${index + 1}. ${row.playerName}** — ${row.games}G ${row.wins}-${row.games - row.wins}, ${wr}% WR (shrunk ${shrunk}%) · ${fmtSignedPace(row.paceSeconds)}${fast}${sample}`;
+}
+
 export async function turboStudyItems(message: Message, args: string[], userDataService: UserDataService) {
   try {
     const heroQuery = splitHeroQuery(args);
@@ -265,6 +370,7 @@ export async function turboStudyItems(message: Message, args: string[], userData
     }
 
     const wins = matches.filter((match) => match.won).length;
+    const baselineWr = wins / matches.length;
     const signals = buildSignals(matches, benchmarks);
     if (signals.length === 0) {
       return progress.edit(`Found ${matches.length} Turbo **${hero.localized_name}** games, but no key item cleared the sample gate.`);
@@ -295,6 +401,10 @@ export async function turboStudyItems(message: Message, args: string[], userData
       .slice(0, 8)
       .map(commonItemLine);
 
+    const playerScores = buildPlayerScores(matches, signals, baselineWr);
+    const scoreItems = choosePlayerScoreItems(signals);
+    const scoreItemNames = scoreItems.map((signal) => signal.name).join(', ');
+
     const baitOrLate = [...signals]
       .filter((signal) => (signal.fastEdge ?? 0) <= -0.05 || (signal.timingEdge ?? 0) < -90)
       .sort((a, b) => (a.fastEdge ?? 0) - (b.fastEdge ?? 0))
@@ -312,8 +422,16 @@ export async function turboStudyItems(message: Message, args: string[], userData
           name: 'Coverage',
           value:
             `Players checked: **${users.length}** | players with games: **${playersWithRows}**\n` +
-            `Hero games studied: **${matches.length}** (${wins}-${matches.length - wins}, **${Math.round((wins / matches.length) * 100)}% WR**)\n` +
+            `Hero games studied: **${matches.length}** (${wins}-${matches.length - wins}, **${Math.round(baselineWr * 100)}% WR**)\n` +
             `Per-player sample cap: **${MATCH_SAMPLE_PER_PLAYER}** recent Turbo ${hero.localized_name} games`,
+          inline: false,
+        },
+        {
+          name: 'Best Crew Players',
+          value: fitLines(
+            playerScores.slice(0, 8).map(playerScoreLine),
+            'Need at least 2 parsed games from a player before ranking them.',
+          ),
           inline: false,
         },
         {
@@ -339,6 +457,8 @@ export async function turboStudyItems(message: Message, args: string[], userData
         {
           name: 'How To Read This',
           value:
+            '`Best Crew Players` uses shrunk WR first, then key-item pace, so tiny undefeated samples do not auto-win. Pace is measured against crew medians for: ' +
+            `${scoreItemNames || 'the common key items'}.\n` +
             '`W@` and `L@` are median completion timings in wins/losses. `<=time` compares games where the item arrived by the winning median against late or missed games. Expensive item WR is biased by already-winning games, so timing split matters more than raw WR.',
           inline: false,
         },
