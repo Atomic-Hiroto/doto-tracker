@@ -95,6 +95,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.turboStudy(message, args, userDataService, turboStatsService);
       break;
     case Commands.TURBO_STUDY_HEROES:
+    case Commands.TURBO_STUDY_HEROES_ALIAS:
       await commandHandlers.turboStudyHeroes(message, args);
       break;
     case Commands.TURBO_PAIRINGS:
@@ -166,6 +167,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.draft(message, args);
       break;
     case Commands.META:
+    case Commands.TURBO_META:
       await commandHandlers.meta(message);
       break;
     case Commands.ACHIEVEMENTS:

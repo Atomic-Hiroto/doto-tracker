@@ -623,7 +623,7 @@ async function buildAnalysisGraph(matchId: number): Promise<AttachmentBuilder | 
     }
 }
 
-const BOT_OWNER_ID = '78168838910246912';
+const BOT_OWNER_ID = ProcessConstants.BOT_OWNER_ID;
 
 export async function analyze(message: Message, args: string[], userDataService?: UserDataService) {
     // Parse flags: -model <model_name> (owner-only), -stratz
@@ -1238,6 +1238,37 @@ Keep it punchy, under 200 words.`;
     }
 }
 
+function buildFallbackMetaTake(
+    usesDotabuff: boolean,
+    laneFields: { name: string; value: string; inline: boolean }[],
+    pubLines: string[],
+    turboLines: string[],
+): string {
+    if (usesDotabuff && laneFields.length > 0) {
+        const lanes = laneFields
+            .slice(0, 5)
+            .map((field) => {
+                const lane = field.name.replace(/^[^\w]+ /, '');
+                const leader = field.value.split('\n')[0] ?? 'No clear leader';
+                return `**${lane}**: ${leader}`;
+            })
+            .join('\n');
+        return trunc(
+            `Turbo lane leaders by Dotabuff 7d data:\n${lanes}\n\n` +
+            `Pub baseline leaders:\n${pubLines.slice(0, 3).join('\n')}\n\n` +
+            'Macro read: prioritize high-tempo heroes that convert early gold into towers, Roshan, and repeat fights. Turbo punishes slow greed more than normal pubs.',
+            4000,
+        );
+    }
+
+    return trunc(
+        `Turbo win-rate leaders:\n${turboLines.slice(0, 5).join('\n')}\n\n` +
+        `Pub baseline leaders:\n${pubLines.slice(0, 5).join('\n')}\n\n` +
+        'Macro read: pick heroes that hit early item timings, fight often, and take buildings after won fights. This is OpenDota fallback data, so lane-specific Turbo roles are unavailable.',
+        4000,
+    );
+}
+
 export async function meta(message: Message) {
     const loadingMsg = await safeSend(message.channel, '⏳ Scraping Dotabuff turbo meta… (this takes ~30s)');
     try {
@@ -1284,8 +1315,6 @@ export async function meta(message: Message) {
             }
         } catch (scrapeErr: any) {
             logger.warn('Dotabuff scrape failed, falling back to OpenDota:', scrapeErr);
-            // Temporary: tell the user why we're falling back
-            await safeSend(message.channel, `⚠️ Dotabuff scrape failed (falling back to OpenDota): \`${scrapeErr?.message ?? scrapeErr}\``);
         }
 
         // ─── Fallback: OpenDota pub + turbo totals ─────────────────────────────────────────
@@ -1342,10 +1371,18 @@ Keep it spicy and punchy.`;
         // Strip any markdown headings the model adds (they render huge in embeds)
         // and keep within the embed-description limit so the take is never cut off
         // mid-sentence like it was when crammed into a 1024-char field.
-        const aiTake = trunc(
-            (await callAI(COACH_SYSTEM, aiPrompt) || 'No commentary available.').replace(/^#{1,6}\s*/gm, '').trim(),
-            4000,
-        );
+        let aiTake: string;
+        let takeFooter = 'AI meta digest';
+        try {
+            aiTake = trunc(
+                (await callAI(COACH_SYSTEM, aiPrompt) || 'No commentary available.').replace(/^#{1,6}\s*/gm, '').trim(),
+                4000,
+            );
+        } catch (aiErr: any) {
+            logger.warn('Meta AI commentary failed, using deterministic fallback:', aiErr?.message ?? aiErr);
+            aiTake = buildFallbackMetaTake(usesDotabuff, laneFields, pubLines, turboLines);
+            takeFooter = 'Deterministic fallback — AI commentary unavailable';
+        }
 
         // ─── Build embed ────────────────────────────────────────────────────────────────────
         const embed = new EmbedBuilder()
@@ -1373,7 +1410,8 @@ Keep it spicy and punchy.`;
         const takeEmbed = new EmbedBuilder()
             .setColor('#0ea5e9')
             .setTitle("🎙️ doto-chan's take")
-            .setDescription(aiTake);
+            .setDescription(aiTake)
+            .setFooter({ text: takeFooter });
 
         // Delete the loading message
         if (loadingMsg) await loadingMsg.delete().catch(() => null);

@@ -22,7 +22,7 @@ type AnalysisContextSeed = { context: string; meta?: AnalysisThreadMeta };
 
 const analysisConversationHistory = new Map<string, AnalysisThread>();
 const channelDataService = new ChannelDataService();
-const BOT_OWNER_ID = '78168838910246912';
+const BOT_OWNER_ID = ProcessConstants.BOT_OWNER_ID;
 
 export { channelDataService };
 

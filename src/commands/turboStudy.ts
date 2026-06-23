@@ -147,6 +147,19 @@ function fmtMmr(value: number | null | undefined): string {
   return `${value >= 0 ? '+' : ''}${Math.round(value)} MMR`;
 }
 
+function experimentalVerdict(maeDelta: number, sideAdjustedRows: number): string {
+  const material = 25;
+  const verdict = maeDelta <= -material
+    ? `✅ Better by ${Math.abs(Math.round(maeDelta))} MMR MAE. Worth rechecking on a bigger sample before promotion.`
+    : maeDelta >= material
+      ? `⚠️ Worse by ${Math.round(maeDelta)} MMR MAE. Keep it experimental.`
+      : `⚪ No material accuracy change (${maeDelta >= 0 ? '+' : ''}${Math.round(maeDelta)} MMR MAE). Do not promote yet.`;
+  const sideNote = sideAdjustedRows > 0 && sideAdjustedRows < 8
+    ? ' Side/result adjustment sample is thin, so treat that part as noise.'
+    : '';
+  return verdict + sideNote;
+}
+
 /**
  * Plain-language version of the headline stats, so readers who don't know what
  * "correlation" or "R²" mean still get the takeaway. Reflects the live numbers.
@@ -439,6 +452,7 @@ export async function turboStudy(message: Message, args: string[], userDataServi
       const expSideCount = experimentalPairs.filter(({ experimental }) => experimental.sideAdjustedMMR != null).length;
       const maeDelta = expMae - mae;
       experimentalStudyLine =
+        `Verdict: ${experimentalVerdict(maeDelta, expSideCount)}\n` +
         `Coverage: **${experimentalPairs.length}/${rows.length}** rows; side-adjusted: **${expSideCount}**\n` +
         `Current MAE/RMSE: **${Math.round(mae)} / ${Math.round(rmse)} MMR**\n` +
         `Experimental MAE/RMSE: **${Math.round(expMae)} / ${Math.round(expRmse)} MMR** (${maeDelta >= 0 ? '+' : ''}${Math.round(maeDelta)} MAE)\n` +

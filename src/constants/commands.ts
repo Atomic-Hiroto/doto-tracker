@@ -13,6 +13,7 @@ export enum Commands {
     TURBO_STATS = "turbostats",
     TURBO_STUDY = "turbostudy",
     TURBO_STUDY_HEROES = "turbostudyheros",
+    TURBO_STUDY_HEROES_ALIAS = "turbostudyheroes",
     TURBO_PAIRINGS = "turbopairs",
     TURBO_RANK = "turborank",
     TURBO_LEAN = "turbolean",
@@ -36,6 +37,7 @@ export enum Commands {
     SUGGEST = "suggest",
     DRAFT = "draft",
     META = "meta",
+    TURBO_META = "turbometa",
     ACHIEVEMENTS = "achievements",
     // Reference (Dota knowledge base)
     ITEM = "item",
