@@ -196,7 +196,7 @@ export async function percent(message: Message, args: string[], userDataService:
     const withIndex = words.findIndex((word) => word.toLowerCase() === 'with');
     const itemQuery = withIndex >= 0 ? words.slice(withIndex + 1).join(' ') : '';
     const filterWords = withIndex >= 0 ? words.slice(0, withIndex) : words;
-    if (!itemQuery) return message.reply('Usage: `+% [filters] with <item>` — example: `+% turbo wins as PA with BKB`');
+    if (!itemQuery) return message.reply('Usage: `+%` / `+percent [filters] with <item>` — example: `+percent turbo wins as PA with BKB`');
     try {
         safeTyping(message.channel);
         const found = await referenceService.findItem(itemQuery);

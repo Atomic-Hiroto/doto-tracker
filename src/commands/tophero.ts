@@ -169,7 +169,7 @@ export async function tophero(message: Message, args: string[], userDataService:
       totalGames++; if (won) totalWins++;
     }
     if (totalGames === 0) {
-      return message.reply(`No turbo games in that window for ${targetUser.username}. Try \`+topheros all\`.`);
+      return message.reply(`No turbo games in that window for ${targetUser.username}. Try \`+topheroes all\`.`);
     }
     const baselineWR = totalWins / totalGames;
     const avgOf = (rows: any[], f: string) => rows.length ? rows.reduce((s, r) => s + Number(r[f] || 0), 0) / rows.length : undefined;
@@ -278,12 +278,12 @@ export async function tophero(message: Message, args: string[], userDataService:
         + `Ranked by **sample-adjusted win rate** (${shrinkK} baseline pseudo-games). Min ${minGames} games. Impact is role-aware context.`,
       )
       .setThumbnail(targetUser.displayAvatarURL())
-      .addFields(heroLines.length ? heroLines : [{ name: 'Not enough data', value: `No hero with ${minGames}+ turbo games in this window. Try \`+topheros all\`.`, inline: false }]);
+      .addFields(heroLines.length ? heroLines : [{ name: 'Not enough data', value: `No hero with ${minGames}+ turbo games in this window. Try \`+topheroes all\`.`, inline: false }]);
 
     if (promisingLine) embed.addFields({ name: `🌱 Promising — small sample (under ${minGames} games)`, value: promisingLine, inline: false });
 
     embed
-      .setFooter({ text: `Steam ID: ${user.steamId} · role = your actual position · +topheros 90 / all (window) · top10 (more heroes)` })
+      .setFooter({ text: `Steam ID: ${user.steamId} · role = your actual position · +topheroes 90 / all (window) · top10 (more heroes)` })
       .setURL(`https://www.opendota.com/players/${user.steamId}/heroes?game_mode=23`)
       .setTimestamp();
 

@@ -11,7 +11,7 @@ export const HELP = `**Available Commands:**
 **🏆 Turbo Mode Commands:**
 \`+turbolb\` - Show turbo leaderboard
 \`+turbostats\` - Show your turbo stats
-\`+topheros [@user]\` - Show best turbo heroes (past 4 weeks)
+\`+topheroes\` / \`+topheros [@user]\` - Show best turbo heroes (60d by default)
 \`+turbopairs\` - Show best turbo duos
 \`+myturbopairs\` - Show your turbo partnerships
 
@@ -34,7 +34,7 @@ export const HELP = `**Available Commands:**
 \`+inventory <match_id>\` - End-game inventory image for a match
 \`+inventory [@user] [filters]\` - Common end items over recent matches
 \`+roles [@user] [filters]\` - Role distribution graph
-\`+% [@user] [filters] with <item>\` - Deterministic item percentage query
+\`+%\` / \`+percent [@user] [filters] with <item>\` - Deterministic item percentage query
 
 **🔎 Match Filters:**
 Use filters with \`+rs\`, \`+analyze\`, \`+coach\`, \`+inventory\`, \`+roles\`, and \`+%\`.
@@ -44,7 +44,7 @@ Examples: \`won\`, \`lost\`, \`turbo\`, \`ranked\`, \`as invoker\`, \`against pu
 \`+caow\` - Fun command
 \`+help\` - Show this help message
 
-Most commands are also available as slash commands.`;
+Core commands are also available as slash commands.`;
 // NOTE: HELP above is unused — the live help embed lives in src/commands/help.ts.
 export const CAOW = 'Thrower hai!!';
 export const PROVIDE_STEAM_ID = 'Please provide your Steam ID. Usage: +register <steam_id>';
