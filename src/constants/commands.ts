@@ -17,6 +17,8 @@ export enum Commands {
     TURBO_STUDY_HEROES_ALIAS = "turbostudyheros",
     TURBO_STUDY_PARTY = "turbostudyparty",
     TURBO_STUDY_ITEMS = "turbostudyitems",
+    TURBO_STUDY_DEEP = "turbostudydeep",
+    TURBO_STUDY_STRATZ = "turbostudystratz",
     TURBO_HERO_LB = "turboherolb",
     TURBO_STUDY_PLAYERS = "turbostudyplayers",
     TURBO_PAIRINGS = "turbopairs",

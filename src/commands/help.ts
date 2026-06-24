@@ -31,6 +31,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbolb` — tracked turbo leaderboard',
       '`+turbostats` — your tracked turbo stats',
       '`+turbostudy` — hidden Turbo rank correlation study (`scorecard` for accuracy)',
+      '`+turbostudy deep` — heavier Stratz-derived audit/form/party diagnostics',
       '`+turbostudyheroes [medal]` — Turbo hero balance vs ranked baseline',
       '`+turbostudyparty [crew]` — solo vs party contamination study',
       '`+turbostudyitems <hero>` — crew item timing signals for a Turbo hero',

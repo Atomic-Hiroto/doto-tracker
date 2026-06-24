@@ -11,6 +11,7 @@ export { turboStudy } from './turboStudy';
 export { turboStudyHeroes } from './turboStudyHeroes';
 export { turboStudyParty } from './turboStudyParty';
 export { turboStudyItems } from './turboStudyItems';
+export { turboStudyDeep } from './turboStudyDeep';
 export { turboHeroLeaderboard } from './turboHeroLeaderboard';
 export { turboPairings, myTurboPairings } from './turboPairings';
 export { turboRank } from './turboRank';
