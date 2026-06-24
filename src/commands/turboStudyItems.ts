@@ -10,9 +10,11 @@ import { UserDataService } from '../services/userDataService';
 const MATCH_SAMPLE_PER_PLAYER = 15;
 const FETCH_BATCH_SIZE = 2;
 const PLAYER_FETCH_TIMEOUT_MS = 15000;
+const MIN_TRUSTED_PLAYER_GAMES = 5;
 const TURBO_GOLD_FACTOR = 2;
 const EXCLUDE_COMPONENTS = new Set(['perseverance', 'sange', 'yasha', 'kaya', 'skull_basher']);
 const NON_BUILD_ITEMS = new Set(['ultimate_scepter_2', 'aghanims_blessing', 'aghanims_blessing_2']);
+const PROGRESSION_CONTEXT_ITEMS = new Set(['crystalys', 'maelstrom']);
 
 interface StudyMatch {
   matchId: number;
@@ -267,6 +269,11 @@ function commonItemLine(signal: ItemSignal): string {
   return `**${signal.name}** — ${signal.count} buys, ${buyWr} WR, median ${fmtMinFromSec(signal.medianAll)}`;
 }
 
+function isProgressionContextItem(itemId: number): boolean {
+  const internal = dotaDataService.getItemInternalName(itemId);
+  return !!internal && PROGRESSION_CONTEXT_ITEMS.has(internal);
+}
+
 function choosePlayerScoreItems(signals: ItemSignal[]): ItemSignal[] {
   const chosen = new Map<number, ItemSignal>();
   for (const signal of signals
@@ -340,7 +347,7 @@ function buildPlayerScores(matches: StudyMatch[], signals: ItemSignal[], baselin
 function playerScoreLine(row: PlayerHeroScore, index: number): string {
   const wr = Math.round((row.wins / row.games) * 100);
   const shrunk = Math.round(row.shrunkWr * 100);
-  const sample = row.games < 5 ? ' · small sample' : '';
+  const sample = row.games < MIN_TRUSTED_PLAYER_GAMES ? ' · small sample' : '';
   const fast = row.fastAttempts > 0 ? ` · fast hits ${row.fastHits}/${row.fastAttempts}` : '';
   return `**${index + 1}. ${row.playerName}** — ${row.games}G ${row.wins}-${row.games - row.wins}, ${wr}% WR (shrunk ${shrunk}%) · ${fmtSignedPace(row.paceSeconds)}${fast}${sample}`;
 }
@@ -399,22 +406,27 @@ export async function turboStudyItems(message: Message, args: string[], userData
     const fasterInWins = [...signals]
       .filter((signal) => signal.timingEdge != null && signal.timingEdge > 0)
       .sort((a, b) => (b.timingEdge ?? 0) - (a.timingEdge ?? 0))
-      .slice(0, 6)
+      .slice(0, 5)
       .map((signal) => `**${signal.name}** — wins are **${fmtMinFromSec(signal.timingEdge)}** earlier (${fmtMinFromSec(signal.medianWin)} vs ${fmtMinFromSec(signal.medianLoss)})`);
 
     const commonItems = [...signals]
       .sort((a, b) => b.count - a.count)
-      .slice(0, 8)
+      .slice(0, 6)
       .map(commonItemLine);
 
     const playerScores = buildPlayerScores(matches, signals, baselineWr);
+    const trustedPlayerScores = playerScores.filter((row) => row.games >= MIN_TRUSTED_PLAYER_GAMES);
+    const smallSamplePlayers = playerScores.filter((row) => row.games < MIN_TRUSTED_PLAYER_GAMES);
     const scoreItems = choosePlayerScoreItems(signals);
     const scoreItemNames = scoreItems.map((signal) => signal.name).join(', ');
 
     const baitOrLate = [...signals]
-      .filter((signal) => (signal.fastEdge ?? 0) <= -0.05 || (signal.timingEdge ?? 0) < -90)
+      .filter((signal) =>
+        !isProgressionContextItem(signal.itemId)
+        && ((signal.fastEdge ?? 0) <= -0.05 || (signal.timingEdge ?? 0) < -90)
+      )
       .sort((a, b) => (a.fastEdge ?? 0) - (b.fastEdge ?? 0))
-      .slice(0, 5)
+      .slice(0, 3)
       .map((signal) => `**${signal.name}** — fast bucket ${pct(signal.fast)} vs late/miss ${pct(signal.slow)} (${pp(signal.fastEdge)}); inspect before treating as core.`);
 
     const embed = new EmbedBuilder()
@@ -435,14 +447,19 @@ export async function turboStudyItems(message: Message, args: string[], userData
         {
           name: 'Best Crew Players',
           value: fitLines(
-            playerScores.slice(0, 8).map(playerScoreLine),
-            'Need at least 2 parsed games from a player before ranking them.',
+            trustedPlayerScores.slice(0, 7).map(playerScoreLine),
+            `Need at least ${MIN_TRUSTED_PLAYER_GAMES} parsed games from a player before ranking them as proven.`,
           ),
           inline: false,
         },
+        ...(smallSamplePlayers.length > 0 ? [{
+          name: 'Small Sample Watch',
+          value: fitLines(smallSamplePlayers.slice(0, 5).map(playerScoreLine), 'No small-sample players.'),
+          inline: false,
+        }] : []),
         {
           name: 'Best Timing Signals',
-          value: fitLines(timingSignals.slice(0, 7).map(timingSignalLine), 'No item has enough win/loss timing split yet.'),
+          value: fitLines(timingSignals.slice(0, 5).map(timingSignalLine), 'No item has enough win/loss timing split yet.'),
           inline: false,
         },
         {
@@ -463,7 +480,7 @@ export async function turboStudyItems(message: Message, args: string[], userData
         {
           name: 'How To Read This',
           value:
-            '`Best Crew Players` uses shrunk WR first, then key-item pace, so tiny undefeated samples do not auto-win. Pace is measured against crew medians for: ' +
+            '`Best Crew Players` uses shrunk WR first, then key-item pace and fast-hit count, so item timing matters but a faster 1-4 sample does not beat proven winning. Pace is measured against crew medians for: ' +
             `${scoreItemNames || 'the common key items'}.\n` +
             '`W@` and `L@` are median completion timings in wins/losses. `<=time` compares games where the item arrived by the winning median against late or missed games. Expensive item WR is biased by already-winning games, so timing split matters more than raw WR.',
           inline: false,
