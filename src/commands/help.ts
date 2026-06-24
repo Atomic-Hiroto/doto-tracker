@@ -93,6 +93,38 @@ const SECTIONS: { name: string; lines: string[] }[] = [
   },
 ];
 
+function addSectionFields(embed: EmbedBuilder) {
+  const limit = 1000; // Discord field values cap at 1024; leave room for safety.
+
+  for (const section of SECTIONS) {
+    let chunk: string[] = [];
+    let used = 0;
+    let part = 1;
+
+    const flush = () => {
+      if (chunk.length === 0) return;
+      embed.addFields({
+        name: part === 1 ? section.name : `${section.name} (${part})`,
+        value: chunk.join('\n'),
+        inline: false,
+      });
+      chunk = [];
+      used = 0;
+      part++;
+    };
+
+    for (const line of section.lines) {
+      const safeLine = line.length > limit ? `${line.slice(0, limit - 3)}...` : line;
+      const extra = chunk.length ? 1 : 0;
+      if (used + safeLine.length + extra > limit) flush();
+      chunk.push(safeLine);
+      used += safeLine.length + extra;
+    }
+
+    flush();
+  }
+}
+
 export async function help(message: Message) {
   try {
     const embed = new EmbedBuilder()
@@ -101,9 +133,7 @@ export async function help(message: Message) {
       .setDescription('Stats, visuals and AI coaching for Dota 2. Reply to any analysis embed to keep the conversation going. Local streak/turbo/achievement stats use bot-tracked matches.')
       .setFooter({ text: 'Most commands work as slash commands too • prefix: +' });
 
-    for (const section of SECTIONS) {
-      embed.addFields({ name: section.name, value: section.lines.join('\n'), inline: false });
-    }
+    addSectionFields(embed);
 
     await message.reply({ embeds: [embed] });
   } catch (error) {
