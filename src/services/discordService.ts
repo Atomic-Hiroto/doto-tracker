@@ -105,6 +105,10 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_STUDY_ITEMS:
       await commandHandlers.turboStudyItems(message, args, userDataService);
       break;
+    case Commands.TURBO_STUDY_DEEP:
+    case Commands.TURBO_STUDY_STRATZ:
+      await commandHandlers.turboStudyDeep(message, args, userDataService);
+      break;
     case Commands.TURBO_HERO_LB:
     case Commands.TURBO_STUDY_PLAYERS:
       await commandHandlers.turboHeroLeaderboard(message, args, userDataService);

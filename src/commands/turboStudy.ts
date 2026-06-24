@@ -7,6 +7,7 @@ import { UserDataService } from '../services/userDataService';
 import { opendotaClient } from '../services/apiClient';
 import { renderTurboStudyScatter, renderTurboStudyResidual } from '../services/chartService';
 import { turboScorecard } from './turboFun';
+import { turboStudyDeep } from './turboStudyDeep';
 import { logger } from '../services/loggerService';
 
 interface StudyCandidate {
@@ -366,6 +367,11 @@ const STUDY_BRACKETS = [
 
 export async function turboStudy(message: Message, args: string[], userDataService: UserDataService, turboStatsService: TurboStatsService) {
   try {
+    const deepIndex = args.findIndex((arg) => ['deep', 'deeper', 'derive', 'derived', 'stratz'].includes(arg.toLowerCase()));
+    if (deepIndex >= 0) {
+      return turboStudyDeep(message, args.filter((_, index) => index !== deepIndex), userDataService);
+    }
+
     // +turbostudy scorecard → estimator-accuracy validation (formerly +turboscorecard)
     if (['scorecard', 'score', 'accuracy', 'validate'].includes((args[0] ?? '').toLowerCase())) {
       return turboScorecard(message);

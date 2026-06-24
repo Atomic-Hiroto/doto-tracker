@@ -444,6 +444,32 @@ export interface TurboHeroPerformanceMatch extends TurboHeroMatchItems {
   stacks: number;
 }
 
+export interface TurboDeepPlayerMatch {
+  matchId: number;
+  startDateTime: number;
+  durationSeconds: number;
+  won?: boolean;
+  averageRank?: number | null;
+  isParty: boolean;
+  position?: string | null;
+  heroId: number | null;
+  kills: number;
+  deaths: number;
+  assists: number;
+  lastHits: number;
+  gpm: number;
+  xpm: number;
+  heroDamage: number;
+  towerDamage: number;
+  heroHealing: number;
+  wardsPlaced: number;
+  wardsDestroyed: number;
+  stacks: number;
+  otherRanks: number[];
+  allyRanks: number[];
+  enemyRanks: number[];
+}
+
 /** Bulk-fetches a player's Turbo matches on one hero, each with that player's item-purchase timings. */
 export async function fetchPlayerHeroItemTimings(
   steamAccountId: number,
@@ -485,6 +511,111 @@ export async function fetchPlayerHeroItemTimings(
       .filter((x: TurboHeroMatchItems) => x.purchases.length > 0);
   } catch (error: any) {
     logger.error(`Stratz hero item timings fetch error for ${steamAccountId}/${heroId}:`, error?.response?.data ?? error?.message ?? error);
+    return [];
+  }
+}
+
+/** Fetches recent Turbo matches for one player with rank, role, hero and impact stats. */
+export async function fetchPlayerTurboDeepMatches(
+  steamAccountId: number,
+  take = 20,
+  isParty = false,
+  timeoutMs = 25000,
+): Promise<TurboDeepPlayerMatch[]> {
+  if (!STRATZ_API_KEY) return [];
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: `query ($id: Long!, $take: Int!, $isParty: Boolean) {
+          player(steamAccountId: $id) {
+            matches(request: { gameModeIds: [23], take: $take, orderBy: DESC, isParty: $isParty }) {
+              id
+              startDateTime
+              durationSeconds
+              didRadiantWin
+              averageRank
+              players {
+                steamAccountId
+                isRadiant
+                position
+                heroId
+                kills
+                deaths
+                assists
+                numLastHits
+                goldPerMinute
+                experiencePerMinute
+                heroDamage
+                towerDamage
+                heroHealing
+                stats {
+                  wards { time type }
+                  wardDestruction { time gold }
+                  campStack
+                }
+                steamAccount { seasonRank }
+              }
+            }
+          }
+        }`,
+        variables: { id: steamAccountId, take, isParty },
+      },
+      { headers: STRATZ_HEADERS, timeout: timeoutMs },
+    );
+    if (response.data?.errors) {
+      logger.warn(`Stratz deep turbo errors for ${steamAccountId}:`, JSON.stringify(response.data.errors).slice(0, 300));
+    }
+
+    const matches = response.data?.data?.player?.matches ?? [];
+    return matches
+      .map((m: any): TurboDeepPlayerMatch | null => {
+        const players = m.players ?? [];
+        const me = players.find((p: any) => String(p.steamAccountId) === String(steamAccountId));
+        if (!me) return null;
+        const won = typeof m.didRadiantWin === 'boolean' && typeof me.isRadiant === 'boolean'
+          ? me.isRadiant === m.didRadiantWin
+          : undefined;
+        const otherRanks: number[] = [];
+        const allyRanks: number[] = [];
+        const enemyRanks: number[] = [];
+        for (const p of players) {
+          if (String(p.steamAccountId) === String(steamAccountId)) continue;
+          const rank = Number(p.steamAccount?.seasonRank || 0);
+          if (!rank) continue;
+          otherRanks.push(rank);
+          if (p.isRadiant === me.isRadiant) allyRanks.push(rank);
+          else enemyRanks.push(rank);
+        }
+        return {
+          matchId: m.id,
+          startDateTime: Number(m.startDateTime || 0),
+          durationSeconds: Number(m.durationSeconds || 0),
+          won,
+          averageRank: m.averageRank ?? null,
+          isParty,
+          position: POSITION_LABEL[me.position] ?? null,
+          heroId: me.heroId == null ? null : Number(me.heroId),
+          kills: Number(me.kills || 0),
+          deaths: Number(me.deaths || 0),
+          assists: Number(me.assists || 0),
+          lastHits: Number(me.numLastHits || 0),
+          gpm: Number(me.goldPerMinute || 0),
+          xpm: Number(me.experiencePerMinute || 0),
+          heroDamage: Number(me.heroDamage || 0),
+          towerDamage: Number(me.towerDamage || 0),
+          heroHealing: Number(me.heroHealing || 0),
+          wardsPlaced: Array.isArray(me.stats?.wards) ? me.stats.wards.length : 0,
+          wardsDestroyed: Array.isArray(me.stats?.wardDestruction) ? me.stats.wardDestruction.length : 0,
+          stacks: Number(me.stats?.campStack || 0),
+          otherRanks,
+          allyRanks,
+          enemyRanks,
+        };
+      })
+      .filter((x: TurboDeepPlayerMatch | null): x is TurboDeepPlayerMatch => !!x && typeof x.won === 'boolean');
+  } catch (error: any) {
+    logger.error(`Stratz deep turbo fetch error for ${steamAccountId}:`, error?.response?.data ?? error?.message ?? error);
     return [];
   }
 }
