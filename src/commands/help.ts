@@ -1,4 +1,5 @@
 import { EmbedBuilder, Message } from 'discord.js';
+import { logger } from '../services/loggerService';
 
 // Rich, grouped help embed. Kept in sync with the command switch in
 // discordService.ts — when you add a command, add it here too.
@@ -33,6 +34,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbostudyheroes [medal]` — Turbo hero balance vs ranked baseline',
       '`+turbostudyparty [crew]` — solo vs party contamination study',
       '`+turbostudyitems <hero>` — crew item timing signals for a Turbo hero',
+      '`+turboherolb <hero>` — role-aware crew leaderboard for a Turbo hero',
       '`+turborank [@user]` — estimated hidden turbo rank',
       '`+turborank calibrate` — calibrate from match history',
       '`+turborank calibrateall` — owner-only recalibrate everyone',
@@ -92,15 +94,20 @@ const SECTIONS: { name: string; lines: string[] }[] = [
 ];
 
 export async function help(message: Message) {
-  const embed = new EmbedBuilder()
-    .setColor('#7c3aed')
-    .setTitle('🎯 Doto Tracker — Commands')
-    .setDescription('Stats, visuals and AI coaching for Dota 2. Reply to any analysis embed to keep the conversation going. Local streak/turbo/achievement stats use bot-tracked matches.')
-    .setFooter({ text: 'Most commands work as slash commands too • prefix: +' });
+  try {
+    const embed = new EmbedBuilder()
+      .setColor('#7c3aed')
+      .setTitle('🎯 Doto Tracker — Commands')
+      .setDescription('Stats, visuals and AI coaching for Dota 2. Reply to any analysis embed to keep the conversation going. Local streak/turbo/achievement stats use bot-tracked matches.')
+      .setFooter({ text: 'Most commands work as slash commands too • prefix: +' });
 
-  for (const section of SECTIONS) {
-    embed.addFields({ name: section.name, value: section.lines.join('\n'), inline: false });
+    for (const section of SECTIONS) {
+      embed.addFields({ name: section.name, value: section.lines.join('\n'), inline: false });
+    }
+
+    await message.reply({ embeds: [embed] });
+  } catch (error) {
+    logger.warn('Help embed failed, sending compact text fallback:', error);
+    await message.reply(SECTIONS.map((section) => `**${section.name}**\n${section.lines.join('\n')}`).join('\n\n').slice(0, 1900));
   }
-
-  await message.reply({ embeds: [embed] });
 }

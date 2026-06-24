@@ -23,8 +23,8 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       || ((rawSubcommand === 'calibrate' || rawSubcommand === 'recalc' || rawSubcommand === 'recalibrate') && rawParts[2]?.toLowerCase() === 'all')
     );
 
-  // Allow setchannel/unsetchannel to work in any channel so the owner can manage the allowlist
-  const isChannelAdmin = rawCmd === Commands.SET_CHANNEL || rawCmd === Commands.UNSET_CHANNEL || isOwnerBulkTurboRank;
+  // Allow help and channel admin commands in any channel so users don't get a silent no-op.
+  const isChannelAdmin = rawCmd === Commands.HELP || rawCmd === Commands.SET_CHANNEL || rawCmd === Commands.UNSET_CHANNEL || isOwnerBulkTurboRank;
 
   // Block all activity in non-allowed channels (except channel admin commands)
   if (!isChannelAdmin && !channelDataService.isAllowed(message.channel.id)) return;
@@ -103,6 +103,10 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       break;
     case Commands.TURBO_STUDY_ITEMS:
       await commandHandlers.turboStudyItems(message, args, userDataService);
+      break;
+    case Commands.TURBO_HERO_LB:
+    case Commands.TURBO_STUDY_PLAYERS:
+      await commandHandlers.turboHeroLeaderboard(message, args, userDataService);
       break;
     case Commands.TURBO_PAIRINGS:
       // +turbopairs = global board; +turbopairs @user / me = personal duos

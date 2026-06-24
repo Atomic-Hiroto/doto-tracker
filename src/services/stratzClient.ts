@@ -428,6 +428,22 @@ export interface TurboHeroMatchItems {
   purchases: { time: number; itemId: number }[];
 }
 
+export interface TurboHeroPerformanceMatch extends TurboHeroMatchItems {
+  position?: string | null;
+  kills: number;
+  deaths: number;
+  assists: number;
+  lastHits: number;
+  gpm: number;
+  xpm: number;
+  heroDamage: number;
+  towerDamage: number;
+  heroHealing: number;
+  wardsPlaced: number;
+  wardsDestroyed: number;
+  stacks: number;
+}
+
 /** Bulk-fetches a player's Turbo matches on one hero, each with that player's item-purchase timings. */
 export async function fetchPlayerHeroItemTimings(
   steamAccountId: number,
@@ -469,6 +485,89 @@ export async function fetchPlayerHeroItemTimings(
       .filter((x: TurboHeroMatchItems) => x.purchases.length > 0);
   } catch (error: any) {
     logger.error(`Stratz hero item timings fetch error for ${steamAccountId}/${heroId}:`, error?.response?.data ?? error?.message ?? error);
+    return [];
+  }
+}
+
+/** Fetches recent Turbo games on one hero with role-aware performance stats. */
+export async function fetchPlayerHeroPerformance(
+  steamAccountId: number,
+  heroId: number,
+  take = 15,
+  timeoutMs = 15000,
+): Promise<TurboHeroPerformanceMatch[]> {
+  if (!STRATZ_API_KEY) return [];
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      {
+        query: `query ($id: Long!, $take: Int!) {
+          player(steamAccountId: $id) {
+            matches(request: { gameModeIds: [23], heroIds: [${Math.trunc(heroId)}], take: $take, orderBy: DESC }) {
+              id
+              durationSeconds
+              didRadiantWin
+              players {
+                steamAccountId
+                isRadiant
+                position
+                kills
+                deaths
+                assists
+                numLastHits
+                goldPerMinute
+                experiencePerMinute
+                heroDamage
+                towerDamage
+                heroHealing
+                stats {
+                  wards { time type }
+                  wardDestruction { time gold }
+                  campStack
+                  itemPurchases { time itemId }
+                }
+              }
+            }
+          }
+        }`,
+        variables: { id: steamAccountId, take },
+      },
+      { headers: STRATZ_HEADERS, timeout: timeoutMs },
+    );
+    if (response.data?.errors) {
+      logger.warn(`Stratz hero performance errors for ${steamAccountId}/${heroId}:`, JSON.stringify(response.data.errors).slice(0, 200));
+    }
+    const matches = response.data?.data?.player?.matches ?? [];
+    return matches
+      .map((m: any): TurboHeroPerformanceMatch | null => {
+        const me = (m.players ?? []).find((p: any) => String(p.steamAccountId) === String(steamAccountId));
+        if (!me) return null;
+        const won = typeof m.didRadiantWin === 'boolean' && typeof me.isRadiant === 'boolean'
+          ? me.isRadiant === m.didRadiantWin
+          : undefined;
+        return {
+          matchId: m.id,
+          durationSeconds: Number(m.durationSeconds || 0),
+          won,
+          position: POSITION_LABEL[me.position] ?? null,
+          kills: Number(me.kills || 0),
+          deaths: Number(me.deaths || 0),
+          assists: Number(me.assists || 0),
+          lastHits: Number(me.numLastHits || 0),
+          gpm: Number(me.goldPerMinute || 0),
+          xpm: Number(me.experiencePerMinute || 0),
+          heroDamage: Number(me.heroDamage || 0),
+          towerDamage: Number(me.towerDamage || 0),
+          heroHealing: Number(me.heroHealing || 0),
+          wardsPlaced: Array.isArray(me.stats?.wards) ? me.stats.wards.length : 0,
+          wardsDestroyed: Array.isArray(me.stats?.wardDestruction) ? me.stats.wardDestruction.length : 0,
+          stacks: Number(me.stats?.campStack || 0),
+          purchases: me.stats?.itemPurchases ?? [],
+        };
+      })
+      .filter((x: TurboHeroPerformanceMatch | null): x is TurboHeroPerformanceMatch => !!x && typeof x.won === 'boolean');
+  } catch (error: any) {
+    logger.error(`Stratz hero performance fetch error for ${steamAccountId}/${heroId}:`, error?.response?.data ?? error?.message ?? error);
     return [];
   }
 }
