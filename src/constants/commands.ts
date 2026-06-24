@@ -3,6 +3,7 @@ export enum Commands {
     REGISTER = "register",
     UNREGISTER = "unregister",
     RECENT_STATS = "rs",
+    RECENT_STATS_ALIAS = "recent",
     MATCHES = "matches",
     TOGGLE_AUTO = "toggleauto",
     GPAT = "gpat",
@@ -12,8 +13,8 @@ export enum Commands {
     TURBO_LEADERBOARD = "turbolb",
     TURBO_STATS = "turbostats",
     TURBO_STUDY = "turbostudy",
-    TURBO_STUDY_HEROES = "turbostudyheros",
-    TURBO_STUDY_HEROES_ALIAS = "turbostudyheroes",
+    TURBO_STUDY_HEROES = "turbostudyheroes",
+    TURBO_STUDY_HEROES_ALIAS = "turbostudyheros",
     TURBO_STUDY_PARTY = "turbostudyparty",
     TURBO_STUDY_ITEMS = "turbostudyitems",
     TURBO_HERO_LB = "turboherolb",
@@ -28,7 +29,8 @@ export enum Commands {
     TURBO_ITEMS = "turboitems",
     TOGGLE_SHARED_CONTEXT = "togglesharedcontext",
     PROFILE = "profile",
-    TOP_HEROES = "topheros",
+    TOP_HEROES = "topheroes",
+    TOP_HEROES_ALIAS = "topheros",
     // Phase 2
     STREAK = "streak",
     // Phase 3
@@ -54,6 +56,7 @@ export enum Commands {
     SKILLBUILD = "skillbuild",
     INVENTORY = "inventory",
     PERCENT = "%",
+    PERCENT_ALIAS = "percent",
     ROLES = "roles",
     // Admin
     SET_CHANNEL = "setchannel",
