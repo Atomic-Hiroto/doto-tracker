@@ -4,7 +4,7 @@ import { dotaDataService } from '../services/dotaDataService';
 import { renderTurboHeroBalanceScatter, HeroBalancePoint } from '../services/chartService';
 import { logger } from '../services/loggerService';
 
-// +turbostudyheros — the analytical sibling of +turbostudy, but for the META rather than
+// +turbostudyheroes — the analytical sibling of +turbostudy, but for the META rather than
 // for players. It asks: how differently does a hero perform in Turbo vs Ranked, and is
 // Turbo measurably *more imbalanced* (more polarised win rates, more concentrated picks)?
 //
@@ -228,17 +228,17 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
         {
           name: 'Caveats',
           value: 'Whole-playerbase snapshot — Turbo has no skill brackets, so part of the gap is *who plays Turbo*, not pure balance. Ranked baseline = ' +
-            (medalId ? `${medalKey} medal only.` : 'all medals summed.') + ' Use a medal arg (e.g. `+turbostudyheros immortal`) to control for skill.',
+            (medalId ? `${medalKey} medal only.` : 'all medals summed.') + ' Use a medal arg (e.g. `+turbostudyheroes immortal`) to control for skill.',
           inline: false,
         },
       )
       .setImage('attachment://turbo-hero-balance.png')
-      .setFooter({ text: 'Data: OpenDota /heroStats · +turbostudyheros <medal> to pin the ranked bracket' })
+      .setFooter({ text: 'Data: OpenDota /heroStats · +turbostudyheroes <medal> to pin the ranked bracket' })
       .setTimestamp();
 
     await progress.edit({ content: null, embeds: [embed], files: [scatterAttachment, csvAttachment] });
   } catch (error) {
-    logger.error('Error in turbostudyheros:', error);
+    logger.error('Error in turbostudyheroes:', error);
     await progress.edit('An error occurred while building the Turbo hero balance study. Please try again later.');
   }
 }
