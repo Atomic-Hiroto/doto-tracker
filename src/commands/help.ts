@@ -10,7 +10,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+register <steam_id>` — link your Steam ID',
       '`+unregister` — unlink your Steam ID',
       '`+profile [@user]` — detailed player profile',
-      '`+rs [@user] [n] [filters]` — recent matches image table',
+      '`+rs` / `+recent [@user] [n] [filters]` — recent matches image table',
       '`+matches [@user] [n] [filters]` — pick a match → Analyze / scoreboard / links',
       '`+toggleauto` — auto-post your new matches on/off',
     ],
@@ -46,7 +46,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbosquad @user` — frequent tracked Turbo teammates',
       '`+turbowinrate [@user|steamId]` — win rate by lobby bracket & party size',
       '`+turboitems [hero] [@user]` — key item timings on a hero (turbo-adjusted)',
-      '`+topheros [@user]` — best turbo heroes (4 weeks)',
+      '`+topheroes` / `+topheros [@user]` — best turbo heroes (60d by default)',
       '`+turbopairs [@user]` — best turbo duos (global, or a player\'s)',
     ],
   },
@@ -77,13 +77,13 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+inventory <match_id>` — end-game inventory image',
       '`+inventory [@user] [filters]` — common end items',
       '`+roles [@user] [filters]` — parsed role distribution graph',
-      '`+% [@user] [filters] with <item>` — item % query',
+      '`+%` / `+percent [@user] [filters] with <item>` — item % query',
     ],
   },
   {
     name: '🔎 Match Filters',
     lines: [
-      'Works with `+rs`, `+matches`, `+analyze`, `+coach`, `+trend`, `+inventory`, `+roles`, `+%`.',
+      'Works with `+rs`, `+recent`, `+matches`, `+analyze`, `+coach`, `+trend`, `+inventory`, `+roles`, `+%`, `+percent`.',
       'e.g. `won` · `lost` · `turbo` · `ranked` · `as invoker` · `against pudge` · `today` · `this week` · `last 30 days` · `since 7.41`',
     ],
   },
@@ -131,7 +131,7 @@ export async function help(message: Message) {
       .setColor('#7c3aed')
       .setTitle('🎯 Doto Tracker — Commands')
       .setDescription('Stats, visuals and AI coaching for Dota 2. Reply to any analysis embed to keep the conversation going. Local streak/turbo/achievement stats use bot-tracked matches.')
-      .setFooter({ text: 'Most commands work as slash commands too • prefix: +' });
+      .setFooter({ text: 'Core commands work as slash commands too • prefix: +' });
 
     addSectionFields(embed);
 

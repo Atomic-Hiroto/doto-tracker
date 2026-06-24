@@ -65,6 +65,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.unregister(message, userDataService);
       break;
     case Commands.RECENT_STATS:
+    case Commands.RECENT_STATS_ALIAS:
       await commandHandlers.recentStats(message, args, userDataService);
       break;
     case Commands.MATCHES:
@@ -144,6 +145,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.profile(message, args, userDataService, turboStatsService);
       break;
     case Commands.TOP_HEROES:
+    case Commands.TOP_HEROES_ALIAS:
       await commandHandlers.tophero(message, args, userDataService);
       break;
 
@@ -212,6 +214,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.matchInventory(message, args, userDataService);
       break;
     case Commands.PERCENT:
+    case Commands.PERCENT_ALIAS:
       await commandHandlers.percent(message, args, userDataService);
       break;
     case Commands.ROLES:
