@@ -1,7 +1,7 @@
 import { EmbedBuilder, Message } from 'discord.js';
 import { dotaDataService } from '../services/dotaDataService';
 import { logger } from '../services/loggerService';
-import { fetchStratzTurboMetaByPosition, TurboMetaPositionHero } from '../services/stratzClient';
+import { fetchStratzTurboMetaByPosition, TURBO_META_BRACKETS, TurboMetaPositionHero } from '../services/stratzClient';
 
 // Pos 1..5 display labels.
 const POSITION_LABELS: Record<number, string> = {
@@ -13,8 +13,11 @@ const POSITION_LABELS: Record<number, string> = {
 };
 
 const TOP_N = 8;
-// Absolute floor so a hero with a handful of games never tops a role.
+// Absolute floor so a hero with a handful of games never tops a role (full pool).
 const MIN_GAMES_FLOOR = 2000;
+// Lower floor when a rank/patch filter shrinks the pool, so narrow filters still return heroes.
+// Wilson keeps these honest: at ~100 games it shrinks a 70% hero well below a proven 60% one.
+const FILTERED_GAMES_FLOOR = 100;
 // Dynamic gate: also require at least this fraction of the role's total games.
 const MIN_GAMES_FRACTION = 0.0015;
 
@@ -36,9 +39,9 @@ function wilsonLowerBound(wins: number, n: number): number {
   return (centre - margin) / denom;
 }
 
-function rankPosition(rows: TurboMetaPositionHero[]): { ranked: RankedHero[]; gate: number; totalGames: number } {
+function rankPosition(rows: TurboMetaPositionHero[], floor: number): { ranked: RankedHero[]; gate: number; totalGames: number } {
   const totalGames = rows.reduce((sum, r) => sum + r.matchCount, 0);
-  const gate = Math.max(MIN_GAMES_FLOOR, Math.round(totalGames * MIN_GAMES_FRACTION));
+  const gate = Math.max(floor, Math.round(totalGames * MIN_GAMES_FRACTION));
   const ranked = rows
     .filter((r) => r.matchCount >= gate)
     .map((r) => ({
@@ -57,13 +60,83 @@ function fmtGames(n: number): string {
   return String(n);
 }
 
-export async function turboMeta(message: Message) {
-  const loading = await message.reply('⏳ Pulling the live Turbo meta from STRATZ (per position, last 7 days)…');
+const BRACKET_ALIASES: Record<string, string> = {
+  herald: 'HERALD', guardian: 'GUARDIAN', crusader: 'CRUSADER', archon: 'ARCHON',
+  legend: 'LEGEND', ancient: 'ANCIENT', divine: 'DIVINE', immortal: 'IMMORTAL',
+  immo: 'IMMORTAL', leg: 'LEGEND', arc: 'ARCHON',
+};
+// Convenience groups.
+const BRACKET_GROUPS: Record<string, string[]> = {
+  low: ['HERALD', 'GUARDIAN', 'CRUSADER'],
+  mid: ['ARCHON', 'LEGEND', 'ANCIENT'],
+  high: ['ANCIENT', 'DIVINE', 'IMMORTAL'],
+};
+
+const ORDER = TURBO_META_BRACKETS as readonly string[];
+
+/** Parse a single rank token into bracket enum names. Supports `divine`, `divine+`, `archon-divine`, groups. */
+function parseRankToken(token: string): string[] | null {
+  const t = token.toLowerCase();
+  if (BRACKET_GROUPS[t]) return BRACKET_GROUPS[t];
+  // range "a-b"
+  if (t.includes('-')) {
+    const [a, b] = t.split('-').map((s) => BRACKET_ALIASES[s.trim()]);
+    if (a && b) {
+      const i = ORDER.indexOf(a), j = ORDER.indexOf(b);
+      if (i >= 0 && j >= 0) return ORDER.slice(Math.min(i, j), Math.max(i, j) + 1);
+    }
+    return null;
+  }
+  // "divine+" → divine and above
+  if (t.endsWith('+')) {
+    const base = BRACKET_ALIASES[t.slice(0, -1)];
+    if (base) return ORDER.slice(ORDER.indexOf(base));
+    return null;
+  }
+  const single = BRACKET_ALIASES[t];
+  return single ? [single] : null;
+}
+
+interface ParsedArgs {
+  patch: boolean;
+  brackets: string[];
+  rankLabel: string | null;
+  unknown: string[];
+}
+
+function parseArgs(args: string[]): ParsedArgs {
+  let patch = false;
+  let brackets: string[] = [];
+  let rankLabel: string | null = null;
+  const unknown: string[] = [];
+  for (const raw of args) {
+    const t = raw.toLowerCase();
+    if (t === 'patch' || t === 'latest' || t === 'thispatch') { patch = true; continue; }
+    const parsed = parseRankToken(t);
+    if (parsed) { brackets = parsed; rankLabel = raw; continue; }
+    unknown.push(raw);
+  }
+  return { patch, brackets, rankLabel, unknown };
+}
+
+export async function turboMeta(message: Message, args: string[] = []) {
+  const opts = parseArgs(args);
+  if (opts.unknown.length) {
+    return message.reply(
+      `Didn't recognise: \`${opts.unknown.join(' ')}\`. Usage: \`+turbometa [patch] [rank]\`\n` +
+      'Ranks: `herald guardian crusader archon legend ancient divine immortal`, ranges like `divine+` or `archon-divine`, or groups `low`/`mid`/`high`.\n' +
+      'Examples: `+turbometa immortal`, `+turbometa patch divine+`, `+turbometa patch`.',
+    );
+  }
+
+  const windowHint = opts.patch ? 'latest patch' : 'last 7 days';
+  const rankHint = opts.brackets.length ? `, ${opts.rankLabel}` : '';
+  const loading = await message.reply(`⏳ Pulling the live Turbo meta from STRATZ (per position, ${windowHint}${rankHint})…`);
   try {
-    const byPosition = await fetchStratzTurboMetaByPosition();
+    const { byPosition, windowLabel } = await fetchStratzTurboMetaByPosition({ patch: opts.patch, brackets: opts.brackets });
     const hasData = Object.values(byPosition).some((rows) => rows && rows.length > 0);
     if (!hasData) {
-      return loading.edit('Could not fetch the Turbo meta from STRATZ right now (no data or API key missing). Try again later.');
+      return loading.edit('Could not fetch the Turbo meta from STRATZ right now (no data, or that filter is too narrow). Try again or widen the rank.');
     }
 
     // Preload hero names for every hero we might render.
@@ -76,17 +149,22 @@ export async function turboMeta(message: Message) {
       nameMap.set(id, await dotaDataService.getHeroName(id).catch(() => `Hero ${id}`));
     }));
 
+    const rankScope = opts.brackets.length
+      ? `**${opts.rankLabel}** bracket${opts.brackets.length > 1 ? 's' : ''}`
+      : 'all brackets';
+
     const embed = new EmbedBuilder()
       .setColor('#16a34a')
       .setTitle('🟢 Turbo Meta — Best Heroes by Position')
       .setDescription(
-        'Live from **STRATZ**, all brackets, last 7 days (current patch). Ranked by **Wilson 95% lower-bound win rate** so small samples can\'t spike the list. Each cell shows raw WR and game count.',
+        `Live from **STRATZ** · **${windowLabel}** · ${rankScope}. Ranked by **Wilson 95% lower-bound win rate** so small samples can't spike the list. Each cell shows raw WR and game count.`,
       )
       .setTimestamp();
 
+    const filtered = opts.patch || opts.brackets.length > 0;
     for (let pos = 1; pos <= 5; pos++) {
       const rows = byPosition[pos] ?? [];
-      const { ranked, gate } = rankPosition(rows);
+      const { ranked, gate } = rankPosition(rows, filtered ? FILTERED_GAMES_FLOOR : MIN_GAMES_FLOOR);
       if (ranked.length === 0) {
         embed.addFields({ name: POSITION_LABELS[pos], value: '_not enough data_', inline: false });
         continue;
@@ -103,11 +181,19 @@ export async function turboMeta(message: Message) {
       });
     }
 
+    const bracketNote = opts.brackets.length
+      ? `Filtered to **${opts.rankLabel}**. `
+      : 'Win rate is pooled across **all** skill brackets, so this is "what wins in Turbo overall," not skill-controlled. ';
+    const windowNote = opts.patch
+      ? `Pinned to **${windowLabel}** (newest patch with Turbo data).`
+      : 'Rolling 7-day window — tracks the current patch automatically. Add `patch` to pin to the latest patch.';
     embed.addFields({
       name: 'Method & caveats',
       value:
-        'Win rate is pooled across **all** skill brackets (Turbo has no separate ranked brackets), so this is "what wins in Turbo overall," not skill-controlled. ' +
-        'Ranking uses the Wilson lower bound, not raw WR, and applies a per-role sample gate. Data is a rolling 7-day window — it tracks the current patch automatically.',
+        bracketNote +
+        'Ranking uses the Wilson 95% lower bound, not raw WR, with a per-role sample gate. ' +
+        windowNote +
+        '\nFlags: `+turbometa [patch] [rank]` — e.g. `+turbometa immortal`, `+turbometa patch divine+`.',
       inline: false,
     });
 
