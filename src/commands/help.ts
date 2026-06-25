@@ -49,6 +49,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turboitems [hero] [@user]` — key item timings on a hero (turbo-adjusted)',
       '`+topheroes` / `+topheros [@user]` — best turbo heroes (60d by default)',
       '`+turbopairs [@user]` — best turbo duos (global, or a player\'s)',
+      '`+turbometa [patch] [rank]` — best turbo heroes per position (STRATZ, Wilson-ranked)',
     ],
   },
   {
@@ -59,7 +60,6 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+coach [@user] [filters]` — trend coach across recent games & saved plans',
       '`+suggest [@user]` — AI hero/build picks from your pool',
       '`+draft <enemy heroes>` — counter-pick help (`+draft Pudge, Invoker, AM`)',
-      '`+turbometa` — best turbo heroes per position (STRATZ, Wilson-ranked, current patch)',
       '`+meta` — AI-written turbo meta overview',
       '`+gpat <message>` — chat with doto-chan',
       '`+gpatclear` — clear your AI history',

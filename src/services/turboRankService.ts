@@ -51,8 +51,16 @@ const MEDAL_EMOJI: Record<number, string> = {
   8: '⭐', // Immortal
 };
 
-/** MMR per star within a medal tier (~154 per 2 stars ≈ 77 per star). */
-const MMR_PER_STAR = 77;
+/**
+ * MMR per star within a medal tier. Medal floors are spaced ~770 MMR apart and each
+ * medal has 5 stars, so a star is ~770/5 ≈ 154 MMR. We use 153 (a hair under 154) so a
+ * pure 5-star rank (e.g. Legend 5 = 3080 + 5·153 = 3845) stays inside its own medal
+ * instead of rolling up into the next floor at exactly 3850.
+ *
+ * (Was 77 — half the correct value — which squashed every rank into the lower half of
+ * its medal band and made mixed-skill lobbies round ~one tier low.)
+ */
+const MMR_PER_STAR = 153;
 
 /** Party-size to discount weight, used only when a player has zero solo games. */
 const PARTY_WEIGHTS: Record<number, number> = {

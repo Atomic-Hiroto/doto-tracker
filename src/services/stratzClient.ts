@@ -4,84 +4,6 @@ import { logger } from './loggerService';
 
 const STRATZ_GQL = 'https://api.stratz.com/graphql';
 
-// Dota 2 game mode IDs used by Stratz
-// 1 = All Pick, 2 = Captains Mode, 22 = Ranked All Pick, 23 = Turbo
-const STRATZ_GAME_MODES = {
-  RANKED: 22,
-  TURBO: 23,
-  ALL_PICK: 1,
-} as const;
-
-export interface StratzHeroLaneStat {
-  heroId: number;
-  lane: number;       // 1=Safe, 2=Mid, 3=Off, 4=Jungle/Roam
-  matchCount: number;
-  winCount: number;
-  winRate: number;    // computed from winCount/matchCount
-}
-
-/**
- * Fetches hero win rates per lane for a given game mode via the Stratz GraphQL API.
- * Returns data for the last 7 days (winWeek).
- *
- * @param gameModeId  22 = Ranked All Pick, 23 = Turbo
- * @param minMatches  minimum matches to filter noise
- */
-export async function fetchStratzHeroLaneStats(
-  gameModeId: number,
-  minMatches = 500
-): Promise<StratzHeroLaneStat[]> {
-  if (!STRATZ_API_KEY) {
-    logger.warn('STRATZ_API_KEY not set — skipping Stratz meta fetch');
-    return [];
-  }
-
-  const query = `{
-  heroStats {
-    winWeek(gameModeIds: [${gameModeId}]) {
-      heroId
-      lane
-      matchCount
-      winCount
-    }
-  }
-}`;
-
-  try {
-    const response = await axios.post(
-      STRATZ_GQL,
-      { query },
-      {
-        headers: {
-          Authorization: `Bearer ${STRATZ_API_KEY}`,
-          'Content-Type': 'application/json',
-          'User-Agent': 'STRATZ_API',
-          'Accept': 'application/json',
-        },
-        timeout: 15000,
-      }
-    );
-
-    const rows: any[] = response.data?.data?.heroStats?.winWeek ?? [];
-    logger.debug(`Stratz winWeek returned ${rows.length} rows for gameMode ${gameModeId}`);
-
-    return rows
-      .filter((r: any) => (r.matchCount || 0) >= minMatches)
-      .map((r: any) => ({
-        heroId: r.heroId,
-        lane: r.lane,
-        matchCount: r.matchCount,
-        winCount: r.winCount,
-        winRate: r.matchCount > 0 ? r.winCount / r.matchCount : 0,
-      }));
-  } catch (error: any) {
-    logger.error('Stratz API error:', error?.response?.data ?? error?.message ?? error);
-    return [];
-  }
-}
-
-export const StratzGameModes = STRATZ_GAME_MODES;
-
 export const MATCH_QUERY = `
 query ($matchId: Long!) {
   match(id: $matchId) {
@@ -872,11 +794,18 @@ export interface TurboMetaResult {
   windowLabel: string;
 }
 
+// Short-lived in-memory cache. The per-position meta barely moves hour-to-hour, but every
+// call fires 5 aliased sub-queries — so we cache successful results by window+brackets for
+// 45 min to spare the Stratz API (especially the default no-arg call everyone runs).
+const TURBO_META_TTL_MS = 45 * 60 * 1000;
+const turboMetaCache = new Map<string, { ts: number; result: TurboMetaResult }>();
+
 /**
  * Per-position Turbo hero stats, via Stratz. Default uses `winWeek` (rolling 7 days); `opts.patch`
  * switches to `winMonth` (30 days) for a larger current-patch sample. Both endpoints return one
  * row per hero per medal bracket, so we sum across brackets to pool the requested rank range per
  * hero. `opts.brackets` filters to a rank range server-side. Empty positions on missing key/error.
+ * Successful results are cached for 45 min (keyed by window + bracket filter).
  */
 export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}): Promise<TurboMetaResult> {
   const out: Record<number, TurboMetaPositionHero[]> = {};
@@ -889,6 +818,12 @@ export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}
   const brackets = (opts.brackets ?? []).filter((b) => (TURBO_META_BRACKETS as readonly string[]).includes(b));
   const bracketArg = brackets.length ? `, bracketIds:[${brackets.join(',')}]` : '';
   const field = opts.patch ? 'winMonth' : 'winWeek';
+
+  const cacheKey = `${field}|${[...brackets].sort().join(',')}`;
+  const cached = turboMetaCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < TURBO_META_TTL_MS) {
+    return cached.result;
+  }
 
   const aliases = TURBO_META_POSITIONS
     .map((pos, i) => `p${i + 1}: ${field}(gameModeIds:[TURBO], positionIds:[${pos}]${bracketArg}) { heroId matchCount winCount }`)
@@ -919,7 +854,13 @@ export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}
       out[i] = [...agg.values()];
     }
 
-    return { byPosition: out, windowLabel: opts.patch ? 'last 30 days' : 'last 7 days' };
+    const result: TurboMetaResult = { byPosition: out, windowLabel: opts.patch ? 'last 30 days' : 'last 7 days' };
+    // Only cache a result that actually carries data, so a transient empty response
+    // doesn't get pinned for 45 min.
+    if (Object.values(out).some((rows) => rows.length > 0)) {
+      turboMetaCache.set(cacheKey, { ts: Date.now(), result });
+    }
+    return result;
   } catch (error: any) {
     logger.error('Stratz turbo meta fetch error:', error?.response?.data ?? error?.message ?? error);
     return { byPosition: out, windowLabel: 'unavailable' };

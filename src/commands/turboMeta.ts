@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { EmbedBuilder, Message } from 'discord.js';
 import { dotaDataService } from '../services/dotaDataService';
 import { logger } from '../services/loggerService';
@@ -97,6 +98,39 @@ function parseRankToken(token: string): string[] | null {
   return single ? [single] : null;
 }
 
+// ── Trend tracking ───────────────────────────────────────────────────────────
+// Persist the displayed top-N (heroId → win rate) per window+rank key, so each run can
+// show ▲/▼ movement and 🆕 newcomers vs an earlier snapshot. The baseline only advances
+// every ~12h, so deltas reflect real meta movement rather than same-day noise.
+const META_HISTORY_FILE = 'turboMetaHistory.json';
+const META_SNAPSHOT_REFRESH_MS = 12 * 60 * 60 * 1000;
+const META_WR_DELTA_MIN = 0.01; // 1.0pp — below this a hero is "stable", no arrow.
+
+type MetaSnapshot = { ts: number; byPosition: Record<number, Record<number, number>> };
+type MetaHistory = Record<string, MetaSnapshot>;
+
+function loadMetaHistory(): MetaHistory {
+  try { return JSON.parse(fs.readFileSync(META_HISTORY_FILE, 'utf8')); } catch { return {}; }
+}
+function saveMetaHistory(hist: MetaHistory): void {
+  try { fs.writeFileSync(META_HISTORY_FILE, JSON.stringify(hist, null, 2)); } catch { /* ignore */ }
+}
+function relativeAge(ms: number): string {
+  const hours = Math.floor((Date.now() - ms) / 3_600_000);
+  if (hours < 1) return 'under 1h ago';
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+/** Trend marker for a hero vs the previous snapshot: ` 🆕` new to board, ` ▲/▼x.x` WR move, '' stable. */
+function trendMarker(prev: Record<number, number> | undefined, heroId: number, curWR: number): string {
+  if (!prev) return '';
+  const prevWR = prev[heroId];
+  if (prevWR == null) return ' 🆕';
+  const d = curWR - prevWR;
+  if (Math.abs(d) < META_WR_DELTA_MIN) return '';
+  return d > 0 ? ` ▲${(d * 100).toFixed(1)}` : ` ▼${(Math.abs(d) * 100).toFixed(1)}`;
+}
+
 interface ParsedArgs {
   patch: boolean;
   brackets: string[];
@@ -153,11 +187,20 @@ export async function turboMeta(message: Message, args: string[] = []) {
       ? `**${opts.rankLabel}** bracket${opts.brackets.length > 1 ? 's' : ''}`
       : 'all brackets';
 
+    // Trend baseline for this exact window+rank view.
+    const histKey = `${opts.patch ? 'winMonth' : 'winWeek'}|${[...opts.brackets].sort().join(',')}`;
+    const history = loadMetaHistory();
+    const prev = history[histKey];
+    const curSnap: MetaSnapshot = { ts: Date.now(), byPosition: {} };
+    const trendNote = prev
+      ? ` Trend vs **${relativeAge(prev.ts)}**: ▲/▼ = win-rate move (pp), 🆕 = new to the board.`
+      : '';
+
     const embed = new EmbedBuilder()
       .setColor('#16a34a')
       .setTitle('🟢 Turbo Meta — Best Heroes by Position')
       .setDescription(
-        `Live from **STRATZ** · **${windowLabel}** · ${rankScope}. Ranked by **Wilson 95% lower-bound win rate** so small samples can't spike the list. Each cell shows raw WR and game count.`,
+        `Live from **STRATZ** · **${windowLabel}** · ${rankScope}. Ranked by **Wilson 95% lower-bound win rate** so small samples can't spike the list. Each cell shows raw WR and game count.${trendNote}`,
       )
       .setTimestamp();
 
@@ -169,16 +212,29 @@ export async function turboMeta(message: Message, args: string[] = []) {
         embed.addFields({ name: POSITION_LABELS[pos], value: '_not enough data_', inline: false });
         continue;
       }
-      const lines = ranked.slice(0, TOP_N).map((h, i) => {
+      const topHeroes = ranked.slice(0, TOP_N);
+      const prevPos = prev?.byPosition?.[pos];
+      curSnap.byPosition[pos] = {};
+      for (const h of topHeroes) curSnap.byPosition[pos][h.heroId] = h.winRate;
+
+      const lines = topHeroes.map((h, i) => {
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `\`${i + 1}.\``;
         const name = nameMap.get(h.heroId) ?? `Hero ${h.heroId}`;
-        return `${medal} **${name}** — ${(h.winRate * 100).toFixed(1)}% WR · ${fmtGames(h.matchCount)} games`;
+        const marker = trendMarker(prevPos, h.heroId, h.winRate);
+        return `${medal} **${name}** — ${(h.winRate * 100).toFixed(1)}% WR · ${fmtGames(h.matchCount)} games${marker}`;
       });
       embed.addFields({
         name: `${POSITION_LABELS[pos]}  _(min ${fmtGames(gate)} games)_`,
         value: lines.join('\n').slice(0, 1024),
         inline: false,
       });
+    }
+
+    // Advance the trend baseline only every ~12h, so within-day calls compare against a
+    // meaningfully older snapshot instead of the last few minutes.
+    if (!prev || Date.now() - prev.ts >= META_SNAPSHOT_REFRESH_MS) {
+      history[histKey] = curSnap;
+      saveMetaHistory(history);
     }
 
     const bracketNote = opts.brackets.length
