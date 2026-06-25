@@ -11,7 +11,9 @@ const MATCH_SAMPLE_PER_PLAYER = 15;
 const FETCH_BATCH_SIZE = 2;
 const PLAYER_FETCH_TIMEOUT_MS = 15000;
 const MIN_TRUSTED_PLAYER_GAMES = 5;
-const TURBO_GOLD_FACTOR = 2;
+// Turbo completes items ~55-65% of the ranked time (2× gold, but also boosted XP and a
+// compressed lane phase), so divide the ranked benchmark by 1.8 — not 2 — for the turbo "par".
+const TURBO_PACE_FACTOR = 1.8;
 const EXCLUDE_COMPONENTS = new Set(['perseverance', 'sange', 'yasha', 'kaya', 'skull_basher']);
 const NON_BUILD_ITEMS = new Set(['ultimate_scepter_2', 'aghanims_blessing', 'aghanims_blessing_2']);
 const PROGRESSION_CONTEXT_ITEMS = new Set(['crystalys', 'maelstrom']);
@@ -247,7 +249,7 @@ function buildSignals(matches: StudyMatch[], benchmarks: Map<number, number>): I
       medianAll,
       medianWin,
       medianLoss,
-      parMin: benchmarks.has(itemId) ? (benchmarks.get(itemId)! / TURBO_GOLD_FACTOR) : null,
+      parMin: benchmarks.has(itemId) ? (benchmarks.get(itemId)! / TURBO_PACE_FACTOR) : null,
       cutoff,
       fast,
       slow,

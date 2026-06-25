@@ -7,10 +7,14 @@ import { logger } from '../services/loggerService';
 
 // Per-hero key-item timings from a player's Turbo games, benchmarked against the playerbase.
 //   YOU    = the player's average completion time in Turbo
-//   PAR    = what an average player hits it at in Turbo = ranked average ÷ 2 (Turbo doubles gold)
+//   PAR    = what an average player hits it at in Turbo = ranked average ÷ 1.8
 //   RANKED = Stratz's real ranked/normal-game average (Stratz has no Turbo item data)
+//
+// Turbo doesn't quite halve item timings: gold is ~2× but XP is also boosted and the
+// lane phase is compressed, so real Turbo completion lands ~55-65% of the ranked time.
+// 1.8 is the empirical middle of that band (÷2 was too aggressive, making everyone look slow).
 
-const TURBO_GOLD_FACTOR = 2;
+const TURBO_PACE_FACTOR = 1.8;
 const MATCH_SAMPLE = 20;
 
 // Pure build-up pieces that are never the "key item" anyone wants a timing for.
@@ -149,7 +153,7 @@ export async function turboItems(message: Message, args: string[], userDataServi
       .map(([itemId, e]) => {
         const youMin = e.sumSec / e.count / 60;
         const rankedMin = benchmarks.get(itemId) ?? null;
-        const parMin = rankedMin != null ? rankedMin / TURBO_GOLD_FACTOR : null;
+        const parMin = rankedMin != null ? rankedMin / TURBO_PACE_FACTOR : null;
         return { name: e.name, count: e.count, youMin, parMin, rankedMin };
       })
       .sort((a, b) => a.youMin - b.youMin);
@@ -190,7 +194,7 @@ export async function turboItems(message: Message, args: string[], userDataServi
       embed.addFields({ name: '🔸 Also built (no benchmark)', value: alsoBuilt, inline: false });
     }
     embed
-      .setFooter({ text: 'PAR = RANKED ÷2 (turbo doubles gold) — Stratz has no turbo item data, so RANKED is the real benchmark · 🔥faster 🟢good 🟡par 🔴slower · ≥25% of games' })
+      .setFooter({ text: 'PAR = RANKED ÷1.8 (turbo\'s faster gold + XP) — Stratz has no turbo item data, so RANKED is the real benchmark · 🔥faster 🟢good 🟡par 🔴slower · ≥25% of games' })
       .setTimestamp();
 
     await loading.edit({ content: '', embeds: [embed] });
