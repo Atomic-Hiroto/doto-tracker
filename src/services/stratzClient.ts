@@ -866,3 +866,73 @@ export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}
     return { byPosition: out, windowLabel: 'unavailable' };
   }
 }
+
+// ── Ranked baseline for turbo-specialist tagging ─────────────────────────────
+
+export interface TurboRankedBaseline {
+  /** pos -> heroId -> ranked win rate (0..1), only heroes with a stable per-position sample. */
+  byPosition: Record<number, Record<number, number>>;
+}
+
+// Per hero per position (pooled across the requested brackets) needed before a ranked WR is a
+// trustworthy baseline for the specialist delta.
+const RANKED_BASELINE_MIN_GAMES = 400;
+const rankedBaselineCache = new Map<string, { ts: number; result: TurboRankedBaseline }>();
+
+/**
+ * Position-matched **ranked** (ALL_PICK_RANKED) hero win rates, using the same window and bracket
+ * filter as the turbo meta, so `+turbometa` can flag genuine turbo specialists (heroes that win
+ * notably more in Turbo than in Ranked *at the same role*) rather than heroes that are simply strong
+ * everywhere. Kept as a separate call from the turbo fetch so a ranked-side failure can never
+ * degrade the core meta — it just yields no tags. Cached 45 min like the turbo side. Empty on error.
+ */
+export async function fetchStratzRankedBaselineByPosition(opts: TurboMetaOptions = {}): Promise<TurboRankedBaseline> {
+  const byPosition: Record<number, Record<number, number>> = {};
+  for (let i = 1; i <= 5; i++) byPosition[i] = {};
+  if (!STRATZ_API_KEY) return { byPosition };
+
+  const brackets = (opts.brackets ?? []).filter((b) => (TURBO_META_BRACKETS as readonly string[]).includes(b));
+  const bracketArg = brackets.length ? `, bracketIds:[${brackets.join(',')}]` : '';
+  const field = opts.patch ? 'winMonth' : 'winWeek';
+
+  const cacheKey = `${field}|${[...brackets].sort().join(',')}`;
+  const cached = rankedBaselineCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < TURBO_META_TTL_MS) return cached.result;
+
+  const aliases = TURBO_META_POSITIONS
+    .map((pos, i) => `p${i + 1}: ${field}(gameModeIds:[ALL_PICK_RANKED], positionIds:[${pos}]${bracketArg}) { heroId matchCount winCount }`)
+    .join('\n      ');
+  const query = `{ heroStats {\n      ${aliases}\n  } }`;
+
+  try {
+    const response = await axios.post(STRATZ_GQL, { query }, { headers: STRATZ_HEADERS, timeout: 30000 });
+    if (response.data?.errors) {
+      logger.warn('Stratz ranked baseline errors:', JSON.stringify(response.data.errors).slice(0, 300));
+    }
+    const hs = response.data?.data?.heroStats ?? {};
+
+    for (let i = 1; i <= 5; i++) {
+      const rows: any[] = hs[`p${i}`] ?? [];
+      const agg = new Map<number, { m: number; w: number }>();
+      for (const r of rows) {
+        const heroId = Number(r.heroId);
+        const e = agg.get(heroId) ?? { m: 0, w: 0 };
+        e.m += r.matchCount || 0;
+        e.w += r.winCount || 0;
+        agg.set(heroId, e);
+      }
+      for (const [heroId, { m, w }] of agg) {
+        if (m >= RANKED_BASELINE_MIN_GAMES) byPosition[i][heroId] = w / m;
+      }
+    }
+
+    const result: TurboRankedBaseline = { byPosition };
+    if (Object.values(byPosition).some((o) => Object.keys(o).length > 0)) {
+      rankedBaselineCache.set(cacheKey, { ts: Date.now(), result });
+    }
+    return result;
+  } catch (error: any) {
+    logger.error('Stratz ranked baseline fetch error:', error?.response?.data ?? error?.message ?? error);
+    return { byPosition };
+  }
+}

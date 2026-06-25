@@ -2,7 +2,7 @@ import fs from 'fs';
 import { EmbedBuilder, Message } from 'discord.js';
 import { dotaDataService } from '../services/dotaDataService';
 import { logger } from '../services/loggerService';
-import { fetchStratzTurboMetaByPosition, TURBO_META_BRACKETS, TurboMetaPositionHero } from '../services/stratzClient';
+import { fetchStratzTurboMetaByPosition, fetchStratzRankedBaselineByPosition, TURBO_META_BRACKETS, TurboMetaPositionHero } from '../services/stratzClient';
 
 // Pos 1..5 display labels.
 const POSITION_LABELS: Record<number, string> = {
@@ -14,6 +14,9 @@ const POSITION_LABELS: Record<number, string> = {
 };
 
 const TOP_N = 8;
+// A hero in the top list that wins at least this much MORE in Turbo than in same-role Ranked is
+// flagged a "turbo specialist" — genuinely turbo-favoured, not just strong everywhere.
+const SPECIALIST_DELTA = 0.03;
 // Absolute floor so a hero with a handful of games never tops a role (full pool).
 const MIN_GAMES_FLOOR = 2000;
 // Lower floor when a rank/patch filter shrinks the pool, so narrow filters still return heroes.
@@ -167,7 +170,13 @@ export async function turboMeta(message: Message, args: string[] = []) {
   const rankHint = opts.brackets.length ? `, ${opts.rankLabel}` : '';
   const loading = await message.reply(`⏳ Pulling the live Turbo meta from STRATZ (per position, ${windowHint}${rankHint})…`);
   try {
-    const { byPosition, windowLabel } = await fetchStratzTurboMetaByPosition({ patch: opts.patch, brackets: opts.brackets });
+    const [{ byPosition, windowLabel }, rankedBaseline] = await Promise.all([
+      fetchStratzTurboMetaByPosition({ patch: opts.patch, brackets: opts.brackets }),
+      // Additive only: if this fails, the meta still renders, just without specialist tags.
+      fetchStratzRankedBaselineByPosition({ patch: opts.patch, brackets: opts.brackets })
+        .catch(() => ({ byPosition: {} as Record<number, Record<number, number>> })),
+    ]);
+    const hasRankedBaseline = Object.values(rankedBaseline.byPosition ?? {}).some((o) => Object.keys(o).length > 0);
     const hasData = Object.values(byPosition).some((rows) => rows && rows.length > 0);
     if (!hasData) {
       return loading.edit('Could not fetch the Turbo meta from STRATZ right now (no data, or that filter is too narrow). Try again or widen the rank.');
@@ -217,11 +226,15 @@ export async function turboMeta(message: Message, args: string[] = []) {
       curSnap.byPosition[pos] = {};
       for (const h of topHeroes) curSnap.byPosition[pos][h.heroId] = h.winRate;
 
+      const rankedPos = rankedBaseline.byPosition?.[pos];
       const lines = topHeroes.map((h, i) => {
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `\`${i + 1}.\``;
         const name = nameMap.get(h.heroId) ?? `Hero ${h.heroId}`;
+        const rankedWR = rankedPos?.[h.heroId];
+        const dWR = rankedWR != null ? h.winRate - rankedWR : null;
+        const spec = dWR != null && dWR >= SPECIALIST_DELTA ? ` 🔥+${(dWR * 100).toFixed(1)}` : '';
         const marker = trendMarker(prevPos, h.heroId, h.winRate);
-        return `${medal} **${name}** — ${(h.winRate * 100).toFixed(1)}% WR · ${fmtGames(h.matchCount)} games${marker}`;
+        return `${medal} **${name}** — ${(h.winRate * 100).toFixed(1)}% WR · ${fmtGames(h.matchCount)} games${spec}${marker}`;
       });
       embed.addFields({
         name: `${POSITION_LABELS[pos]}  _(min ${fmtGames(gate)} games)_`,
@@ -243,12 +256,16 @@ export async function turboMeta(message: Message, args: string[] = []) {
     const windowNote = opts.patch
       ? `**${windowLabel}** — a wider current-patch sample (Turbo patches run for months, so 30 days = the live patch).`
       : 'Rolling 7-day window — tracks the current patch automatically. Add `patch` for a wider 30-day sample.';
+    const specialistNote = hasRankedBaseline
+      ? `\n🔥+x = **turbo specialist**: wins x pp more in Turbo than in same-role Ranked (vs ranked all-pick, same window${opts.brackets.length ? '/rank' : ''}) — turbo-favoured, not just universally strong.`
+      : '';
     embed.addFields({
       name: 'Method & caveats',
       value:
         bracketNote +
         'Ranking uses the Wilson 95% lower bound, not raw WR, with a per-role sample gate. ' +
         windowNote +
+        specialistNote +
         '\nFlags: `+turbometa [patch] [rank]` — e.g. `+turbometa immortal`, `+turbometa patch divine+`.',
       inline: false,
     });
