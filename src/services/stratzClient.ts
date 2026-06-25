@@ -856,22 +856,27 @@ export const TURBO_META_BRACKETS = ['HERALD', 'GUARDIAN', 'CRUSADER', 'ARCHON', 
 export interface TurboMetaOptions {
   /** RankBracket enum names to include (e.g. ['DIVINE','IMMORTAL']). Empty/undefined = all brackets. */
   brackets?: string[];
-  /** Pin to the latest game version that has Turbo data instead of the rolling 7-day window. */
+  /**
+   * Use the wider 30-day window instead of the rolling 7-day one. Labelled "current patch"
+   * because Turbo patches run for months, so the last 30 days are all the live patch.
+   * NOTE: Stratz's per-version endpoint (`winGameVersion`) does not expose the current Turbo
+   * patch (it lags by a version), and the only time-filterable endpoint (`stats`) can't filter
+   * to Turbo — so true patch-boundary pinning isn't possible; a 30-day window is the best proxy.
+   */
   patch?: boolean;
 }
 
 export interface TurboMetaResult {
   byPosition: Record<number, TurboMetaPositionHero[]>;
-  /** Human-readable window label, e.g. "last 7 days" or "patch 7.40". */
+  /** Human-readable window label, e.g. "last 7 days" or "last 30 days". */
   windowLabel: string;
 }
 
 /**
- * Per-position Turbo hero stats, via Stratz. Default uses `winWeek` (rolling 7 days ≈ current
- * patch); `opts.patch` switches to `winGameVersion` pinned to the newest version that has data.
- * Both endpoints return one row per hero per medal bracket, so we sum across brackets to pool
- * the requested rank range per hero. `opts.brackets` filters to a rank range server-side.
- * Returns empty positions if the API key is missing or the call fails.
+ * Per-position Turbo hero stats, via Stratz. Default uses `winWeek` (rolling 7 days); `opts.patch`
+ * switches to `winMonth` (30 days) for a larger current-patch sample. Both endpoints return one
+ * row per hero per medal bracket, so we sum across brackets to pool the requested rank range per
+ * hero. `opts.brackets` filters to a rank range server-side. Empty positions on missing key/error.
  */
 export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}): Promise<TurboMetaResult> {
   const out: Record<number, TurboMetaPositionHero[]> = {};
@@ -883,14 +888,12 @@ export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}
 
   const brackets = (opts.brackets ?? []).filter((b) => (TURBO_META_BRACKETS as readonly string[]).includes(b));
   const bracketArg = brackets.length ? `, bracketIds:[${brackets.join(',')}]` : '';
-  const field = opts.patch ? 'winGameVersion' : 'winWeek';
-  const selection = opts.patch ? 'gameVersionId heroId matchCount winCount' : 'heroId matchCount winCount';
+  const field = opts.patch ? 'winMonth' : 'winWeek';
 
   const aliases = TURBO_META_POSITIONS
-    .map((pos, i) => `p${i + 1}: ${field}(gameModeIds:[TURBO], positionIds:[${pos}]${bracketArg}) { ${selection} }`)
+    .map((pos, i) => `p${i + 1}: ${field}(gameModeIds:[TURBO], positionIds:[${pos}]${bracketArg}) { heroId matchCount winCount }`)
     .join('\n      ');
-  const versions = opts.patch ? '\n    constants { gameVersions { id name } }' : '';
-  const query = `{ heroStats {\n      ${aliases}\n  }${versions} }`;
+  const query = `{ heroStats {\n      ${aliases}\n  } }`;
 
   try {
     const response = await axios.post(
@@ -903,18 +906,8 @@ export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}
     }
     const hs = response.data?.data?.heroStats ?? {};
 
-    // In patch mode, pin to the newest gameVersionId that actually has Turbo rows (newest
-    // patch can lag), then keep only that version's rows before aggregating.
-    let latestVersion = -1;
-    if (opts.patch) {
-      for (let i = 1; i <= 5; i++) {
-        for (const r of (hs[`p${i}`] ?? [])) latestVersion = Math.max(latestVersion, Number(r.gameVersionId));
-      }
-    }
-
     for (let i = 1; i <= 5; i++) {
-      let rows: any[] = hs[`p${i}`] ?? [];
-      if (opts.patch) rows = rows.filter((r) => Number(r.gameVersionId) === latestVersion);
+      const rows: any[] = hs[`p${i}`] ?? [];
       const agg = new Map<number, TurboMetaPositionHero>();
       for (const r of rows) {
         const heroId = Number(r.heroId);
@@ -926,13 +919,7 @@ export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}
       out[i] = [...agg.values()];
     }
 
-    let windowLabel = 'last 7 days';
-    if (opts.patch) {
-      const versionsList: any[] = response.data?.data?.constants?.gameVersions ?? [];
-      const name = versionsList.find((v) => Number(v.id) === latestVersion)?.name;
-      windowLabel = name ? `patch ${name}` : `patch (v${latestVersion})`;
-    }
-    return { byPosition: out, windowLabel };
+    return { byPosition: out, windowLabel: opts.patch ? 'last 30 days' : 'last 7 days' };
   } catch (error: any) {
     logger.error('Stratz turbo meta fetch error:', error?.response?.data ?? error?.message ?? error);
     return { byPosition: out, windowLabel: 'unavailable' };

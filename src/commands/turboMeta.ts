@@ -129,7 +129,7 @@ export async function turboMeta(message: Message, args: string[] = []) {
     );
   }
 
-  const windowHint = opts.patch ? 'latest patch' : 'last 7 days';
+  const windowHint = opts.patch ? 'last 30 days' : 'last 7 days';
   const rankHint = opts.brackets.length ? `, ${opts.rankLabel}` : '';
   const loading = await message.reply(`⏳ Pulling the live Turbo meta from STRATZ (per position, ${windowHint}${rankHint})…`);
   try {
@@ -185,8 +185,8 @@ export async function turboMeta(message: Message, args: string[] = []) {
       ? `Filtered to **${opts.rankLabel}**. `
       : 'Win rate is pooled across **all** skill brackets, so this is "what wins in Turbo overall," not skill-controlled. ';
     const windowNote = opts.patch
-      ? `Pinned to **${windowLabel}** (newest patch with Turbo data).`
-      : 'Rolling 7-day window — tracks the current patch automatically. Add `patch` to pin to the latest patch.';
+      ? `**${windowLabel}** — a wider current-patch sample (Turbo patches run for months, so 30 days = the live patch).`
+      : 'Rolling 7-day window — tracks the current patch automatically. Add `patch` for a wider 30-day sample.';
     embed.addFields({
       name: 'Method & caveats',
       value:
