@@ -13,6 +13,7 @@ export { turboStudyParty } from './turboStudyParty';
 export { turboStudyItems } from './turboStudyItems';
 export { turboStudyDeep } from './turboStudyDeep';
 export { turboHeroLeaderboard } from './turboHeroLeaderboard';
+export { turboMeta } from './turboMeta';
 export { turboPairings, myTurboPairings } from './turboPairings';
 export { turboRank } from './turboRank';
 export { turboLean, turboVs, turboClimb, turboSquad } from './turboFun';

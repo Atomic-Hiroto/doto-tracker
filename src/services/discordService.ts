@@ -183,8 +183,10 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.draft(message, args);
       break;
     case Commands.META:
-    case Commands.TURBO_META:
       await commandHandlers.meta(message);
+      break;
+    case Commands.TURBO_META:
+      await commandHandlers.turboMeta(message);
       break;
     case Commands.ACHIEVEMENTS:
       await commandHandlers.achievements(message, args, userDataService);

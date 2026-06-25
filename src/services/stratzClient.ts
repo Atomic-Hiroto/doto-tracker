@@ -838,3 +838,61 @@ export async function fetchStratzPlayerProfile(
     return { name: null, seasonRank: null };
   }
 }
+
+// ── Turbo meta by position (current patch / last 7 days) ─────────────────────
+
+export interface TurboMetaPositionHero {
+  heroId: number;
+  matchCount: number;
+  winCount: number;
+}
+
+/** Stratz position enum keys, in pos 1→5 order, used by the turbo meta query. */
+export const TURBO_META_POSITIONS = ['POSITION_1', 'POSITION_2', 'POSITION_3', 'POSITION_4', 'POSITION_5'] as const;
+
+/**
+ * Per-position Turbo hero stats for the last 7 days (≈ current patch), via Stratz `winWeek`.
+ * `winWeek` returns one row per hero PER medal bracket, so we sum across brackets to get the
+ * all-bracket pool per hero. Returns a map of position label (1..5) → aggregated hero rows.
+ * Empty map if the API key is missing or the call fails.
+ */
+export async function fetchStratzTurboMetaByPosition(): Promise<Record<number, TurboMetaPositionHero[]>> {
+  const out: Record<number, TurboMetaPositionHero[]> = {};
+  if (!STRATZ_API_KEY) {
+    logger.warn('STRATZ_API_KEY not set — skipping Stratz turbo meta fetch');
+    return out;
+  }
+
+  const aliases = TURBO_META_POSITIONS
+    .map((pos, i) => `p${i + 1}: winWeek(gameModeIds:[TURBO], positionIds:[${pos}]) { heroId matchCount winCount }`)
+    .join('\n      ');
+  const query = `{ heroStats {\n      ${aliases}\n  } }`;
+
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      { query },
+      { headers: STRATZ_HEADERS, timeout: 30000 },
+    );
+    if (response.data?.errors) {
+      logger.warn('Stratz turbo meta errors:', JSON.stringify(response.data.errors).slice(0, 300));
+    }
+    const hs = response.data?.data?.heroStats ?? {};
+    for (let i = 1; i <= 5; i++) {
+      const rows: any[] = hs[`p${i}`] ?? [];
+      const agg = new Map<number, TurboMetaPositionHero>();
+      for (const r of rows) {
+        const heroId = Number(r.heroId);
+        const e = agg.get(heroId) ?? { heroId, matchCount: 0, winCount: 0 };
+        e.matchCount += r.matchCount || 0;
+        e.winCount += r.winCount || 0;
+        agg.set(heroId, e);
+      }
+      out[i] = [...agg.values()];
+    }
+    return out;
+  } catch (error: any) {
+    logger.error('Stratz turbo meta fetch error:', error?.response?.data ?? error?.message ?? error);
+    return out;
+  }
+}
