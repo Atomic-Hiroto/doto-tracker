@@ -417,7 +417,14 @@ export class TurboRankService {
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
     // Confidence from the visible-rank-weighted effective sample. ~12 full lobbies -> ~100%.
-    const confidence = Math.min(100, Math.max(10, Math.round(effectiveSample * 8)));
+    let confidence = Math.min(100, Math.max(10, Math.round(effectiveSample * 8)));
+    // Turbo lobby averages cap ~4-4.5k MMR, so for players whose *visible ranked* rank sits at or
+    // above that ceiling the estimate is structurally pinned and can't reflect their true skill no
+    // matter how many games we have. Cap confidence so a maxed-out Immortal doesn't read a false
+    // 100% — the sample is fine, but the estimate's ability to place them is not.
+    const rankedMedalTier = rankedTier != null ? Math.floor(rankedTier / 10) : 0;
+    if (rankedMedalTier >= 8) confidence = Math.min(confidence, 40);       // Immortal — well above ceiling
+    else if (rankedMedalTier === 7) confidence = Math.min(confidence, 75); // Divine — sits right at it
 
     // Range = ±1 standard error of the weighted mean (clamped to a sensible width).
     let variance = 0;
@@ -866,9 +873,13 @@ export class TurboRankService {
 
   /** Detailed string for the turborank command. */
   static formatDetailed(estimate: TurboRankEstimate): string {
+    // Divine+ (tier 7-8) sits at/above Turbo's resolution ceiling, so low confidence there means
+    // "unmeasurable", not "needs more games".
+    const ceilingLimited = (estimate.rankedTier ?? 0) >= 70;
     const confLabel =
       estimate.confidence >= 80 ? '🟢 High confidence'
       : estimate.confidence >= 50 ? '🟡 Moderate confidence'
+      : ceilingLimited ? '🔴 Low confidence (ranked rank is above Turbo\'s resolution ceiling)'
       : '🔴 Low confidence (need more solo games)';
     return [
       `**${tierToEmoji(estimate.medalTier)} Hidden Turbo Rank: ${estimate.medal}${starString(estimate.stars)}**`,

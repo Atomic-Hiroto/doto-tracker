@@ -52,11 +52,19 @@ function pearson(pts: Array<{ x: number; y: number }>): number | null {
   return denom === 0 ? null : cov / denom;
 }
 
-/** Population standard deviation of a value list. */
-function stdev(vals: number[]): number {
-  if (vals.length === 0) return 0;
-  const m = vals.reduce((s, v) => s + v, 0) / vals.length;
-  return Math.sqrt(vals.reduce((s, v) => s + (v - m) * (v - m), 0) / vals.length);
+/**
+ * Sampling-corrected spread (stdev) of win rates. The raw cross-hero stdev mixes *true* spread
+ * with binomial sampling noise — each hero's WR has SE = sqrt(p(1-p)/n), and at the 400-game floor
+ * that's ~±2.5%, comparable to the whole spread. Since Turbo has far fewer games per hero than
+ * all-bracket Ranked, its raw spread is inflated more, which would overstate "Turbo is X% wider".
+ * We subtract the mean sampling variance to estimate the true spread. Returns raw + corrected.
+ */
+function correctedSpread(pairs: Array<{ wr: number; n: number }>): { raw: number; corrected: number } {
+  if (pairs.length === 0) return { raw: 0, corrected: 0 };
+  const mean = pairs.reduce((s, p) => s + p.wr, 0) / pairs.length;
+  const observedVar = pairs.reduce((s, p) => s + (p.wr - mean) ** 2, 0) / pairs.length;
+  const samplingVar = pairs.reduce((s, p) => s + (p.wr * (1 - p.wr)) / Math.max(1, p.n), 0) / pairs.length;
+  return { raw: Math.sqrt(observedVar), corrected: Math.sqrt(Math.max(0, observedVar - samplingVar)) };
 }
 
 /** Gini coefficient of a distribution (0 = everyone picked equally, 1 = one hero hogs all picks). */
@@ -137,10 +145,12 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
     });
 
     // ── Aggregate imbalance metrics ──────────────────────────────────────────
-    const turboWRs = rows.map((r) => r.turboWR);
-    const rankedWRs = rows.map((r) => r.rankedWR);
-    const turboSpread = stdev(turboWRs);
-    const rankedSpread = stdev(rankedWRs);
+    // Spreads are sampling-corrected so the "Turbo is X% wider" claim reflects true imbalance,
+    // not Turbo's smaller per-hero samples carrying more binomial noise.
+    const turboSpreadStats = correctedSpread(rows.map((r) => ({ wr: r.turboWR, n: r.turboPicks })));
+    const rankedSpreadStats = correctedSpread(rows.map((r) => ({ wr: r.rankedWR, n: r.rankedPicks })));
+    const turboSpread = turboSpreadStats.corrected;
+    const rankedSpread = rankedSpreadStats.corrected;
     const spreadRatio = rankedSpread > 0 ? turboSpread / rankedSpread : null;
     const meanAbsDWR = rows.reduce((s, r) => s + Math.abs(r.dWR), 0) / rows.length;
 
@@ -216,6 +226,7 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
           value:
             `Win-rate spread: **±${(turboSpread * 100).toFixed(1)}%** turbo vs **±${(rankedSpread * 100).toFixed(1)}%** ranked` +
             (spreadRatio != null ? ` (**${spreadRatio.toFixed(2)}×**)` : '') + '\n' +
+            `_↳ sampling-corrected; raw ±${(turboSpreadStats.raw * 100).toFixed(1)}% vs ±${(rankedSpreadStats.raw * 100).toFixed(1)}%_\n` +
             `Mean |WR gap| per hero: **${(meanAbsDWR * 100).toFixed(1)}%**\n` +
             `WR correlation: **${wrCorr?.toFixed(2) ?? 'n/a'}** · Pick correlation: **${pickCorr?.toFixed(2) ?? 'n/a'}**\n` +
             `Pick concentration (top-10 share): **${fmtPct(top10Share('turboShare'))}** turbo vs **${fmtPct(top10Share('rankedShare'))}** ranked\n` +
