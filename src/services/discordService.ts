@@ -142,6 +142,11 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_ITEMS:
       await commandHandlers.turboItems(message, args, userDataService);
       break;
+    case Commands.DURATION_STUDY:
+    case Commands.GAME_DURATION:
+    case Commands.TURBO_DURATION:
+      await commandHandlers.durationStudy(message, args, userDataService);
+      break;
     case Commands.TOGGLE_SHARED_CONTEXT:
       await commandHandlers.toggleSharedContext(message, args);
       break;

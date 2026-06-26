@@ -47,6 +47,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbosquad @user` — frequent tracked Turbo teammates',
       '`+turbowinrate [@user|steamId]` — win rate by lobby bracket & party size',
       '`+turboitems [hero] [@user]` — key item timings on a hero (turbo-adjusted)',
+      '`+durationstudy [crew|90|all]` — crew Turbo vs normal game duration study',
       '`+topheroes` / `+topheros [@user]` — best turbo heroes (60d by default)',
       '`+turbopairs [@user]` — best turbo duos (global, or a player\'s)',
       '`+turbometa [patch] [rank]` — best turbo heroes per position (STRATZ, Wilson-ranked)',
