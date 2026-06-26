@@ -19,6 +19,7 @@ export { turboRank } from './turboRank';
 export { turboLean, turboVs, turboClimb, turboSquad } from './turboFun';
 export { turboWinRate } from './turboWinRate';
 export { turboItems } from './turboItems';
+export { durationStudy } from './durationStudy';
 export { toggleSharedContext } from './toggleSharedContext';
 export { profile } from './profile';
 export { tophero } from './tophero';
