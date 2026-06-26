@@ -1,6 +1,7 @@
 import { EmbedBuilder, Message } from 'discord.js';
 import { opendotaClient } from '../services/apiClient';
 import { logger } from '../services/loggerService';
+import { turboRankService } from '../services/turboRankService';
 import { UserDataService } from '../services/userDataService';
 import { formatDuration } from '../utils/formatters';
 
@@ -11,6 +12,7 @@ const MATCH_LIMIT = 500;
 const FETCH_BATCH_SIZE = 3;
 const MIN_DURATION_SEC = 5 * 60;
 const MAX_DURATION_SEC = 120 * 60;
+const THIN_SAMPLE_GAMES = 5;
 
 interface ModeDuration {
   games: number;
@@ -22,6 +24,12 @@ interface DurationRow {
   steamId: string;
   turbo: ModeDuration;
   normal: ModeDuration;
+}
+
+interface DurationTarget {
+  discordId: string;
+  steamId: string;
+  name?: string;
 }
 
 function emptyMode(): ModeDuration {
@@ -74,9 +82,42 @@ function parseWindow(args: string[]): { days: number | null; scopeLabel: string 
   return { days, scopeLabel: `last ${days} days` };
 }
 
-async function displayName(message: Message, discordId: string): Promise<string> {
-  const user = await message.client.users.fetch(discordId).catch(() => null);
-  return user?.username ?? `Discord ${discordId}`;
+function uniqueBySteamId<T extends { steamId: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (seen.has(row.steamId)) return false;
+    seen.add(row.steamId);
+    return true;
+  });
+}
+
+function getTargets(userDataService: UserDataService, includeDiscovered: boolean): DurationTarget[] {
+  const bySteamId = new Map<string, DurationTarget>();
+
+  for (const user of userDataService.getAllUsers()) {
+    if (!bySteamId.has(user.steamId)) {
+      bySteamId.set(user.steamId, { discordId: user.discordId, steamId: user.steamId });
+    }
+  }
+
+  for (const entry of turboRankService.getAllEstimates()) {
+    if (!includeDiscovered && entry.discovered) continue;
+    if (bySteamId.has(entry.steamId)) continue;
+    bySteamId.set(entry.steamId, {
+      discordId: entry.discordId,
+      steamId: entry.steamId,
+      name: entry.steamName ?? `Steam ${entry.steamId}`,
+    });
+  }
+
+  return [...bySteamId.values()];
+}
+
+async function displayName(message: Message, target: DurationTarget): Promise<string> {
+  if (target.name) return target.name;
+  if (!target.discordId) return `Steam ${target.steamId}`;
+  const user = await message.client.users.fetch(target.discordId).catch(() => null);
+  return user?.username ?? `Discord ${target.discordId}`;
 }
 
 async function fetchDurations(steamId: string, days: number | null): Promise<{ turbo: ModeDuration; normal: ModeDuration }> {
@@ -114,28 +155,29 @@ async function fetchDurations(steamId: string, days: number | null): Promise<{ t
 
 export async function durationStudy(message: Message, args: string[], userDataService: UserDataService) {
   const { days, scopeLabel } = parseWindow(args);
-  const registered = userDataService.getAllUsers();
-  if (!registered.length) return message.reply('No registered players to study yet.');
+  const includeDiscovered = args.some((arg) => ['full', 'everyone', 'discovered'].includes(arg.toLowerCase()));
+  const targets = uniqueBySteamId(getTargets(userDataService, includeDiscovered));
+  if (!targets.length) return message.reply('No crew players to study yet.');
 
   const progress = await message.reply(
-    `⏱️ Checking crew game duration across **${registered.length}** registered player(s)... ${scopeLabel}.`,
+    `⏱️ Checking crew game duration across **${targets.length}** player(s)... ${scopeLabel}.`,
   );
 
   try {
     const rows: DurationRow[] = [];
-    for (let i = 0; i < registered.length; i += FETCH_BATCH_SIZE) {
-      const batch = registered.slice(i, i + FETCH_BATCH_SIZE);
+    for (let i = 0; i < targets.length; i += FETCH_BATCH_SIZE) {
+      const batch = targets.slice(i, i + FETCH_BATCH_SIZE);
       const fetched = await Promise.all(batch.map(async (user) => {
         const [name, durations] = await Promise.all([
-          displayName(message, user.discordId),
+          displayName(message, user),
           fetchDurations(user.steamId, days),
         ]);
         return { name, steamId: user.steamId, ...durations };
       }));
       rows.push(...fetched);
-      const checked = Math.min(registered.length, i + batch.length);
-      if (checked === registered.length || checked % 6 === 0) {
-        progress.edit(`⏱️ Checking crew game duration... ${checked}/${registered.length} player(s).`).catch(() => {});
+      const checked = Math.min(targets.length, i + batch.length);
+      if (checked === targets.length || checked % 6 === 0) {
+        progress.edit(`⏱️ Checking crew game duration... ${checked}/${targets.length} player(s).`).catch(() => {});
       }
     }
 
@@ -178,7 +220,13 @@ export async function durationStudy(message: Message, args: string[], userDataSe
       })
       .sort((a, b) => b.delta - a.delta)
       .slice(0, 10)
-      .map(({ row, delta }) => `**${row.name}** — Turbo ${fmtAvg(row.turbo)} vs normal ${fmtAvg(row.normal)} (${fmtDelta(delta)})`);
+      .map(({ row, delta }) => {
+        const flags = [
+          row.turbo.games < THIN_SAMPLE_GAMES ? 'thin Turbo sample' : null,
+          row.normal.games < THIN_SAMPLE_GAMES ? 'thin normal sample' : null,
+        ].filter(Boolean).join(', ');
+        return `**${row.name}** — Turbo ${fmtAvg(row.turbo)} vs normal ${fmtAvg(row.normal)} (${fmtDelta(delta)})${flags ? ` · ${flags}` : ''}`;
+      });
 
     const missingLines = [
       rows.filter((row) => row.turbo.games === 0).length ? `${rows.filter((row) => row.turbo.games === 0).length} player(s) had no Turbo games in scope.` : null,
@@ -193,7 +241,7 @@ export async function durationStudy(message: Message, args: string[], userDataSe
         {
           name: 'Coverage',
           value:
-            `Players checked: **${registered.length}** | comparable: **${comparable.length}**\n` +
+            `Players checked: **${targets.length}** | comparable: **${comparable.length}**\n` +
             `Turbo games: **${turboTotal.games}** | normal AP/ranked AP games: **${normalTotal.games}**\n` +
             `Scope: **${scopeLabel}**`,
           inline: false,
@@ -214,7 +262,9 @@ export async function durationStudy(message: Message, args: string[], userDataSe
           name: 'Method',
           value:
             `Turbo = game mode 23. Normal = All Pick + Ranked All Pick only, so weird modes do not pollute the comparison. ` +
-            `Matches under 5m or over 120m are excluded as likely remakes/outliers. Player-weighted average gives each comparable player one vote, so high-volume players do not dominate.`,
+            `Targets include registered users plus non-discovered TurboRank/manual calibrations; duplicate Steam IDs are counted once. ` +
+            `Matches under 5m or over 120m are excluded as likely remakes/outliers. ` +
+            `Player-weighted average gives each comparable player one vote, so high-volume players do not dominate.`,
           inline: false,
         },
       )
@@ -230,4 +280,3 @@ export async function durationStudy(message: Message, args: string[], userDataSe
     await progress.edit('Failed to build the crew duration study. OpenDota may be rate-limited; try again later.');
   }
 }
-
