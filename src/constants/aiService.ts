@@ -1,5 +1,5 @@
 export const AI_MODEL = "~anthropic/claude-sonnet-latest";
-export const AI_ANALYZE_MODEL = process.env.AI_ANALYZE_MODEL || "~anthropic/claude-opus-latest";
+export const AI_ANALYZE_MODEL = process.env.AI_ANALYZE_MODEL || "~anthropic/claude-sonnet-latest";
 export const AI_COACH_MODEL = process.env.AI_COACH_MODEL || "~anthropic/claude-opus-latest";
 
 // Combined System Prompt - All instructions in one message
