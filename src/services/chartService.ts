@@ -414,20 +414,29 @@ export async function renderMatchScoreboard(
 
             // Name + Dota medal + hero/rank
             ctx.textAlign = 'left';
-            const medalSize = p.rankTier ? 23 : 0;
+            const medalSize = p.rankTier ? 34 : 0;
             const medalX = cols.name;
-            const medalY = midY - 17;
+            const medalY = midY - medalSize / 2;
             if (p.rankTier) {
+                ctx.fillStyle = '#0d0d16';
+                ctx.beginPath();
+                ctx.roundRect(medalX - 2, medalY - 2, medalSize + 4, medalSize + 4, 8);
+                ctx.fill();
                 const icon = await loadCachedImage(rankIconUrl(p.rankTier));
+                ctx.save();
+                ctx.shadowColor = '#000000';
+                ctx.shadowBlur = 5;
+                ctx.shadowOffsetY = 2;
                 if (icon) {
                     ctx.drawImage(icon, medalX, medalY, medalSize, medalSize);
                 }
+                ctx.restore();
                 const star = await loadCachedImage(rankStarIconUrl(p.rankTier));
                 if (star) {
                     ctx.drawImage(star, medalX, medalY, medalSize, medalSize);
                 }
             }
-            const textX = cols.name + (p.rankTier ? medalSize + 7 : 0);
+            const textX = cols.name + (p.rankTier ? medalSize + 10 : 0);
             const textMaxPx = Math.max(110, cols.kda - textX - 12);
             ctx.font = 'bold 14px sans-serif';
             ctx.fillStyle = p.isFocus ? '#c4b5fd' : '#e6e6f0';
@@ -530,7 +539,7 @@ function rankStarIconUrl(rankTier?: number): string | undefined {
     if (!rankTier) return undefined;
     const tier = Math.floor(rankTier / 10);
     const stars = rankTier % 10;
-    if (tier >= 8 || stars <= 0) return undefined;
+    if (tier >= 8 || stars < 1 || stars > 5) return undefined;
     return `https://www.opendota.com/assets/images/dota2/rank_icons/rank_star_${stars}.png`;
 }
 
