@@ -37,7 +37,10 @@ export async function recentStats(message: Message, args: string[], userDataServ
   // Parse count arg — +rs 5 or default 1. Keep the remaining words for the filter DSL.
   const countArg = parsed.positional[0] && /^\d+$/.test(parsed.positional[0]) ? parsed.positional[0] : undefined;
   const count = Math.min(parseIntArg(countArg, 1), 10);
-  const filterWords = countArg ? parsed.positional.slice(1) : parsed.positional.slice();
+  const detailTokens = new Set(['detail', 'details', 'detailed', 'full', 'scorecard']);
+  const rawFilterWords = countArg ? parsed.positional.slice(1) : parsed.positional.slice();
+  const detailedView = rawFilterWords.some((word) => detailTokens.has(word.toLowerCase()));
+  const filterWords = rawFilterWords.filter((word) => !detailTokens.has(word.toLowerCase()));
   const heroFilter = typeof parsed.flags['hero'] === 'string' ? parsed.flags['hero'].toLowerCase() : null;
   const turboOnly = parsed.flags['turbo'] === true;
   const winsOnly = parsed.flags['wins'] === true;
@@ -65,7 +68,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
     matches = matches.slice(0, count);
 
     // Single match — show detailed stats
-    if (count === 1 && !filter.consumedAny) {
+    if (count === 1) {
       const match = matches[0];
       const heroName = await dotaDataService.getHeroName(match.hero_id);
       const isRadiant = match.player_slot < 128;
@@ -76,7 +79,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
       try {
         const { data: detailedMatch } = await opendotaClient.get<any>(`/matches/${match.match_id}`);
         if (detailedMatch?.players?.length) {
-          const board = await renderScoreboardFromMatch(detailedMatch, [user.steamId]);
+          const board = await renderScoreboardFromMatch(detailedMatch, [user.steamId], undefined, { detailed: detailedView });
           files.push(new AttachmentBuilder(board, { name: 'scoreboard.png' }));
           hasBoard = true;
         }
@@ -94,7 +97,11 @@ export async function recentStats(message: Message, args: string[], userDataServ
       if (hasBoard) {
         embed
           .setImage('attachment://scoreboard.png')
-          .setFooter({ text: 'Ranks shown when visible from STRATZ/OpenDota.' });
+          .setFooter({
+            text: detailedView
+              ? 'Detailed scorecard: G/X, net/LH/DN, hero/tower damage, healing, stun duration. Ranks shown when visible.'
+              : 'Ranks shown when visible from STRATZ/OpenDota. Use +rs detailed for damage/heal/stun columns.',
+          });
       } else {
         embed
           .setThumbnail(targetUser.displayAvatarURL())
