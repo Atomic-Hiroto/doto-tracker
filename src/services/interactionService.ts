@@ -19,6 +19,7 @@ import { createMatchDetailRow } from '../components/matchButtons';
 import { referenceService } from './referenceService';
 import { renderMatchAdvantageGraph, renderMatchScoreboard, ScoreboardPlayer, ScoreboardTeam } from './chartService';
 import { APIConstants } from '../constants';
+import { resolveMatchRankDisplay } from './rankDisplayService';
 
 const GAME_MODE_NAMES: Record<number, string> = {
     0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -245,15 +246,19 @@ export function registerInteractionHandler(client: Client, userDataService: User
 
                 const clicker = userDataService.getUserByDiscordId(interaction.user.id);
                 const focusSteamId = clicker ? String(clicker.steamId) : undefined;
+                const rankDisplay = await resolveMatchRankDisplay(match);
 
                 const toScoreboardPlayer = async (p: any): Promise<ScoreboardPlayer> => {
                     const hero = await dotaDataService.getHeroName(p.hero_id);
                     const itemImageUrls = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5']
                         .map((slot) => dotaDataService.getItemImageUrl(Number(p[slot] || 0)));
+                    const rank = rankDisplay?.playersBySteamId.get(String(p.account_id || ''));
                     return {
                         heroName: hero,
                         heroImageUrl: APIConstants.IMAGE_URL(hero),
                         personaName: p.personaname || 'Anonymous',
+                        rankLabel: rank?.label,
+                        rankTier: rank?.rankTier,
                         level: Number(p.level || 0),
                         kills: p.kills ?? 0,
                         deaths: p.deaths ?? 0,
@@ -285,7 +290,11 @@ export function registerInteractionHandler(client: Client, userDataService: User
                 // Visual scoreboard: hero icons, name+level, K/D/A, GPM, net worth, items.
                 try {
                     const scoreboard = await renderMatchScoreboard(radiantTeam, direTeam, {
-                        matchId, durationSec: match.duration, mode: modeName,
+                        matchId,
+                        durationSec: match.duration,
+                        mode: modeName,
+                        lobbyRankLabel: rankDisplay?.lobbyRankLabel,
+                        visibleRankCount: rankDisplay?.visibleRankCount,
                     });
                     files.push(new AttachmentBuilder(scoreboard, { name: 'scoreboard.png' }));
                     embeds.push(new EmbedBuilder()
@@ -297,7 +306,10 @@ export function registerInteractionHandler(client: Client, userDataService: User
                 } catch (boardError) {
                     logger.error(`Failed to render scoreboard for match ${matchId}:`, boardError);
                     // Fall back to a text scoreboard so Details still works if rendering fails.
-                    const line = (p: ScoreboardPlayer) => `**${p.personaName}** (${p.heroName}): ${p.kills}/${p.deaths}/${p.assists} | ${p.gpm} GPM`;
+                    const line = (p: ScoreboardPlayer) => {
+                        const rank = p.rankLabel ? ` | ${p.rankLabel}` : '';
+                        return `**${p.personaName}** (${p.heroName}): ${p.kills}/${p.deaths}/${p.assists} | ${p.gpm} GPM${rank}`;
+                    };
                     embeds.push(new EmbedBuilder()
                         .setColor(match.radiant_win ? '#66bb6a' : '#ef5350')
                         .setTitle(`Match #${matchId} — ${match.radiant_win ? 'Radiant Victory' : 'Dire Victory'}`)
