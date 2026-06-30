@@ -412,33 +412,30 @@ export async function renderMatchScoreboard(
             ctx.textAlign = 'center';
             ctx.fillText(String(p.level), cols.hero + hw - 6, hy + hh);
 
-            // Name + rank + hero
+            // Name + Dota medal + hero/rank
             ctx.textAlign = 'left';
-            ctx.font = 'bold 14px sans-serif';
-            ctx.fillStyle = p.isFocus ? '#c4b5fd' : '#e6e6f0';
-            let nameMaxPx = 228;
-            if (p.rankLabel) {
-                ctx.font = 'bold 10px sans-serif';
-                const pillW = Math.min(104, Math.ceil(ctx.measureText(p.rankLabel).width) + 12);
-                const pillH = 17;
-                const pillX = cols.kda - pillW - 10;
-                const pillY = midY - 17;
-                nameMaxPx = Math.max(92, pillX - cols.name - 8);
-                ctx.fillStyle = '#0d0d16';
-                ctx.beginPath();
-                ctx.roundRect(pillX, pillY, pillW, pillH, 8);
-                ctx.fill();
-                ctx.fillStyle = rankColor(p.rankTier);
-                ctx.textAlign = 'center';
-                ctx.fillText(truncatePx(ctx, p.rankLabel, pillW - 10), pillX + pillW / 2, pillY + 12);
-                ctx.textAlign = 'left';
+            const medalSize = p.rankTier ? 23 : 0;
+            const medalX = cols.name;
+            const medalY = midY - 17;
+            if (p.rankTier) {
+                const icon = await loadCachedImage(rankIconUrl(p.rankTier));
+                if (icon) {
+                    ctx.drawImage(icon, medalX, medalY, medalSize, medalSize);
+                }
+                const star = await loadCachedImage(rankStarIconUrl(p.rankTier));
+                if (star) {
+                    ctx.drawImage(star, medalX, medalY, medalSize, medalSize);
+                }
             }
+            const textX = cols.name + (p.rankTier ? medalSize + 7 : 0);
+            const textMaxPx = Math.max(110, cols.kda - textX - 12);
             ctx.font = 'bold 14px sans-serif';
             ctx.fillStyle = p.isFocus ? '#c4b5fd' : '#e6e6f0';
-            ctx.fillText(truncatePx(ctx, p.personaName || 'Anonymous', nameMaxPx), cols.name, midY - 2);
+            ctx.fillText(truncatePx(ctx, p.personaName || 'Anonymous', textMaxPx), textX, midY - 2);
             ctx.font = '11px sans-serif';
-            ctx.fillStyle = '#8a8aa8';
-            ctx.fillText(truncatePx(ctx, p.heroName, 228), cols.name, midY + 13);
+            const subline = p.rankLabel ? `${p.heroName} • ${p.rankLabel}` : p.heroName;
+            ctx.fillStyle = p.rankTier ? rankColor(p.rankTier) : '#8a8aa8';
+            ctx.fillText(truncatePx(ctx, subline, textMaxPx), textX, midY + 13);
 
             // K/D/A
             ctx.font = '14px sans-serif';
@@ -522,6 +519,19 @@ function rankColor(rankTier?: number): string {
         8: '#f8fafc',
     };
     return colors[Math.floor(rankTier / 10)] ?? '#9aa0c0';
+}
+
+function rankIconUrl(rankTier: number): string {
+    const tier = Math.min(8, Math.max(1, Math.floor(rankTier / 10)));
+    return `https://www.opendota.com/assets/images/dota2/rank_icons/rank_icon_${tier}.png`;
+}
+
+function rankStarIconUrl(rankTier?: number): string | undefined {
+    if (!rankTier) return undefined;
+    const tier = Math.floor(rankTier / 10);
+    const stars = rankTier % 10;
+    if (tier >= 8 || stars <= 0) return undefined;
+    return `https://www.opendota.com/assets/images/dota2/rank_icons/rank_star_${stars}.png`;
 }
 
 export async function renderScoreboardFromMatch(
