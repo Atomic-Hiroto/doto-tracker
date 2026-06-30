@@ -289,8 +289,14 @@ export interface ScoreboardPlayer {
     deaths: number;
     assists: number;
     gpm: number;
+    xpm?: number;
     lastHits: number;
+    denies?: number;
     netWorth: number;
+    heroDamage?: number;
+    towerDamage?: number;
+    heroHealing?: number;
+    stuns?: number;
     itemImageUrls: (string | undefined)[];
     isFocus?: boolean;
 }
@@ -311,12 +317,13 @@ export interface ScoreboardTeam {
 export async function renderMatchScoreboard(
     radiant: ScoreboardTeam,
     dire: ScoreboardTeam,
-    opts: { matchId: number; durationSec: number; mode: string; lobbyRankLabel?: string; visibleRankCount?: number },
+    opts: { matchId: number; durationSec: number; mode: string; lobbyRankLabel?: string; visibleRankCount?: number; detailed?: boolean },
 ): Promise<Buffer> {
-    const W = 940;
+    const detailed = opts.detailed === true;
+    const W = detailed ? 1200 : 940;
     const HEADER_H = 72;
     const TEAM_HEADER_H = 30;
-    const ROW_H = 46;
+    const ROW_H = detailed ? 58 : 46;
     const GAP = 14;
     const teamBlockH = (team: ScoreboardTeam) => TEAM_HEADER_H + team.players.length * ROW_H;
     const H = HEADER_H + teamBlockH(radiant) + GAP + teamBlockH(dire) + 16;
@@ -351,7 +358,9 @@ export async function renderMatchScoreboard(
     );
 
     // Column anchors
-    const cols = { hero: 16, name: 78, kda: 318, gpm: 452, nw: 540, lh: 632, items: 706 };
+    const cols: Record<'hero' | 'name' | 'kda' | 'gpm' | 'nw' | 'lh' | 'dmg' | 'tower' | 'heal' | 'stun' | 'items', number> = detailed
+        ? { hero: 16, name: 78, kda: 320, gpm: 405, nw: 490, lh: 490, dmg: 585, tower: 675, heal: 760, stun: 845, items: 930 }
+        : { hero: 16, name: 78, kda: 318, gpm: 452, nw: 540, lh: 632, dmg: 0, tower: 0, heal: 0, stun: 0, items: 706 };
     const ITEM_W = 30;
     const ITEM_H = 23;
     const ITEM_GAP = 4;
@@ -370,9 +379,16 @@ export async function renderMatchScoreboard(
         ctx.font = 'bold 11px sans-serif';
         ctx.fillStyle = '#6b6b8a';
         ctx.fillText('K / D / A', cols.kda, top + 20);
-        ctx.fillText('GPM', cols.gpm, top + 20);
-        ctx.fillText('NET', cols.nw, top + 20);
-        ctx.fillText('LH', cols.lh, top + 20);
+        ctx.fillText(detailed ? 'G / X' : 'GPM', cols.gpm, top + 20);
+        ctx.fillText(detailed ? 'NET / CS' : 'NET', cols.nw, top + 20);
+        if (detailed) {
+            ctx.fillText('HERO', cols.dmg, top + 20);
+            ctx.fillText('TOWER', cols.tower, top + 20);
+            ctx.fillText('HEAL', cols.heal, top + 20);
+            ctx.fillText('STUN', cols.stun, top + 20);
+        } else {
+            ctx.fillText('LH', cols.lh, top + 20);
+        }
         ctx.fillText('ITEMS', cols.items, top + 20);
 
         for (const [i, p] of team.players.entries()) {
@@ -451,17 +467,32 @@ export async function renderMatchScoreboard(
             ctx.fillStyle = '#c4c4d8';
             ctx.fillText(`${p.kills} / ${p.deaths} / ${p.assists}`, cols.kda, midY + 4);
 
-            // GPM
+            // GPM / XPM
             ctx.fillStyle = '#f59e0b';
-            ctx.fillText(String(p.gpm), cols.gpm, midY + 4);
+            ctx.fillText(detailed ? `${p.gpm}/${p.xpm ?? 0}` : String(p.gpm), cols.gpm, midY + 4);
 
-            // Net worth (k)
+            // Net worth and farm
             ctx.fillStyle = '#fbbf24';
-            ctx.fillText(p.netWorth ? `${(p.netWorth / 1000).toFixed(1)}k` : '—', cols.nw, midY + 4);
+            ctx.fillText(p.netWorth ? `${(p.netWorth / 1000).toFixed(1)}k` : '-', cols.nw, midY + (detailed ? -3 : 4));
 
-            // Last hits
-            ctx.fillStyle = '#9aa0c0';
-            ctx.fillText(String(p.lastHits), cols.lh, midY + 4);
+            if (detailed) {
+                ctx.font = '11px sans-serif';
+                ctx.fillStyle = '#9aa0c0';
+                ctx.fillText(`${p.lastHits}/${p.denies ?? 0} LH/DN`, cols.nw, midY + 14);
+
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#fb7185';
+                ctx.fillText(formatCompact(p.heroDamage), cols.dmg, midY + 4);
+                ctx.fillStyle = '#f97316';
+                ctx.fillText(formatCompact(p.towerDamage), cols.tower, midY + 4);
+                ctx.fillStyle = '#22c55e';
+                ctx.fillText(formatCompact(p.heroHealing), cols.heal, midY + 4);
+                ctx.fillStyle = '#a78bfa';
+                ctx.fillText(formatStuns(p.stuns), cols.stun, midY + 4);
+            } else {
+                ctx.fillStyle = '#9aa0c0';
+                ctx.fillText(String(p.lastHits), cols.lh, midY + 4);
+            }
 
             // Items
             for (let s = 0; s < 6; s++) {
@@ -488,6 +519,18 @@ export async function renderMatchScoreboard(
     await drawTeam(dire, HEADER_H + teamBlockH(radiant) + GAP);
 
     return canvas.toBuffer('image/png');
+}
+
+function formatCompact(value?: number): string {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return '-';
+    if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+    return String(Math.round(n));
+}
+
+function formatStuns(value?: number): string {
+    const n = Number(value || 0);
+    return Number.isFinite(n) && n > 0 ? `${n.toFixed(n >= 10 ? 0 : 1)}s` : '-';
 }
 
 const imageCache = new Map<string, any | null>();
@@ -547,6 +590,7 @@ export async function renderScoreboardFromMatch(
     match: any,
     focusSteamIds: string[] = [],
     rankDisplay?: MatchRankDisplay | null,
+    opts: { detailed?: boolean } = {},
 ): Promise<Buffer> {
     const focus = new Set(focusSteamIds.map(String));
     const ranks = rankDisplay === undefined ? await resolveMatchRankDisplay(match) : rankDisplay;
@@ -564,8 +608,14 @@ export async function renderScoreboardFromMatch(
             deaths: p.deaths ?? 0,
             assists: p.assists ?? 0,
             gpm: p.gold_per_min ?? 0,
+            xpm: p.xp_per_min ?? 0,
             lastHits: p.last_hits ?? 0,
+            denies: p.denies ?? 0,
             netWorth: Number(p.net_worth ?? p.total_gold ?? 0),
+            heroDamage: Number(p.hero_damage ?? 0),
+            towerDamage: Number(p.tower_damage ?? 0),
+            heroHealing: Number(p.hero_healing ?? 0),
+            stuns: Number(p.stuns ?? 0),
             itemImageUrls: ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5']
                 .map((slot) => dotaDataService.getItemImageUrl(Number(p[slot] || 0))),
             isFocus: focus.has(String(p.account_id)),
@@ -588,6 +638,7 @@ export async function renderScoreboardFromMatch(
         mode,
         lobbyRankLabel: ranks?.lobbyRankLabel,
         visibleRankCount: ranks?.visibleRankCount,
+        detailed: opts.detailed,
     });
 }
 
