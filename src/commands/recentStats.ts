@@ -8,8 +8,9 @@ import { parseArgs, parseIntArg } from '../utils/argParser';
 import { formatDuration } from '../utils/formatters';
 import { safeTyping } from '../utils/channelHelpers';
 import { createMatchActionRow } from '../components/matchButtons';
-import { renderRecentMatchesTableWithIcons, MatchRow } from '../services/chartService';
+import { renderRecentMatchesTableWithIcons, renderScoreboardFromMatch, MatchRow } from '../services/chartService';
 import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
+import { formatRankLabel } from '../services/rankDisplayService';
 
 const GAME_MODES: Record<number, string> = {
   0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -69,13 +70,35 @@ export async function recentStats(message: Message, args: string[], userDataServ
       const heroName = await dotaDataService.getHeroName(match.hero_id);
       const isRadiant = match.player_slot < 128;
       const didWin = (isRadiant && match.radiant_win) || (!isRadiant && !match.radiant_win);
+      const files: AttachmentBuilder[] = [];
+      let hasBoard = false;
+
+      try {
+        const { data: detailedMatch } = await opendotaClient.get<any>(`/matches/${match.match_id}`);
+        if (detailedMatch?.players?.length) {
+          const board = await renderScoreboardFromMatch(detailedMatch, [user.steamId]);
+          files.push(new AttachmentBuilder(board, { name: 'scoreboard.png' }));
+          hasBoard = true;
+        }
+      } catch (boardError) {
+        logger.warn(`Could not render +rs scoreboard for match ${match.match_id}:`, boardError);
+      }
 
       const embed = new EmbedBuilder()
         .setColor(didWin ? '#66bb6a' : '#ef5350')
         .setTitle(`Recent Match — ${targetUser.username}`)
         .setDescription(`**${didWin ? '✅ Victory' : '❌ Defeat'}** as **${heroName}**`)
-        .setThumbnail(targetUser.displayAvatarURL())
-        .addFields(
+        .setURL(`https://www.opendota.com/matches/${match.match_id}`)
+        .setTimestamp(new Date(match.start_time * 1000));
+
+      if (hasBoard) {
+        embed
+          .setImage('attachment://scoreboard.png')
+          .setFooter({ text: 'Ranks shown when visible from STRATZ/OpenDota.' });
+      } else {
+        embed
+          .setThumbnail(targetUser.displayAvatarURL())
+          .addFields(
           { name: 'K/D/A', value: `${match.kills}/${match.deaths}/${match.assists}`, inline: true },
           { name: 'KDA', value: ((match.kills + match.assists) / (match.deaths || 1)).toFixed(2), inline: true },
           { name: 'GPM/XPM', value: `${match.gold_per_min}/${match.xp_per_min}`, inline: true },
@@ -83,13 +106,13 @@ export async function recentStats(message: Message, args: string[], userDataServ
           { name: 'Duration', value: formatDuration(match.duration), inline: true },
           { name: 'Mode', value: GAME_MODES[match.game_mode] || 'Unknown', inline: true },
           { name: 'Match', value: `[${match.match_id}](https://www.opendota.com/matches/${match.match_id})`, inline: true },
-        )
-        .setTimestamp(new Date(match.start_time * 1000));
+          );
+      }
 
       const components = !didWin
         ? [createMatchActionRow(match.match_id, { showCoach: true, coachSteamId: user.steamId })]
         : [createMatchActionRow(match.match_id)];
-      return message.reply({ embeds: [embed], components });
+      return message.reply({ embeds: [embed], files, components });
     }
 
     // Multiple matches — compact summary table
@@ -108,6 +131,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
           won: didWin,
           hero: heroName,
           heroImageUrl: APIConstants.IMAGE_URL(heroName),
+          rankLabel: formatRankLabel(Number(match.average_rank || 0)) ?? undefined,
           kills: match.kills,
           deaths: match.deaths,
           assists: match.assists,

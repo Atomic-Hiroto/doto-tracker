@@ -313,7 +313,7 @@ export async function renderMatchScoreboard(
     dire: ScoreboardTeam,
     opts: { matchId: number; durationSec: number; mode: string; lobbyRankLabel?: string; visibleRankCount?: number },
 ): Promise<Buffer> {
-    const W = 1060;
+    const W = 940;
     const HEADER_H = 72;
     const TEAM_HEADER_H = 30;
     const ROW_H = 46;
@@ -351,7 +351,7 @@ export async function renderMatchScoreboard(
     );
 
     // Column anchors
-    const cols = { hero: 16, name: 78, rank: 300, kda: 420, gpm: 540, nw: 625, lh: 710, items: 780 };
+    const cols = { hero: 16, name: 78, kda: 318, gpm: 452, nw: 540, lh: 632, items: 706 };
     const ITEM_W = 30;
     const ITEM_H = 23;
     const ITEM_GAP = 4;
@@ -369,7 +369,6 @@ export async function renderMatchScoreboard(
         // Column headers
         ctx.font = 'bold 11px sans-serif';
         ctx.fillStyle = '#6b6b8a';
-        ctx.fillText('RANK', cols.rank, top + 20);
         ctx.fillText('K / D / A', cols.kda, top + 20);
         ctx.fillText('GPM', cols.gpm, top + 20);
         ctx.fillText('NET', cols.nw, top + 20);
@@ -413,19 +412,33 @@ export async function renderMatchScoreboard(
             ctx.textAlign = 'center';
             ctx.fillText(String(p.level), cols.hero + hw - 6, hy + hh);
 
-            // Name + hero
+            // Name + rank + hero
             ctx.textAlign = 'left';
             ctx.font = 'bold 14px sans-serif';
             ctx.fillStyle = p.isFocus ? '#c4b5fd' : '#e6e6f0';
-            ctx.fillText(truncatePx(ctx, p.personaName || 'Anonymous', 204), cols.name, midY - 2);
+            let nameMaxPx = 228;
+            if (p.rankLabel) {
+                ctx.font = 'bold 10px sans-serif';
+                const pillW = Math.min(104, Math.ceil(ctx.measureText(p.rankLabel).width) + 12);
+                const pillH = 17;
+                const pillX = cols.kda - pillW - 10;
+                const pillY = midY - 17;
+                nameMaxPx = Math.max(92, pillX - cols.name - 8);
+                ctx.fillStyle = '#0d0d16';
+                ctx.beginPath();
+                ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+                ctx.fill();
+                ctx.fillStyle = rankColor(p.rankTier);
+                ctx.textAlign = 'center';
+                ctx.fillText(truncatePx(ctx, p.rankLabel, pillW - 10), pillX + pillW / 2, pillY + 12);
+                ctx.textAlign = 'left';
+            }
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillStyle = p.isFocus ? '#c4b5fd' : '#e6e6f0';
+            ctx.fillText(truncatePx(ctx, p.personaName || 'Anonymous', nameMaxPx), cols.name, midY - 2);
             ctx.font = '11px sans-serif';
             ctx.fillStyle = '#8a8aa8';
-            ctx.fillText(truncatePx(ctx, p.heroName, 204), cols.name, midY + 13);
-
-            // Rank
-            ctx.font = '12px sans-serif';
-            ctx.fillStyle = rankColor(p.rankTier);
-            ctx.fillText(truncatePx(ctx, p.rankLabel || '—', 104), cols.rank, midY + 4);
+            ctx.fillText(truncatePx(ctx, p.heroName, 228), cols.name, midY + 13);
 
             // K/D/A
             ctx.font = '14px sans-serif';
