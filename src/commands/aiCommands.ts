@@ -120,6 +120,7 @@ There are two different kinds of knowledge. Keep them separate:
 - If you use a qualitative label like "physical-heavy", "magic burst", "vision control", or "tower cascade", cite the team damage, utility, or objective-cluster fact that justifies it.
 - Do not add player damage values together. Combined damage claims are allowed only when MATCH_FACTS has an explicit combined-damage fact.
 - Persona is presentation-only, never analysis. Only the TL;DR and the first clause of a section opener may use mild doto-chan flavor; all evidence, numbers, causality, mistakes, and coaching fixes must stay neutral and factual.
+- Itemization/death critiques must pass a counterfactual test: name the problem, the alternative, and why that alternative mitigates that exact problem. If item or ability semantics show the alternative does not answer the cited threat, separate the unsolved threat, downgrade the critique, or omit it.
 
 ## Analysis Order
 1. Match arc: winner, duration, game mode, decisive economy or objective swings.
@@ -172,6 +173,7 @@ There are two different kinds of knowledge. Keep them separate:
 - Severity must be one of: "game-losing", "costly", "minor".
 - Each mistake needs: claim, evidence, severity, fix.
 - The fix must be compact and chain cause -> consequence -> specific alternative using only facts on the sheet.
+- Before returning keyMistakes or whatToImprove, silently audit each causal chain as evidence -> problem -> alternative -> mechanism. If the mechanism is weak, speculative, or contradicted by item/ability semantics, rewrite it as a partial refinement, downgrade severity, or remove it.
 - In focus mode, do not invent filler mistakes for a player who clearly had a clean/high-impact game. One real mistake plus marginal improvement notes is better than three weak mistakes.
 - Every mistake must be role-valid given the role-signal facts. Never flag role-normal behavior as a mistake: low ward/deward counts for a farm-priority 1-2 player, low CS or net worth for a farm-priority 4-5 player, low tower damage for a dedicated support. The mistake must be something that hurt or risked THIS player's game within their own job.
 - If the facts support no genuine error for the focus player, the single keyMistake becomes the highest-leverage role-appropriate refinement, severity "minor", phrased as next-level polish ("what separates this from a perfect game"), never as a manufactured fault.
@@ -224,14 +226,14 @@ const ANALYZE_RESPONSE_FORMAT = {
                 },
                 keyMistakes: {
                     type: 'array',
-                    description: 'The 1-2 biggest real mistakes or role-valid refinements ranked by game impact. Do not force blame in clean stomps. Each entry must be role-valid for the player it names per the role-signal facts; never flag role-normal behavior such as ward counts for farm-priority 1-2 players or CS for farm-priority 4-5 players.',
+                    description: 'The 1-2 biggest real mistakes or role-valid refinements ranked by game impact. Do not force blame in clean stomps. Each entry must be role-valid for the player it names per the role-signal facts; never flag role-normal behavior such as ward counts for farm-priority 1-2 players or CS for farm-priority 4-5 players. Item/death critiques must explain why the recommended alternative mitigates the cited problem.',
                     items: {
                         type: 'object',
                         properties: {
                             claim: { type: 'string', description: 'A concrete mistake claim with no unsupported numbers.' },
                             evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids like F7, without brackets.' },
                             severity: { type: 'string', enum: ['game-losing', 'costly', 'minor'] },
-                            fix: { type: 'string', description: 'Compact counterfactual coaching: cause -> consequence -> specific alternative.' },
+                            fix: { type: 'string', description: 'Compact counterfactual coaching: cause -> consequence -> specific alternative -> why that alternative changes the outcome.' },
                         },
                         required: ['claim', 'evidence', 'severity', 'fix'],
                         additionalProperties: false,
@@ -290,14 +292,14 @@ const ANALYZE_FOCUS_RESPONSE_FORMAT = {
                 },
                 keyMistakes: {
                     type: 'array',
-                    description: '1-3 focused-player mistakes ranked by impact. Every mistake must be role-valid per the role-signal facts; never flag role-normal behavior (ward counts for farm-priority 1-2, CS for farm-priority 4-5). If no genuine error exists, return one highest-leverage role-appropriate refinement (severity "minor") phrased as next-level polish, e.g. an untaken Roshan or a decided game not closed out.',
+                    description: '1-3 focused-player mistakes ranked by impact. Every mistake must be role-valid per the role-signal facts; never flag role-normal behavior (ward counts for farm-priority 1-2, CS for farm-priority 4-5). Item/death critiques must explain why the recommended alternative mitigates the cited problem. If no genuine error exists, return one highest-leverage role-appropriate refinement (severity "minor") phrased as next-level polish, e.g. an untaken Roshan or a decided game not closed out.',
                     items: {
                         type: 'object',
                         properties: {
                             claim: { type: 'string', description: 'A concrete focused-player mistake claim with no unsupported numbers.' },
                             evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids like F7, without brackets.' },
                             severity: { type: 'string', enum: ['game-losing', 'costly', 'minor'] },
-                            fix: { type: 'string', description: 'Compact counterfactual coaching: cause -> consequence -> specific alternative.' },
+                            fix: { type: 'string', description: 'Compact counterfactual coaching: cause -> consequence -> specific alternative -> why that alternative changes the outcome.' },
                         },
                         required: ['claim', 'evidence', 'severity', 'fix'],
                         additionalProperties: false,
