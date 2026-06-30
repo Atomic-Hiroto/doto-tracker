@@ -1,5 +1,5 @@
 export const AI_MODEL = "~anthropic/claude-sonnet-latest";
-export const AI_ANALYZE_MODEL = "~anthropic/claude-sonnet-latest";  // OpenRouter latest Sonnet router for match analysis
+export const AI_ANALYZE_MODEL = process.env.AI_ANALYZE_MODEL || "~anthropic/claude-opus-latest";
 export const AI_COACH_MODEL = process.env.AI_COACH_MODEL || "~anthropic/claude-opus-latest";
 
 // Combined System Prompt - All instructions in one message
@@ -40,7 +40,10 @@ export const AI_ANALYZE_PARAMS = {
     temperature: 0.25,
     max_tokens: 8000,
     top_p: 1,
-    stream: false
+    stream: false,
+    reasoning: {
+        max_tokens: 4096
+    }
 };
 
 export const MAX_CONVERSATION_HISTORY = 10;
