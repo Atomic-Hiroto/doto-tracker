@@ -9,6 +9,7 @@ import { safeTyping } from '../utils/channelHelpers';
 import { createMatchPickerRows } from '../components/matchButtons';
 import { renderRecentMatchesTableWithIcons, MatchRow } from '../services/chartService';
 import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
+import { formatRankLabel } from '../services/rankDisplayService';
 
 const GAME_MODES: Record<number, string> = {
   0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -66,6 +67,7 @@ export async function matches(message: Message, args: string[], userDataService:
           won,
           hero: heroName,
           heroImageUrl: APIConstants.IMAGE_URL(heroName),
+          rankLabel: formatRankLabel(Number(m.average_rank || 0)) ?? undefined,
           kills: m.kills,
           deaths: m.deaths,
           assists: m.assists,

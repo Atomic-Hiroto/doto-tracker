@@ -1,6 +1,7 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { dotaDataService } from './dotaDataService';
 import { APIConstants } from '../constants';
+import { MatchRankDisplay, resolveMatchRankDisplay } from './rankDisplayService';
 
 const SCOREBOARD_GAME_MODES: Record<number, string> = {
     0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -268,6 +269,7 @@ export interface MatchRow {
     won: boolean;
     hero: string;
     heroImageUrl?: string;
+    rankLabel?: string;
     kills: number;
     deaths: number;
     assists: number;
@@ -280,6 +282,8 @@ export interface ScoreboardPlayer {
     heroName: string;
     heroImageUrl?: string;
     personaName: string;
+    rankLabel?: string;
+    rankTier?: number;
     level: number;
     kills: number;
     deaths: number;
@@ -307,9 +311,9 @@ export interface ScoreboardTeam {
 export async function renderMatchScoreboard(
     radiant: ScoreboardTeam,
     dire: ScoreboardTeam,
-    opts: { matchId: number; durationSec: number; mode: string },
+    opts: { matchId: number; durationSec: number; mode: string; lobbyRankLabel?: string; visibleRankCount?: number },
 ): Promise<Buffer> {
-    const W = 940;
+    const W = 1060;
     const HEADER_H = 72;
     const TEAM_HEADER_H = 30;
     const ROW_H = 46;
@@ -337,10 +341,17 @@ export async function renderMatchScoreboard(
     const s = opts.durationSec % 60;
     ctx.font = '14px sans-serif';
     ctx.fillStyle = '#9aa0c0';
-    ctx.fillText(`${radiant.score}–${dire.score}  •  ${m}:${s.toString().padStart(2, '0')}  •  ${opts.mode}`, 22, 58);
+    const rankSummary = opts.lobbyRankLabel
+        ? `  •  Avg ${opts.lobbyRankLabel}${opts.visibleRankCount ? ` (${opts.visibleRankCount}/10 ranks)` : ''}`
+        : '';
+    ctx.fillText(
+        truncatePx(ctx, `${radiant.score}–${dire.score}  •  ${m}:${s.toString().padStart(2, '0')}  •  ${opts.mode}${rankSummary}`, W - 44),
+        22,
+        58,
+    );
 
     // Column anchors
-    const cols = { hero: 16, name: 78, kda: 318, gpm: 452, nw: 540, lh: 632, items: 706 };
+    const cols = { hero: 16, name: 78, rank: 300, kda: 420, gpm: 540, nw: 625, lh: 710, items: 780 };
     const ITEM_W = 30;
     const ITEM_H = 23;
     const ITEM_GAP = 4;
@@ -358,6 +369,7 @@ export async function renderMatchScoreboard(
         // Column headers
         ctx.font = 'bold 11px sans-serif';
         ctx.fillStyle = '#6b6b8a';
+        ctx.fillText('RANK', cols.rank, top + 20);
         ctx.fillText('K / D / A', cols.kda, top + 20);
         ctx.fillText('GPM', cols.gpm, top + 20);
         ctx.fillText('NET', cols.nw, top + 20);
@@ -405,10 +417,15 @@ export async function renderMatchScoreboard(
             ctx.textAlign = 'left';
             ctx.font = 'bold 14px sans-serif';
             ctx.fillStyle = p.isFocus ? '#c4b5fd' : '#e6e6f0';
-            ctx.fillText(truncatePx(ctx, p.personaName || 'Anonymous', 228), cols.name, midY - 2);
+            ctx.fillText(truncatePx(ctx, p.personaName || 'Anonymous', 204), cols.name, midY - 2);
             ctx.font = '11px sans-serif';
             ctx.fillStyle = '#8a8aa8';
-            ctx.fillText(truncatePx(ctx, p.heroName, 228), cols.name, midY + 13);
+            ctx.fillText(truncatePx(ctx, p.heroName, 204), cols.name, midY + 13);
+
+            // Rank
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = rankColor(p.rankTier);
+            ctx.fillText(truncatePx(ctx, p.rankLabel || '—', 104), cols.rank, midY + 4);
 
             // K/D/A
             ctx.font = '14px sans-serif';
@@ -479,14 +496,37 @@ async function loadCachedImage(url?: string): Promise<any | null> {
  * render the scoreboard. focusSteamIds highlights those players' rows. Shared by
  * the +matches Details button and the auto-show feed so they stay identical.
  */
-export async function renderScoreboardFromMatch(match: any, focusSteamIds: string[] = []): Promise<Buffer> {
+function rankColor(rankTier?: number): string {
+    if (!rankTier) return '#6b6b8a';
+    const colors: Record<number, string> = {
+        1: '#b45309',
+        2: '#22c55e',
+        3: '#38bdf8',
+        4: '#c084fc',
+        5: '#facc15',
+        6: '#fb923c',
+        7: '#ef4444',
+        8: '#f8fafc',
+    };
+    return colors[Math.floor(rankTier / 10)] ?? '#9aa0c0';
+}
+
+export async function renderScoreboardFromMatch(
+    match: any,
+    focusSteamIds: string[] = [],
+    rankDisplay?: MatchRankDisplay | null,
+): Promise<Buffer> {
     const focus = new Set(focusSteamIds.map(String));
+    const ranks = rankDisplay === undefined ? await resolveMatchRankDisplay(match) : rankDisplay;
     const toPlayer = async (p: any): Promise<ScoreboardPlayer> => {
         const hero = await dotaDataService.getHeroName(p.hero_id);
+        const rank = ranks?.playersBySteamId.get(String(p.account_id || ''));
         return {
             heroName: hero,
             heroImageUrl: APIConstants.IMAGE_URL(hero),
             personaName: p.personaname || 'Anonymous',
+            rankLabel: rank?.label,
+            rankTier: rank?.rankTier,
             level: Number(p.level || 0),
             kills: p.kills ?? 0,
             deaths: p.deaths ?? 0,
@@ -510,7 +550,13 @@ export async function renderScoreboardFromMatch(match: any, focusSteamIds: strin
         players: await Promise.all(direPlayers.map(toPlayer)),
     };
     const mode = SCOREBOARD_GAME_MODES[Number(match.game_mode)] || `Mode ${match.game_mode ?? '?'}`;
-    return renderMatchScoreboard(radiant, dire, { matchId: match.match_id, durationSec: match.duration, mode });
+    return renderMatchScoreboard(radiant, dire, {
+        matchId: match.match_id,
+        durationSec: match.duration,
+        mode,
+        lobbyRankLabel: ranks?.lobbyRankLabel,
+        visibleRankCount: ranks?.visibleRankCount,
+    });
 }
 
 export function renderRecentMatchesTable(
@@ -544,7 +590,7 @@ function renderRecentMatchesTableCanvas(
     rows: MatchRow[],
     opts: { username: string; wins: number; total: number; subtitle?: string }
 ): any {
-    const W = 820;
+    const W = 900;
     const HEADER_H = 84;
     const ROW_H = 40;
     const FOOTER_H = 12;
@@ -575,9 +621,10 @@ function renderRecentMatchesTableCanvas(
         hero: rows.some((row) => row.heroImageUrl) ? 96 : 64,
         kda: 320,
         ratio: 470,
-        gpm: 570,
-        dur: 670,
-        mode: 740,
+        gpm: 555,
+        dur: 635,
+        rank: 710,
+        mode: 810,
     };
 
     // Column headers
@@ -590,6 +637,7 @@ function renderRecentMatchesTableCanvas(
     ctx.fillText('KDA', cols.ratio, colHeaderY);
     ctx.fillText('GPM', cols.gpm, colHeaderY);
     ctx.fillText('TIME', cols.dur, colHeaderY);
+    ctx.fillText('AVG', cols.rank, colHeaderY);
     ctx.fillText('MODE', cols.mode, colHeaderY);
 
     // Rows
@@ -635,6 +683,10 @@ function renderRecentMatchesTableCanvas(
         const m = Math.floor(r.durationSec / 60);
         const s = r.durationSec % 60;
         ctx.fillText(`${m}:${s.toString().padStart(2, '0')}`, cols.dur, ty);
+
+        // Average visible lobby rank for this match, when the API exposes it.
+        ctx.fillStyle = '#a5b4fc';
+        ctx.fillText(truncatePx(ctx, r.rankLabel || '—', 82), cols.rank, ty);
 
         // Mode
         ctx.font = '13px sans-serif';
