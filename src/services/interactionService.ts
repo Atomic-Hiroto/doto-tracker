@@ -61,6 +61,7 @@ function asSlashMessageAdapter(interaction: ChatInputCommandInteraction, mention
         author: interaction.user,
         user: interaction.user,
         member: interaction.member,
+        memberPermissions: interaction.memberPermissions,
         channel: interaction.channel,
         client: interaction.client,
         guild: interaction.guild,
@@ -99,7 +100,10 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction, user
 
     switch (name) {
         case 'register':
-            return commandHandlers.register(message, [interaction.options.getString('steam_id', true)], userDataService);
+            return commandHandlers.register(message, [
+                ...(user ? [`<@${user.id}>`] : []),
+                interaction.options.getString('steam_id', true),
+            ], userDataService);
         case 'profile':
             return commandHandlers.profile(message, args, userDataService, turboStatsService);
         case 'rs':
@@ -161,8 +165,9 @@ export async function registerSlashCommands(client: Client) {
         .addUserOption((option: any) => option.setName('user').setDescription('Registered player').setRequired(false))
         .addStringOption((option: any) => option.setName('query').setDescription('Filters, e.g. "10 won as invoker this week"').setRequired(false));
     const commands = [
-        new SlashCommandBuilder().setName('register').setDescription('Register your Steam ID')
-            .addStringOption((option) => option.setName('steam_id').setDescription('Steam account id').setRequired(true)),
+        new SlashCommandBuilder().setName('register').setDescription('Register a Steam ID')
+            .addStringOption((option) => option.setName('steam_id').setDescription('Steam account id').setRequired(true))
+            .addUserOption((option) => option.setName('user').setDescription('Discord user to register (owner/server manager)').setRequired(false)),
         queryOption(new SlashCommandBuilder().setName('profile').setDescription('Show player profile')),
         queryOption(new SlashCommandBuilder().setName('rs').setDescription('Show recent matches with optional filters')),
         queryOption(new SlashCommandBuilder().setName('matches').setDescription('Pick a recent match to analyze from a list')),
