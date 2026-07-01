@@ -5,6 +5,10 @@ import { logger } from '../services/loggerService';
 const CACHE_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_LIMIT = 10;
 const DEFAULT_MIN_BENCHMARKS = 3;
+// Bayesian shrinkage weight: a model needs ~this many leaderboards before its own
+// average outweighs the field prior. Stops narrowly-tested models (measured on a
+// few favorable big-field boards) from outranking broadly-tested ones.
+const SHRINKAGE_K = 5;
 
 const SOURCES = {
   lmCouncil: 'https://lmcouncil.ai/benchmarks',
@@ -63,6 +67,7 @@ interface ModelAggregate {
   appearances: number;
   sourceCount: number;
   avgScore: number;
+  rawAvgScore: number;
   wins: number;
   top3s: number;
   bestBenchmark: NormalizedBenchmarkRow;
@@ -662,6 +667,13 @@ function aggregateBenchmarks(tables: BenchmarkTable[]): ModelAggregate[] {
     }
   }
 
+  // Field prior: mean normalized position across every tracked appearance. Models
+  // measured on few boards are shrunk toward this so low coverage can't be gamed.
+  const allRows = [...byModel.values()].flat();
+  const prior = allRows.length
+    ? allRows.reduce((sum, row) => sum + row.normalizedScore, 0) / allRows.length
+    : 0;
+
   return [...byModel.entries()]
     .map(([model, rows]) => {
       const bestBenchmark = [...rows].sort((a, b) => b.normalizedScore - a.normalizedScore)[0];
@@ -673,14 +685,23 @@ function aggregateBenchmarks(tables: BenchmarkTable[]): ModelAggregate[] {
         .filter(([org]) => org !== 'Unknown')
         .sort((a, b) => b[1] - a[1])[0]?.[0] || rows[0].organization || 'Unknown';
 
+      const rawAvgScore = rows.reduce((sum, row) => sum + row.normalizedScore, 0) / rows.length;
+      const top3s = rows.filter((row) => row.rank <= 3).length;
+      // Effective coverage: each top-3 finish counts as extra evidence of skill, so a
+      // dominant-but-thinly-tested model resists shrinkage while a mediocre-but-thin one
+      // (no top-3s, e.g. best finish #15) still collapses toward the field prior.
+      const effectiveCoverage = rows.length + top3s;
+      const avgScore = (effectiveCoverage * rawAvgScore + SHRINKAGE_K * prior) / (effectiveCoverage + SHRINKAGE_K);
+
       return {
         model,
         organization,
         appearances: rows.length,
         sourceCount: new Set(rows.map((row) => row.source)).size,
-        avgScore: rows.reduce((sum, row) => sum + row.normalizedScore, 0) / rows.length,
+        avgScore,
+        rawAvgScore,
         wins: rows.filter((row) => row.rank === 1).length,
-        top3s: rows.filter((row) => row.rank <= 3).length,
+        top3s,
         bestBenchmark,
         variants: new Set(rows.map((row) => row.variant).filter((variant) => canonicalModelName(variant) !== model)),
       };
@@ -696,7 +717,8 @@ function aggregateBenchmarks(tables: BenchmarkTable[]): ModelAggregate[] {
 
 function formatLine(row: ModelAggregate, index: number): string {
   const variantText = row.variants.size ? ` · variants: ${[...row.variants].slice(0, 2).join(', ')}` : '';
-  return `**${index + 1}. ${row.model}** — ${row.avgScore.toFixed(1)}/100 avg · ${row.appearances} lb / ${row.sourceCount} src · ${row.wins} wins, ${row.top3s} top-3 · ${row.organization}\n` +
+  const shrinkText = Math.abs(row.avgScore - row.rawAvgScore) >= 2 ? ` (raw ${row.rawAvgScore.toFixed(1)})` : '';
+  return `**${index + 1}. ${row.model}** — ${row.avgScore.toFixed(1)}/100 avg${shrinkText} · ${row.appearances} lb / ${row.sourceCount} src · ${row.wins} wins, ${row.top3s} top-3 · ${row.organization}\n` +
     `Best: ${row.bestBenchmark.source} / ${row.bestBenchmark.benchmark} (#${row.bestBenchmark.rank})${variantText}`;
 }
 
@@ -782,6 +804,7 @@ export async function topLlms(message: Message, args: string[]) {
           name: 'Method',
           value:
             'Each source leaderboard is normalized 0-100 within itself, because raw units differ. ' +
+            `Averages are coverage-shrunk toward the field mean (k=${SHRINKAGE_K}) so a model measured on only a few favorable boards cannot outrank broadly-tested ones; proven top-3 finishes count as extra coverage, so a dominant model keeps its rank even without full benchmark coverage. \`(raw X)\` shows the pre-shrink average. ` +
             'Model names are canonicalized conservatively; within each leaderboard, a canonical model gets only its best variant so effort-level variants do not double-count. ' +
             'Use `+topllms audit` to verify source row counts, or `+topllms lm` for LM Council only.',
           inline: false,
