@@ -1,14 +1,44 @@
-import { Message } from 'discord.js';
-import { Replies } from '../constants';
+import { Message, PermissionFlagsBits, User } from 'discord.js';
+import { ProcessConstants, Replies } from '../constants';
 import { UserDataService } from '../services/userDataService';
 import { normalizeSteamId } from '../utils/validators';
 
+function isMentionToken(arg: string): boolean {
+  return /^<@!?\d+>$/.test(arg);
+}
+
+function canRegisterOtherUser(message: Message): boolean {
+  if (message.author.id === ProcessConstants.BOT_OWNER_ID) return true;
+  const permissions = (message as any).memberPermissions ?? (message.member as any)?.permissions;
+  if (typeof permissions?.has === 'function') {
+    return permissions.has(PermissionFlagsBits.ManageGuild);
+  }
+  try {
+    return (BigInt(permissions ?? 0) & PermissionFlagsBits.ManageGuild) === PermissionFlagsBits.ManageGuild;
+  } catch {
+    return false;
+  }
+}
+
 export async function register(message: Message, args: string[], userDataService: UserDataService) {
-  if (args.length !== 1) {
+  const mentionedUser = message.mentions.users.first();
+  const targetUser: User = mentionedUser ?? message.author;
+  const steamArgs = mentionedUser ? args.filter(arg => !isMentionToken(arg)) : args;
+  const registeringOtherUser = targetUser.id !== message.author.id;
+
+  if (steamArgs.length !== 1) {
     return message.reply(Replies.PROVIDE_STEAM_ID);
   }
 
-  const steamId = normalizeSteamId(args[0]);
+  if (registeringOtherUser && !canRegisterOtherUser(message)) {
+    return message.reply('Only the bot owner or server managers can register another Discord user. They can still run `+register <steam_id>` themselves.');
+  }
+
+  if (targetUser.bot) {
+    return message.reply('I will not register a bot account to a Steam ID.');
+  }
+
+  const steamId = normalizeSteamId(steamArgs[0]);
 
   if (!steamId) {
     return message.reply(
@@ -20,9 +50,10 @@ export async function register(message: Message, args: string[], userDataService
     );
   }
 
-  const existingDiscordUser = userDataService.getUserByDiscordId(message.author.id);
+  const existingDiscordUser = userDataService.getUserByDiscordId(targetUser.id);
   if (existingDiscordUser) {
-    return message.reply(`You are already registered with Steam ID ${existingDiscordUser.steamId}. Use \`+unregister\` first if you want to switch accounts.`);
+    const who = registeringOtherUser ? `**${targetUser.username}** is` : 'You are';
+    return message.reply(`${who} already registered with Steam ID ${existingDiscordUser.steamId}. Use \`+unregister\` first if you want to switch accounts.`);
   }
 
   const existingUser = userDataService.getUserBySteamId(steamId);
@@ -31,11 +62,13 @@ export async function register(message: Message, args: string[], userDataService
   }
 
   userDataService.addUser({
-    discordId: message.author.id,
+    discordId: targetUser.id,
     steamId: steamId,
     autoShow: true,
     lastCheckedMatch: null
   });
 
-  message.reply(Replies.REGISTER_SUCCESS(steamId));
+  message.reply(registeringOtherUser
+    ? Replies.REGISTER_SUCCESS_FOR(targetUser.id, steamId)
+    : Replies.REGISTER_SUCCESS(steamId));
 }
