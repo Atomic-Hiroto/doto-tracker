@@ -32,6 +32,7 @@ export enum Commands {
     DURATION_STUDY = "durationstudy",
     GAME_DURATION = "gameduration",
     TURBO_DURATION = "turboduration",
+    TOP_LLMS = "topllms",
     TOGGLE_SHARED_CONTEXT = "togglesharedcontext",
     PROFILE = "profile",
     TOP_HEROES = "topheroes",

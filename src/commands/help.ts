@@ -62,6 +62,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+suggest [@user]` — AI hero/build picks from your pool',
       '`+draft <enemy heroes>` — counter-pick help (`+draft Pudge, Invoker, AM`)',
       '`+meta` — AI-written turbo meta overview',
+      '`+topllms [n|all|audit]` — LM Council aggregate LLM benchmark leaderboard',
       '`+gpat <message>` — chat with doto-chan',
       '`+gpatclear` — clear your AI history',
       '`+togglesharedcontext <on/off>` — shared AI context in channel',
