@@ -121,7 +121,11 @@ export async function resolveMatchRankDisplay(match: any): Promise<MatchRankDisp
     const steamId = player.steamAccountId != null ? String(player.steamAccountId) : null;
     const rankTier = normalizeRankTier(player.steamAccount?.seasonRank);
     if (!steamId || !rankTier) continue;
-    stratzPlayers.set(steamId, { rankTier, source: 'stratz' });
+    stratzPlayers.set(steamId, {
+      rankTier,
+      leaderboardRank: normalizeLeaderboardRank(player.steamAccount?.seasonLeaderboardRank),
+      source: 'stratz',
+    });
   }
 
   const steamIds = players
@@ -135,7 +139,11 @@ export async function resolveMatchRankDisplay(match: any): Promise<MatchRankDisp
     const matchPlayer = players.find((player) => String(player.account_id || '') === steamId);
     const matchRankTier = normalizeRankTier(matchPlayer?.rank_tier);
     const matchRank: RankCandidate | null = matchRankTier
-      ? { rankTier: matchRankTier, source: 'opendota' }
+      ? {
+        rankTier: matchRankTier,
+        leaderboardRank: normalizeLeaderboardRank(matchPlayer?.leaderboard_rank),
+        source: 'opendota',
+      }
       : null;
     const profileRank = await fetchOpenDotaProfileRank(steamId);
     const best = chooseHigherRank(matchRank, profileRank);
