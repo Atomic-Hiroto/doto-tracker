@@ -143,7 +143,7 @@ query ($matchId: Long!) {
         }
       }
       hero { id displayName shortName }
-      steamAccount { name seasonRank }
+      steamAccount { name seasonRank seasonLeaderboardRank }
     }
   }
 }
@@ -250,7 +250,7 @@ query ($steamAccountId: Long!, $take: Int!, $skip: Int, $startDateTime: Long, $i
         playerSlot
         isRadiant
         partyId
-        steamAccount { seasonRank }
+        steamAccount { seasonRank seasonLeaderboardRank }
       }
     }
   }
@@ -476,7 +476,7 @@ export async function fetchPlayerTurboDeepMatches(
                   wardDestruction { time gold }
                   campStack
                 }
-                steamAccount { seasonRank }
+                steamAccount { seasonRank seasonLeaderboardRank }
               }
             }
           }
@@ -734,13 +734,13 @@ export async function fetchPlayerTurboPositions(
 /** Resolves a Steam account's display name + current ranked medal via Stratz. */
 export async function fetchStratzPlayerProfile(
   steamAccountId: number,
-): Promise<{ name: string | null; seasonRank: number | null }> {
-  if (!STRATZ_API_KEY) return { name: null, seasonRank: null };
+): Promise<{ name: string | null; seasonRank: number | null; seasonLeaderboardRank: number | null }> {
+  if (!STRATZ_API_KEY) return { name: null, seasonRank: null, seasonLeaderboardRank: null };
   try {
     const response = await axios.post(
       STRATZ_GQL,
       {
-        query: `query ($id: Long!) { player(steamAccountId: $id) { steamAccount { name seasonRank } } }`,
+        query: `query ($id: Long!) { player(steamAccountId: $id) { steamAccount { name seasonRank seasonLeaderboardRank } } }`,
         variables: { id: steamAccountId },
       },
       {
@@ -754,10 +754,14 @@ export async function fetchStratzPlayerProfile(
       },
     );
     const acc = response.data?.data?.player?.steamAccount;
-    return { name: acc?.name ?? null, seasonRank: acc?.seasonRank ?? null };
+    return {
+      name: acc?.name ?? null,
+      seasonRank: acc?.seasonRank ?? null,
+      seasonLeaderboardRank: acc?.seasonLeaderboardRank ?? null,
+    };
   } catch (error: any) {
     logger.warn(`Stratz player profile fetch failed for ${steamAccountId}:`, error?.message ?? error);
-    return { name: null, seasonRank: null };
+    return { name: null, seasonRank: null, seasonLeaderboardRank: null };
   }
 }
 

@@ -298,6 +298,7 @@ export interface MatchPlayer {
     steamAccount?: {
         name: string;
         seasonRank: number;
+        seasonLeaderboardRank?: number | null;
     };
     personaname?: string;
 }
@@ -364,4 +365,3 @@ export interface StratzMatch {
     pickBans?: PickBan[];
     players: MatchPlayer[];
 }
-
