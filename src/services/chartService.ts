@@ -265,6 +265,17 @@ export function renderMatchAdvantageGraph(
     return canvas.toBuffer('image/png');
 }
 
+// Per-game "leader" awards: the player topped all 10 players in that match for
+// the given stat. Keys map to MATCH_BADGES (label + colour) in the row renderer.
+export type MatchBadge = 'dmg' | 'twr' | 'heal' | 'tank';
+
+const MATCH_BADGES: Record<MatchBadge, { label: string; color: string }> = {
+    dmg: { label: 'DMG', color: '#ef4444' },
+    twr: { label: 'TWR', color: '#f59e0b' },
+    heal: { label: 'HEAL', color: '#10b981' },
+    tank: { label: 'TANK', color: '#3b82f6' },
+};
+
 export interface MatchRow {
     won: boolean;
     hero: string;
@@ -276,6 +287,7 @@ export interface MatchRow {
     gpm: number;
     durationSec: number;
     mode: string;
+    badges?: MatchBadge[];
 }
 
 export interface ScoreboardPlayer {
@@ -663,7 +675,12 @@ export async function renderRecentMatchesTableWithIcons(
         ctx.beginPath();
         ctx.roundRect(58, y, 30, 30, 4);
         ctx.clip();
-        ctx.drawImage(image, 58, y, 30, 30);
+        // Hero portraits are landscape (~256x144); cover-fit into the 30x30 box so
+        // they crop instead of squeezing horizontally.
+        const scale = Math.max(30 / image.width, 30 / image.height);
+        const dw = image.width * scale;
+        const dh = image.height * scale;
+        ctx.drawImage(image, 58 + (30 - dw) / 2, y + (30 - dh) / 2, dw, dh);
         ctx.restore();
     }
     return canvas.toBuffer('image/png');
@@ -743,10 +760,40 @@ function renderRecentMatchesTableCanvas(
         ctx.fillStyle = r.won ? '#10b981' : '#ef4444';
         ctx.fillText(r.won ? 'W' : 'L', 24, ty);
 
+        // Hero (+ per-game leader badges, right-aligned before the K/D/A column)
+        const chips = (r.badges ?? []).map((k) => MATCH_BADGES[k]).filter(Boolean);
+        let nameMaxPx = 240;
+        if (chips.length) {
+            ctx.font = 'bold 10px sans-serif';
+            const chipPadX = 6;
+            const chipGap = 4;
+            const chipH = 16;
+            const chipW = chips.map((c) => Math.ceil(ctx.measureText(c.label).width) + chipPadX * 2);
+            const chipsTotal = chipW.reduce((a, b) => a + b, 0) + chipGap * (chips.length - 1);
+            const chipsRight = cols.kda - 8;
+            const cyChip = y + (ROW_H - chipH) / 2;
+            let cx = chipsRight - chipsTotal;
+            chips.forEach((c, ci) => {
+                const w = chipW[ci];
+                ctx.globalAlpha = 0.18;
+                ctx.fillStyle = c.color;
+                ctx.beginPath();
+                ctx.roundRect(cx, cyChip, w, chipH, 4);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = c.color;
+                ctx.textAlign = 'left';
+                ctx.fillText(c.label, cx + chipPadX, cyChip + chipH - 5);
+                cx += w + chipGap;
+            });
+            nameMaxPx = Math.max(60, chipsRight - chipsTotal - cols.hero - 8);
+        }
+
         // Hero
         ctx.font = '15px sans-serif';
         ctx.fillStyle = '#e6e6f0';
-        ctx.fillText(truncatePx(ctx, r.hero, 240), cols.hero, ty);
+        ctx.textAlign = 'left';
+        ctx.fillText(truncatePx(ctx, r.hero, nameMaxPx), cols.hero, ty);
 
         // K/D/A
         ctx.fillStyle = '#c4c4d8';
