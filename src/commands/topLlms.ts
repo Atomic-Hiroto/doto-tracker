@@ -463,12 +463,21 @@ async function fetchArtificialAnalysisTable(): Promise<BenchmarkTable[]> {
   return [table];
 }
 
+function liveBenchReleaseDatesFromBundle(js: string): string[] {
+  const dateArrayPattern = /\[\s*"20\d{2}-\d{2}-\d{2}"(?:\s*,\s*"20\d{2}-\d{2}-\d{2}")+\s*\]/g;
+  const candidates = [...js.matchAll(dateArrayPattern)]
+    .map((match) => [...match[0].matchAll(/20\d{2}-\d{2}-\d{2}/g)].map((date) => date[0]))
+    .filter((dates) => dates.length > 0)
+    .sort((a, b) => b.length - a.length);
+
+  const dates = candidates[0];
+  if (!dates) throw new Error('LiveBench release date list not found');
+  return [...new Set(dates)].sort();
+}
+
 function latestLiveBenchDateFromBundle(js: string): string {
-  const sliderIndex = js.indexOf('type:"range"');
-  const searchArea = sliderIndex >= 0 ? js.slice(sliderIndex, sliderIndex + 3000) : js;
-  const dates = [...searchArea.matchAll(/20\d{2}-\d{2}-\d{2}/g)].map((match) => match[0]);
-  const unique = [...new Set(dates)].sort();
-  const latest = unique[unique.length - 1];
+  const dates = liveBenchReleaseDatesFromBundle(js);
+  const latest = dates[dates.length - 1];
   if (!latest) throw new Error('LiveBench release dates not found');
   return latest;
 }
@@ -488,8 +497,9 @@ async function fetchLiveBenchTable(): Promise<BenchmarkTable[]> {
   ]);
   const categories = JSON.parse(categoriesText) as Record<string, string[]>;
   const rows = rowsToObjects(parseCsv(csv));
+  const sourceRows = rows.filter((row) => row.model?.trim());
 
-  const scored = rows
+  const scored = sourceRows
     .map((row) => {
       const categoryScores = Object.values(categories)
         .map((fields) => average(fields.map((field) => Number(row[field]))))
@@ -515,7 +525,12 @@ async function fetchLiveBenchTable(): Promise<BenchmarkTable[]> {
     })),
   };
 
-  assertMinRows(table, 50);
+  const retainedRatio = sourceRows.length ? scored.length / sourceRows.length : 0;
+  if (scored.length < 10 || retainedRatio < 0.8) {
+    throw new Error(
+      `${table.name} retained ${scored.length}/${sourceRows.length} scored rows`,
+    );
+  }
   return [table];
 }
 
@@ -561,9 +576,9 @@ async function fetchEqBenchCreativeWritingTable(): Promise<BenchmarkTable[]> {
   return [table];
 }
 
-async function loadBenchmarks(lmCouncilOnly: boolean): Promise<LoadedBenchmarks> {
+async function loadBenchmarks(lmCouncilOnly: boolean, forceRefresh = false): Promise<LoadedBenchmarks> {
   const now = Date.now();
-  if (cached && now - cached.fetchedAt < CACHE_MS && !lmCouncilOnly) return cached;
+  if (!forceRefresh && cached && now - cached.fetchedAt < CACHE_MS && !lmCouncilOnly) return cached;
 
   const loaders: Array<{ source: string; load: () => Promise<BenchmarkTable[]> }> = [
     { source: 'LM Council', load: fetchLmCouncilTables },
@@ -754,11 +769,12 @@ export async function topLlms(message: Message, args: string[]) {
   const progress = await message.reply('🧠 Fetching LLM benchmark leaderboards...');
 
   try {
-    const loaded = await loadBenchmarks(wantsLmCouncilOnly(args));
+    const audit = wantsAudit(args);
+    const loaded = await loadBenchmarks(wantsLmCouncilOnly(args), audit);
     const totalRows = loaded.tables.reduce((sum, table) => sum + table.rawRows, 0);
     const failed = loaded.statuses.filter((status) => !status.ok);
 
-    if (wantsAudit(args)) {
+    if (audit) {
       const embed = new EmbedBuilder()
         .setColor(failed.length ? '#f59e0b' : '#22c55e')
         .setTitle('🧠 Top LLM Source Audit')
