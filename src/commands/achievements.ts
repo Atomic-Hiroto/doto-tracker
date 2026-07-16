@@ -5,6 +5,46 @@ import { achievementService, ACHIEVEMENTS, RARITY_META, rarityOf, Rarity } from 
 import { logger } from '../services/loggerService';
 import { parseArgs } from '../utils/argParser';
 
+const RARITY_ORDER: Rarity[] = ['arcana', 'immortal', 'legendary', 'mythical', 'rare', 'uncommon', 'common'];
+
+function buildCatalogEmbeds(unlockedIds: Set<string>, username: string): EmbedBuilder[] {
+    const maxDescriptionLength = 2300;
+    const pages: string[][] = [];
+    let page: string[] = [];
+    let pageLength = 0;
+
+    for (const rarity of RARITY_ORDER) {
+        const achievements = ACHIEVEMENTS.filter(a => rarityOf(a.id) === rarity);
+        let needsHeading = true;
+
+        for (const achievement of achievements) {
+            const status = unlockedIds.has(achievement.id) ? '✅' : '🔒';
+            const line = `${status} ${achievement.emoji} **${achievement.name}** — ${achievement.description}`;
+            const heading = `${RARITY_META[rarity].emoji} **${RARITY_META[rarity].label} (${achievements.length})**`;
+            const additions = needsHeading ? [page.length > 0 ? '' : null, heading, line].filter((x): x is string => x !== null) : [line];
+            const addedLength = additions.reduce((sum, part) => sum + part.length + 1, 0);
+
+            if (page.length > 0 && pageLength + addedLength > maxDescriptionLength) {
+                pages.push(page);
+                page = [`${heading} _(continued)_`, line];
+                pageLength = page.reduce((sum, part) => sum + part.length + 1, 0);
+            } else {
+                page.push(...additions);
+                pageLength += addedLength;
+            }
+            needsHeading = false;
+        }
+    }
+
+    if (page.length > 0) pages.push(page);
+
+    return pages.map((lines, index) => new EmbedBuilder()
+        .setColor('#6366f1')
+        .setTitle(`🏆 All Achievements — ${username} (${index + 1}/${pages.length})`)
+        .setDescription(lines.join('\n'))
+        .setFooter({ text: '✅ Earned · 🔒 Locked · tracked from bot-detected matches' }));
+}
+
 function fitField(lines: string[], emptyText: string): string {
     if (lines.length === 0) return emptyText;
 
@@ -42,7 +82,13 @@ export async function achievements(message: Message, args: string[], userDataSer
         const total = ACHIEVEMENTS.length;
         const count = unlocked.length;
 
-        const RARITY_ORDER: Rarity[] = ['arcana', 'immortal', 'legendary', 'mythical', 'rare', 'uncommon', 'common'];
+        const showAll = parsed.positional.some(arg => arg.toLowerCase() === 'all');
+        if (showAll) {
+            const embeds = buildCatalogEmbeds(unlockedIds, targetUser.username);
+            await message.reply({ embeds });
+            return;
+        }
+
         const locked = ACHIEVEMENTS.filter(a => !unlockedIds.has(a.id));
 
         const completionBar = (() => {
