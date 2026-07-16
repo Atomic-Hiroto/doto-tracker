@@ -4,6 +4,7 @@ import { Replies } from '../constants';
 import { achievementService, ACHIEVEMENTS, RARITY_META, rarityOf, Rarity } from '../services/achievementService';
 import { logger } from '../services/loggerService';
 import { parseArgs } from '../utils/argParser';
+import { safeSend } from '../utils/channelHelpers';
 
 const RARITY_ORDER: Rarity[] = ['arcana', 'immortal', 'legendary', 'mythical', 'rare', 'uncommon', 'common'];
 
@@ -40,9 +41,9 @@ function buildCatalogEmbeds(unlockedIds: Set<string>, username: string): EmbedBu
 
     return pages.map((lines, index) => new EmbedBuilder()
         .setColor('#6366f1')
-        .setTitle(`🏆 All Achievements — ${username} (${index + 1}/${pages.length})`)
+        .setTitle(`🏆 All Turbo Achievements — ${username} (${index + 1}/${pages.length})`)
         .setDescription(lines.join('\n'))
-        .setFooter({ text: '✅ Earned · 🔒 Locked · tracked from bot-detected matches' }));
+        .setFooter({ text: '✅ Earned · 🔒 Locked · Turbo only · legacy unlocks kept' }));
 }
 
 function fitField(lines: string[], emptyText: string): string {
@@ -85,7 +86,10 @@ export async function achievements(message: Message, args: string[], userDataSer
         const showAll = parsed.positional.some(arg => arg.toLowerCase() === 'all');
         if (showAll) {
             const embeds = buildCatalogEmbeds(unlockedIds, targetUser.username);
-            await message.reply({ embeds });
+            await message.reply({ embeds: embeds.slice(0, 2) });
+            if (embeds.length > 2) {
+                await safeSend(message.channel, { embeds: embeds.slice(2) });
+            }
             return;
         }
 
@@ -131,14 +135,14 @@ export async function achievements(message: Message, args: string[], userDataSer
 
         const embed = new EmbedBuilder()
             .setColor(count === total ? '#fbbf24' : '#6366f1')
-            .setTitle(`🏆 Achievement Trophy Case — ${targetUser.username}`)
+            .setTitle(`🏆 Turbo Achievement Trophy Case — ${targetUser.username}`)
             .setDescription(`**Progress:** ${completionBar}\n**Rarity:** ${legend}`)
             .setThumbnail(targetUser.displayAvatarURL())
             .addFields(
                 { name: `✅ Unlocked (${count}/${total})`, value: unlockedValue, inline: false },
                 { name: `🔒 Still to earn (${locked.length})`, value: lockedValue, inline: false },
             )
-            .setFooter({ text: 'Rarest → Common · achievements tracked from bot-detected matches' })
+            .setFooter({ text: 'Rarest → Common · Turbo only · legacy unlocks kept' })
             .setTimestamp();
 
         await message.reply({ embeds: [embed] });

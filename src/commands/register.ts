@@ -65,7 +65,12 @@ export async function register(message: Message, args: string[], userDataService
     discordId: targetUser.id,
     steamId: steamId,
     autoShow: true,
-    lastCheckedMatch: null
+    lastCheckedMatch: null,
+    turboMatchesTracked: 0,
+    turboHeroesPlayed: [],
+    turboWinStreak: 0,
+    turboHeroStats: {},
+    pendingParsedAchievements: [],
   });
 
   message.reply(registeringOtherUser
