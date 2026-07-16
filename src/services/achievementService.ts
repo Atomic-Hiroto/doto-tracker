@@ -107,7 +107,7 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
     // ── Miscellaneous match feats (parsed matches) ────────────────────────────
     { id: 'deny_this', name: 'Deny This', emoji: '🚫', description: 'Get 20+ denies' },
     { id: 'rune_collector', name: 'Rune Collector', emoji: '🔮', description: 'Pick up 10+ runes' },
-    { id: 'courier_hunter', name: 'Courier Hunter', emoji: '📦', description: 'Kill 2+ enemy couriers' },
+    { id: 'button_masher', name: 'Button Masher', emoji: '🎮', description: 'Reach 300+ actions per minute' },
     { id: 'buyback_victory', name: 'Second Wind', emoji: '♻️', description: 'Buy back and go on to win' },
     { id: 'rapier_victory', name: 'High Stakes', emoji: '🗡️', description: 'Win after purchasing a Divine Rapier' },
     { id: 'heavy_hitter', name: 'Heavy Hitter', emoji: '💢', description: 'Deal 2500+ damage in a single hit' },
@@ -189,7 +189,7 @@ const RARITY_BY_ID: Record<string, Rarity> = {
     turbo_lifer: 'rare', overlord: 'rare',
     ultra_kill: 'rare', siege_engine: 'rare', demolition_crew: 'rare', roshan_hunter: 'rare',
     deward_specialist: 'rare', stack_master: 'rare', chain_controller: 'rare',
-    teamfight_fixture: 'rare', courier_hunter: 'rare', hero_specialist: 'rare',
+    teamfight_fixture: 'rare', button_masher: 'rare', hero_specialist: 'rare',
     // mythical
     veteran: 'mythical', thirty_bomb: 'arcana', assist_master: 'mythical', int_diff: 'mythical',
     untouchable: 'mythical', glass_cannon: 'mythical', triple_threat: 'mythical', economy_god: 'mythical',
@@ -249,7 +249,7 @@ export interface MatchContext {
     teamfightParticipation?: number;
     comebackDeficit?: number;
     runePickups?: number;
-    courierKills?: number;
+    actionsPerMinute?: number;
     buybacks?: number;
     boughtDivineRapier?: boolean;
     maxHeroHit?: number;
@@ -426,7 +426,7 @@ class AchievementService {
         // Miscellaneous match feats
         if ((ctx.denies ?? 0) >= 20) tryUnlock('deny_this');
         if ((ctx.runePickups ?? 0) >= 10) tryUnlock('rune_collector');
-        if ((ctx.courierKills ?? 0) >= 2) tryUnlock('courier_hunter');
+        if ((ctx.actionsPerMinute ?? 0) >= 300) tryUnlock('button_masher');
         if (won && (ctx.buybacks ?? 0) >= 1) tryUnlock('buyback_victory');
         if (won && ctx.boughtDivineRapier) tryUnlock('rapier_victory');
         if ((ctx.maxHeroHit ?? 0) >= 2500) tryUnlock('heavy_hitter');
