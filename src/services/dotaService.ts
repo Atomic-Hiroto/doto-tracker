@@ -11,7 +11,7 @@ import { dotaDataService } from './dotaDataService';
 import { safeSend } from '../utils/channelHelpers';
 import { gradeActivePlanForMatch } from './coachingPlanService';
 import { renderScoreboardFromMatch } from './chartService';
-import { achievementService } from './achievementService';
+import { achievementService, MatchContext } from './achievementService';
 import { streakService } from './streakService';
 import { turboRankService } from './turboRankService';
 
@@ -21,6 +21,96 @@ const GAME_MODE_NAMES: Record<number, string> = {
   16: 'Captains Draft', 22: 'All Draft', 23: 'Turbo', 24: 'Mutation',
 };
 
+function highestRecordedKey(counts: Record<string, number> | undefined): number {
+  return Math.max(0, ...Object.entries(counts || {})
+    .filter(([, count]) => Number(count) > 0)
+    .map(([key]) => Number(key))
+    .filter(Number.isFinite));
+}
+
+function comebackDeficit(match: any, isRadiant: boolean, won: boolean): number | undefined {
+  if (!won || !Array.isArray(match?.radiant_gold_adv) || match.radiant_gold_adv.length === 0) return undefined;
+  const advantages = match.radiant_gold_adv.map(Number).filter(Number.isFinite);
+  if (advantages.length === 0) return undefined;
+  return isRadiant ? Math.max(0, -Math.min(...advantages)) : Math.max(0, Math.max(...advantages));
+}
+
+function parsedAchievementContext(match: any, detailedPlayer: any, isRadiant: boolean, won: boolean): Partial<MatchContext> {
+  if (!match || !detailedPlayer) return {};
+  const itemIds = ['item_0', 'item_1', 'item_2', 'item_3', 'item_4', 'item_5', 'backpack_0', 'backpack_1', 'backpack_2']
+    .map(slot => Number(detailedPlayer[slot] || 0));
+  const boughtDivineRapier = (detailedPlayer.purchase_log || []).some((entry: any) => entry.key === 'rapier')
+    || itemIds.some(itemId => dotaDataService.getItemInternalName(itemId) === 'rapier');
+
+  return {
+    firstBloodClaimed: Number(detailedPlayer.firstblood_claimed || 0) > 0,
+    maxMultiKill: highestRecordedKey(detailedPlayer.multi_kills),
+    maxKillStreak: highestRecordedKey(detailedPlayer.kill_streaks),
+    denies: detailedPlayer.denies,
+    towerDamage: detailedPlayer.tower_damage,
+    towerKills: detailedPlayer.tower_kills,
+    roshanKills: detailedPlayer.roshan_kills,
+    wardsPlaced: Number(detailedPlayer.obs_placed || 0) + Number(detailedPlayer.sen_placed || 0),
+    wardsDestroyed: Number(detailedPlayer.observer_kills || 0) + Number(detailedPlayer.sentry_kills || 0),
+    campsStacked: detailedPlayer.camps_stacked,
+    stunDuration: detailedPlayer.stuns,
+    teamfightParticipation: detailedPlayer.teamfight_participation,
+    comebackDeficit: comebackDeficit(match, isRadiant, won),
+    runePickups: detailedPlayer.rune_pickups,
+    courierKills: detailedPlayer.courier_kills,
+    buybacks: detailedPlayer.buyback_count,
+    boughtDivineRapier,
+    maxHeroHit: detailedPlayer.max_hero_hit?.value,
+  };
+}
+
+async function processPendingParsedAchievements(
+  channel: TextBasedChannel,
+  userDataService: UserDataService,
+): Promise<void> {
+  const matchRequests = new Map<number, Promise<any>>();
+  for (const user of userDataService.getAllUsers()) {
+    const pending = user.pendingParsedAchievements || [];
+    if (pending.length === 0) continue;
+
+    const remaining: number[] = [];
+    for (const matchId of pending.slice(0, 5)) {
+      try {
+        if (!matchRequests.has(matchId)) {
+          matchRequests.set(matchId, opendotaClient.get(`/matches/${matchId}`).then(response => response.data));
+        }
+        const match = await matchRequests.get(matchId)!;
+        if (!match?.version) {
+          remaining.push(matchId);
+          continue;
+        }
+
+        const detailedPlayer = match.players?.find((p: any) => String(p.account_id) === String(user.steamId));
+        if (!detailedPlayer) continue;
+        const isRadiant = detailedPlayer.player_slot < 128;
+        const won = (isRadiant && match.radiant_win) || (!isRadiant && !match.radiant_win);
+        const unlocked = achievementService.checkAchievements(user.discordId, {
+          gameMode: Number(match.game_mode),
+          matchId,
+          won,
+          isRadiant,
+          ...parsedAchievementContext(match, detailedPlayer, isRadiant, won),
+        });
+        if (user.autoShow && unlocked.length > 0) {
+          const username = (await channel.client.users.fetch(user.discordId)).username;
+          await safeSend(channel, achievementService.formatAnnouncement(unlocked, user.discordId, username));
+        }
+      } catch (error) {
+        remaining.push(matchId);
+        logger.error(`Error rechecking parsed achievements for match ${matchId}:`, error);
+      }
+    }
+
+    user.pendingParsedAchievements = [...remaining, ...pending.slice(5)].slice(-20);
+    userDataService.updateUser(user);
+  }
+}
+
 // Records streak/achievement progress for one registered player on a newly
 // detected match, and announces any milestones. Safe against double counting
 // because the caller only enqueues a match once (via user.lastCheckedMatch).
@@ -29,16 +119,27 @@ async function trackMatchForPlayer(
   channel: TextBasedChannel,
   userDataService: UserDataService,
   turboStatsService?: TurboStatsService,
+  fullMatch?: any,
   shouldAnnounce = true,
 ) {
   try {
     const summary = player.match;
+    const gameMode = Number(fullMatch?.game_mode ?? summary.game_mode);
+    const isTurbo = gameMode === 23;
     const isRadiant = summary.player_slot < 128;
     const won = (isRadiant && summary.radiant_win) || (!isRadiant && !summary.radiant_win);
+    const detailedPlayer = fullMatch?.players?.find((p: any) => String(p.account_id) === String(player.steamId))
+      || fullMatch?.players?.find((p: any) => p.player_slot === summary.player_slot);
 
-    // Persisted tracked-match counter for the count-based achievements.
+    // Turbo stats were already updated for this match before this call.
+    const turbo = turboStatsService?.getPlayerStats(player.discordId);
+
+    // Keep legacy all-mode counters for compatibility, but achievement progress
+    // uses only the separate Turbo state below.
     let totalMatches: number | undefined;
     let heroPoolSize: number | undefined;
+    let winStreak: number | undefined;
+    let heroGames: number | undefined;
     const user = userDataService.getUserByDiscordId(player.discordId);
     if (user) {
       user.matchesTracked = (user.matchesTracked || 0) + 1;
@@ -46,17 +147,48 @@ async function trackMatchForPlayer(
         user.heroesPlayed = user.heroesPlayed || [];
         if (!user.heroesPlayed.includes(summary.hero_id)) user.heroesPlayed.push(summary.hero_id);
       }
+
+      if (isTurbo) {
+        const turboGames = turbo ? turbo.wins + turbo.losses : undefined;
+        user.turboMatchesTracked = turboGames !== undefined
+          ? Math.max(user.turboMatchesTracked || 0, turboGames)
+          : (user.turboMatchesTracked || 0) + 1;
+
+        // Preserve existing hero-pool progress on first migration, then only add
+        // heroes from Turbo matches going forward.
+        user.turboHeroesPlayed = user.turboHeroesPlayed || [...(user.heroesPlayed || [])];
+        if (summary.hero_id && !user.turboHeroesPlayed.includes(summary.hero_id)) {
+          user.turboHeroesPlayed.push(summary.hero_id);
+        }
+
+        user.turboWinStreak = won ? (user.turboWinStreak || 0) + 1 : 0;
+        user.turboHeroStats = user.turboHeroStats || {};
+        if (summary.hero_id) {
+          const heroKey = String(summary.hero_id);
+          const heroStats = user.turboHeroStats[heroKey] || { games: 0, wins: 0 };
+          heroStats.games += 1;
+          if (won) heroStats.wins += 1;
+          user.turboHeroStats[heroKey] = heroStats;
+          heroGames = heroStats.games;
+        }
+
+        totalMatches = user.turboMatchesTracked;
+        heroPoolSize = user.turboHeroesPlayed.length;
+        winStreak = user.turboWinStreak;
+
+        if (!fullMatch?.version) {
+          user.pendingParsedAchievements = user.pendingParsedAchievements || [];
+          if (!user.pendingParsedAchievements.includes(summary.match_id)) {
+            user.pendingParsedAchievements.push(summary.match_id);
+            user.pendingParsedAchievements = user.pendingParsedAchievements.slice(-20);
+          }
+        }
+      }
+
       userDataService.updateUser(user);
-      totalMatches = user.matchesTracked;
-      heroPoolSize = user.heroesPlayed?.length;
     }
 
     const streakEvent = streakService.updateStreak(player.discordId, won);
-    const streakInfo = streakService.getStreakInfo(player.discordId);
-    const winStreak = streakInfo && streakInfo.current > 0 ? streakInfo.current : 0;
-
-    // Turbo stats were already updated for this match (turbo games) before this call.
-    const turbo = turboStatsService?.getPlayerStats(player.discordId);
 
     const username = (await channel.client.users.fetch(player.discordId)).username;
     const newAchievements = achievementService.checkAchievements(player.discordId, {
@@ -66,19 +198,21 @@ async function trackMatchForPlayer(
       won,
       matchId: summary.match_id,
       isRadiant,
-      gameMode: summary.game_mode,
+      gameMode,
       totalMatches,
       winStreak,
       turboRating: turbo?.rating,
-      turboGames: turbo ? turbo.wins + turbo.losses : undefined,
-      gpm: summary.gold_per_min,
-      xpm: summary.xp_per_min,
-      heroDamage: summary.hero_damage,
-      heroHealing: summary.hero_healing,
-      lastHits: summary.last_hits,
-      durationMin: summary.duration ? summary.duration / 60 : undefined,
-      partySize: summary.party_size,
+      turboGames: totalMatches,
+      gpm: detailedPlayer?.gold_per_min ?? summary.gold_per_min,
+      xpm: detailedPlayer?.xp_per_min ?? summary.xp_per_min,
+      heroDamage: detailedPlayer?.hero_damage ?? summary.hero_damage,
+      heroHealing: detailedPlayer?.hero_healing ?? summary.hero_healing,
+      lastHits: detailedPlayer?.last_hits ?? summary.last_hits,
+      durationMin: (fullMatch?.duration ?? summary.duration) ? (fullMatch?.duration ?? summary.duration) / 60 : undefined,
+      partySize: detailedPlayer?.party_size ?? summary.party_size,
       heroPoolSize,
+      heroGames,
+      ...parsedAchievementContext(fullMatch, detailedPlayer, isRadiant, won),
     });
 
     if (shouldAnnounce && streakEvent) {
@@ -107,6 +241,8 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
     logger.error('Could not find a suitable text-based channel to post updates');
     return;
   }
+
+  await processPendingParsedAchievements(channel, userDataService);
 
   const recentMatches = new Map<number, Array<{ discordId: string; steamId: string; match: any; shouldPost: boolean }>>();
 
@@ -161,27 +297,29 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
       }
     }
 
-    if (turboStatsService) {
-      try {
-        const matchDetails = await opendotaClient.get(`/matches/${matchId}`);
+    let matchDetailsData: any;
+    try {
+      const matchDetails = await opendotaClient.get(`/matches/${matchId}`);
+      matchDetailsData = matchDetails.data;
+      if (turboStatsService) {
         const registeredPlayers = players.map(p => ({ discordId: p.discordId, steamId: p.steamId }));
-        turboStatsService.processTurboMatch(matchDetails.data, registeredPlayers);
+        turboStatsService.processTurboMatch(matchDetailsData, registeredPlayers);
 
         // Update hidden turbo rank estimates (piggybacks on the same match data)
-        if (matchDetails.data.game_mode === 23) {
+        if (matchDetailsData.game_mode === 23) {
           for (const rp of registeredPlayers) {
-            turboRankService.updateFromMatch(matchDetails.data, rp.discordId, rp.steamId);
+            turboRankService.updateFromMatch(matchDetailsData, rp.discordId, rp.steamId);
           }
         }
-      } catch (error) {
-        logger.error(`Error processing turbo stats for match ${matchId}:`, error);
       }
+    } catch (error) {
+      logger.error(`Error fetching match details for match ${matchId}:`, error);
     }
 
     // Streaks + achievements run after turbo stats so score-based achievements
     // see this match's updated turbo numbers.
     for (const player of players) {
-      await trackMatchForPlayer(player, channel, userDataService, turboStatsService, player.shouldPost);
+      await trackMatchForPlayer(player, channel, userDataService, turboStatsService, matchDetailsData, player.shouldPost);
     }
 
     if (postPlayers.length > 1) {
