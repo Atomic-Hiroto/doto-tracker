@@ -23,7 +23,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+trend [@user] [kda|gpm|wr]` — performance trend graph',
       '`+heroes [@user]` — most-played heroes & win rates',
       '`+compare @p1 @p2` — head-to-head comparison',
-      '`+achievements [@user]` — achievements from bot-tracked matches',
+      '`+achievements [@user] [all]` — trophy case or full unlock catalog',
     ],
   },
   {
