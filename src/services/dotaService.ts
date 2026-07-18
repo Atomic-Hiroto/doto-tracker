@@ -94,6 +94,16 @@ async function processPendingParsedAchievements(
           matchId,
           won,
           isRadiant,
+          kills: detailedPlayer.kills,
+          deaths: detailedPlayer.deaths,
+          assists: detailedPlayer.assists,
+          gpm: detailedPlayer.gold_per_min,
+          xpm: detailedPlayer.xp_per_min,
+          heroDamage: detailedPlayer.hero_damage,
+          heroHealing: detailedPlayer.hero_healing,
+          lastHits: detailedPlayer.last_hits,
+          durationMin: Number.isFinite(Number(match.duration)) ? Number(match.duration) / 60 : undefined,
+          partySize: detailedPlayer.party_size,
           ...parsedAchievementContext(match, detailedPlayer, isRadiant, won),
         });
         if (user.autoShow && unlocked.length > 0) {
