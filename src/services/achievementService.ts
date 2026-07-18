@@ -18,7 +18,7 @@ export interface UnlockedAchievement {
     requirementAtUnlock?: string;
 }
 
-const ACHIEVEMENT_RULES_VERSION = 2;
+const ACHIEVEMENT_RULES_VERSION = 3;
 
 export const ACHIEVEMENTS: AchievementDefinition[] = [
     // ── Onboarding & match count ──────────────────────────────────────────────
@@ -327,7 +327,12 @@ class AchievementService {
             if (result) newlyUnlocked.push(result);
         };
 
-        const K = ctx.kills || 0, D = ctx.deaths || 0, A = ctx.assists || 0;
+        const K = typeof ctx.kills === 'number' ? ctx.kills : Number.NaN;
+        const D = typeof ctx.deaths === 'number' ? ctx.deaths : Number.NaN;
+        const A = typeof ctx.assists === 'number' ? ctx.assists : Number.NaN;
+        const hasKills = Number.isFinite(K);
+        const hasDeaths = Number.isFinite(D);
+        const hasAssists = Number.isFinite(A);
         const won = !!ctx.won;
 
         // Match count
@@ -340,38 +345,38 @@ class AchievementService {
         }
 
         // Kills (win)
-        if (won && K >= 10) tryUnlock('carry_enjoyer');
-        if (won && K >= 13) tryUnlock('bloodthirsty');
-        if (won && K >= 16) tryUnlock('massacre');
-        if (won && K >= 30) tryUnlock('thirty_bomb');
-        if (won && K >= 19) tryUnlock('unstoppable');
-        if (won && K >= 22) tryUnlock('god_of_slaughter');
-        if (won && K >= 25) tryUnlock('kill_legend');
+        if (won && hasKills && K >= 10) tryUnlock('carry_enjoyer');
+        if (won && hasKills && K >= 13) tryUnlock('bloodthirsty');
+        if (won && hasKills && K >= 16) tryUnlock('massacre');
+        if (won && hasKills && K >= 30) tryUnlock('thirty_bomb');
+        if (won && hasKills && K >= 19) tryUnlock('unstoppable');
+        if (won && hasKills && K >= 22) tryUnlock('god_of_slaughter');
+        if (won && hasKills && K >= 25) tryUnlock('kill_legend');
 
         // Assists (win)
-        if (won && A >= 14) tryUnlock('team_player');
-        if (won && A >= 18) tryUnlock('support_god');
-        if (won && A >= 22) tryUnlock('guardian_angel');
-        if (won && A >= 26) tryUnlock('assist_master');
-        if (won && A >= 30) tryUnlock('battle_medic');
-        if (won && A >= 34) tryUnlock('hand_of_god');
-        if (won && A >= 40) tryUnlock('the_saint');
+        if (won && hasAssists && A >= 14) tryUnlock('team_player');
+        if (won && hasAssists && A >= 18) tryUnlock('support_god');
+        if (won && hasAssists && A >= 22) tryUnlock('guardian_angel');
+        if (won && hasAssists && A >= 26) tryUnlock('assist_master');
+        if (won && hasAssists && A >= 30) tryUnlock('battle_medic');
+        if (won && hasAssists && A >= 34) tryUnlock('hand_of_god');
+        if (won && hasAssists && A >= 40) tryUnlock('the_saint');
 
         // Deaths (win)
-        if (won && D >= 9) tryUnlock('feeder_redeemed');
-        if (won && D >= 13) tryUnlock('unkillable_feeder');
-        if (won && D >= 16) tryUnlock('int_diff');
+        if (won && hasDeaths && D >= 9) tryUnlock('feeder_redeemed');
+        if (won && hasDeaths && D >= 13) tryUnlock('unkillable_feeder');
+        if (won && hasDeaths && D >= 16) tryUnlock('int_diff');
 
         // KDA combos (win)
-        if (won && D === 0) tryUnlock('clean_sweep');
-        if (won && D === 0 && K >= 10) tryUnlock('flawless_execution');
-        if (won && D === 0 && K >= 15) tryUnlock('untouchable');
-        if (won && D === 0 && K >= 20) tryUnlock('godlike_kda');
-        if (won && K >= 20 && A <= 5) tryUnlock('one_man_army');
-        if (won && A >= 25 && K <= 3) tryUnlock('pure_support');
-        if (won && K >= 20 && D >= 15) tryUnlock('glass_cannon');
-        if (won && K >= 10 && A >= 10 && D === 0) tryUnlock('triple_threat');
-        if (won && K >= 20 && A >= 20) tryUnlock('raid_boss');
+        if (won && hasDeaths && D === 0) tryUnlock('clean_sweep');
+        if (won && hasKills && hasDeaths && D === 0 && K >= 10) tryUnlock('flawless_execution');
+        if (won && hasKills && hasDeaths && D === 0 && K >= 15) tryUnlock('untouchable');
+        if (won && hasKills && hasDeaths && D === 0 && K >= 20) tryUnlock('godlike_kda');
+        if (won && hasKills && hasAssists && K >= 20 && A <= 5) tryUnlock('one_man_army');
+        if (won && hasKills && hasAssists && A >= 25 && K <= 3) tryUnlock('pure_support');
+        if (won && hasKills && hasDeaths && K >= 20 && D >= 15) tryUnlock('glass_cannon');
+        if (won && hasKills && hasDeaths && hasAssists && K >= 10 && A >= 10 && D === 0) tryUnlock('triple_threat');
+        if (won && hasKills && hasAssists && K >= 20 && A >= 20) tryUnlock('raid_boss');
 
         // Farm / economy (any game)
         if (ctx.gpm !== undefined) {
