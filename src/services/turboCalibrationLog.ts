@@ -33,6 +33,8 @@ export interface CalibrationSnapshot {
   experimentalMMR?: number | null;
   /** experimentalMMR − estimatedMMR, if populated. */
   experimentalDelta?: number | null;
+  /** Estimator schema so V1 and V2 history are never mixed during validation. */
+  experimentalVersion?: number | null;
 }
 
 interface HistoryFile {
@@ -70,6 +72,7 @@ export function logCalibrationSnapshot(player: TurboRankPlayerData, estimate: Tu
       lean: estimate.lean ?? null,
       experimentalMMR: estimate.experimental?.experimentalMMR ?? null,
       experimentalDelta: estimate.experimental?.deltaFromCurrent ?? null,
+      experimentalVersion: estimate.experimental?.version ?? null,
     };
 
     // Skip if the previous snapshot for this player is identical in the fields
@@ -79,7 +82,9 @@ export function logCalibrationSnapshot(player: TurboRankPlayerData, estimate: Tu
       prev &&
       prev.estimatedMMR === snapshot.estimatedMMR &&
       prev.rankedTier === snapshot.rankedTier &&
-      prev.confidence === snapshot.confidence
+      prev.confidence === snapshot.confidence &&
+      prev.experimentalVersion === snapshot.experimentalVersion &&
+      prev.experimentalMMR === snapshot.experimentalMMR
     ) {
       return;
     }

@@ -265,14 +265,18 @@ function experimentalEstimateText(estimate: TurboRankEstimate): string | null {
   const exp = estimate.experimental;
   if (!exp) return null;
 
-  const sideLine = exp.sideAdjustedMMR != null
-    ? `Side/result adjustment: **${formatMmrDelta(exp.sideAdjustment ?? 0)}** from ${exp.sideSampleSize} game(s) with ally/enemy rank split.`
-    : `Side/result adjustment: pending (${exp.sideSampleSize}/3 usable side-split games).`;
+  const balanceLine = exp.balanceInvertedMMR != null
+    ? `Team-balance read: **~${exp.balanceInvertedMMR}**, weighted **${Math.round(exp.balanceWeight * 100)}%** -> **${formatMmrDelta(exp.balanceAdjustment)}**.`
+    : 'Team-balance read: unavailable (not enough side-complete ranks).';
+  const resultLine = exp.resultSampleSize > 0
+    ? `Result adjustment: **${formatMmrDelta(exp.resultAdjustment)}** from ${exp.resultSampleSize} game(s) (result-model SD ~${exp.resultPosteriorSD}).`
+    : 'Result adjustment: unavailable (no stored outcomes).';
 
   return [
-    `Experimental read: **${exp.medal}** (~${exp.experimentalMMR}) (${formatMmrDelta(exp.deltaFromCurrent)} vs current).`,
-    `Robust lobby read: **~${exp.robustLobbyMMR}**.`,
-    sideLine,
+    `Experimental V${exp.version}: **${exp.medal}** (~${exp.experimentalMMR}) (${formatMmrDelta(exp.deltaFromCurrent)} vs current).`,
+    `Robust placement: **~${exp.robustLobbyMMR}**.`,
+    balanceLine,
+    resultLine,
     '_Not used for the official rank, lean, or leaderboard._',
   ].join('\n');
 }
@@ -395,7 +399,7 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
         inline: false,
       },
       ...(experimentalEstimateText(estimate) ? [{
-        name: 'Experimental Estimate',
+        name: 'Experimental Estimate V2',
         value: experimentalEstimateText(estimate)!,
         inline: false,
       }] : []),

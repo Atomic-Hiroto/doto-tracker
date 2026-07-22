@@ -148,15 +148,15 @@ function fmtMmr(value: number | null | undefined): string {
   return `${value >= 0 ? '+' : ''}${Math.round(value)} MMR`;
 }
 
-function experimentalVerdict(maeDelta: number, sideAdjustedRows: number): string {
+function experimentalVerdict(maeDelta: number, resultAdjustedRows: number, thinResultRows: number): string {
   const material = 25;
   const verdict = maeDelta <= -material
     ? `✅ Better by ${Math.abs(Math.round(maeDelta))} MMR MAE. Worth rechecking on a bigger sample before promotion.`
     : maeDelta >= material
       ? `⚠️ Worse by ${Math.round(maeDelta)} MMR MAE. Keep it experimental.`
       : `⚪ No material accuracy change (${maeDelta >= 0 ? '+' : ''}${Math.round(maeDelta)} MMR MAE). Do not promote yet.`;
-  const sideNote = sideAdjustedRows > 0 && sideAdjustedRows < 8
-    ? ' Side/result adjustment sample is thin, so treat that part as noise.'
+  const sideNote = resultAdjustedRows > 0 && thinResultRows > 0
+    ? ` ${thinResultRows} result-adjusted player(s) have fewer than 8 outcomes, so treat their movement as provisional.`
     : '';
   return verdict + sideNote;
 }
@@ -300,8 +300,9 @@ function toCsv(candidates: StudyCandidate[]): Buffer {
   const header = [
     'name', 'discordId', 'steamId', 'rankedMedal', 'rankedApproxMMR',
     'turboMedal', 'turboMMR', 'gapMMR', 'experimentalMedal', 'experimentalMMR',
-    'experimentalGapMMR', 'experimentalDeltaMMR', 'robustLobbyMMR', 'sideAdjustedMMR',
-    'sideAdjustmentMMR', 'sideSampleSize', 'confidence', 'sampleSize',
+    'experimentalGapMMR', 'experimentalDeltaMMR', 'experimentalVersion', 'robustLobbyMMR',
+    'balanceInvertedMMR', 'balanceWeight', 'balanceAdjustmentMMR', 'resultAdjustmentMMR',
+    'resultSampleSize', 'resultPosteriorSD', 'confidence', 'sampleSize',
     'soloSampleSize', 'effectiveSample', 'partyFallback', 'lastUpdated',
     'turboScore', 'turboGames', 'turboWinRate',
   ];
@@ -323,10 +324,14 @@ function toCsv(candidates: StudyCandidate[]): Buffer {
       exp?.experimentalMMR ?? '',
       expGap,
       exp?.deltaFromCurrent ?? '',
+      exp?.version ?? '',
       exp?.robustLobbyMMR ?? '',
-      exp?.sideAdjustedMMR ?? '',
-      exp?.sideAdjustment ?? '',
-      exp?.sideSampleSize ?? '',
+      exp?.balanceInvertedMMR ?? '',
+      exp?.balanceWeight ?? '',
+      exp?.balanceAdjustment ?? '',
+      exp?.resultAdjustment ?? '',
+      exp?.resultSampleSize ?? '',
+      exp?.resultPosteriorSD ?? '',
       r.estimate.confidence,
       r.estimate.sampleSize,
       r.estimate.soloSampleSize,
@@ -448,21 +453,25 @@ export async function turboStudy(message: Message, args: string[], userDataServi
       .map((r) => ({ row: r, experimental: r.estimate.experimental }))
       .filter((entry): entry is { row: StudyRow; experimental: NonNullable<TurboRankEstimate['experimental']> } => !!entry.experimental);
 
-    let experimentalStudyLine = 'No experimental estimates yet. Recalibrate players to populate the comparison fields.';
-    let experimentalMoversLine = 'No experimental estimates yet.';
+    let experimentalStudyLine = 'No Experimental V2 estimates are available for this cohort.';
+    let experimentalMoversLine = 'No Experimental V2 estimates are available.';
     if (experimentalPairs.length > 0) {
       const expGaps = experimentalPairs.map(({ row, experimental }) => experimental.experimentalMMR - row.visibleMMR);
       const expMae = expGaps.reduce((sum, gap) => sum + Math.abs(gap), 0) / expGaps.length;
       const expRmse = Math.sqrt(expGaps.reduce((sum, gap) => sum + gap * gap, 0) / expGaps.length);
       const expAvgDelta = experimentalPairs.reduce((sum, { experimental }) => sum + experimental.deltaFromCurrent, 0) / experimentalPairs.length;
-      const expSideCount = experimentalPairs.filter(({ experimental }) => experimental.sideAdjustedMMR != null).length;
+      const expResultCount = experimentalPairs.filter(({ experimental }) => experimental.resultSampleSize > 0).length;
+      const expThinResultCount = experimentalPairs.filter(({ experimental }) =>
+        experimental.resultSampleSize > 0 && experimental.resultSampleSize < 8).length;
+      const expAvgBalancePull = experimentalPairs.reduce((sum, { experimental }) => sum + experimental.balanceAdjustment, 0) / experimentalPairs.length;
+      const expAvgResultPull = experimentalPairs.reduce((sum, { experimental }) => sum + experimental.resultAdjustment, 0) / experimentalPairs.length;
       const maeDelta = expMae - mae;
       experimentalStudyLine =
-        `Verdict: ${experimentalVerdict(maeDelta, expSideCount)}\n` +
-        `Coverage: **${experimentalPairs.length}/${rows.length}** rows; side-adjusted: **${expSideCount}**\n` +
+        `Verdict: ${experimentalVerdict(maeDelta, expResultCount, expThinResultCount)}\n` +
+        `V2 coverage: **${experimentalPairs.length}/${rows.length}** rows; result-modeled: **${expResultCount}**\n` +
         `Current MAE/RMSE: **${Math.round(mae)} / ${Math.round(rmse)} MMR**\n` +
-        `Experimental MAE/RMSE: **${Math.round(expMae)} / ${Math.round(expRmse)} MMR** (${maeDelta >= 0 ? '+' : ''}${Math.round(maeDelta)} MAE)\n` +
-        `Average movement vs current: **${fmtMmr(expAvgDelta)}**\n` +
+        `Experimental V2 MAE/RMSE: **${Math.round(expMae)} / ${Math.round(expRmse)} MMR** (${maeDelta >= 0 ? '+' : ''}${Math.round(maeDelta)} MAE)\n` +
+        `Avg movement: **${fmtMmr(expAvgDelta)}** (balance ${fmtMmr(expAvgBalancePull)}, results ${fmtMmr(expAvgResultPull)})\n` +
         `_Experimental only — current rank and leaderboard still use the existing estimator._`;
 
       experimentalMoversLine = fitLines(
@@ -655,8 +664,8 @@ export async function turboStudy(message: Message, args: string[], userDataServi
         },
         { name: 'Error by Range', value: rangeNote, inline: false },
         { name: 'Estimator Health', value: healthLines.join('\n'), inline: false },
-        { name: 'Experimental Estimator', value: experimentalStudyLine, inline: false },
-        { name: 'Experimental Movers', value: experimentalMoversLine, inline: false },
+        { name: 'Experimental Estimator V2', value: experimentalStudyLine, inline: false },
+        { name: 'Experimental V2 Movers', value: experimentalMoversLine, inline: false },
         { name: 'Bias by Ranked Bracket', value: bracketLines.join('\n'), inline: false },
         { name: 'Fit Interpretation', value: fitNote, inline: false },
         { name: 'Calibration Extremes', value: extremesLine, inline: true },

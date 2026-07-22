@@ -133,10 +133,14 @@ function starString(stars: number): string {
   return stars > 0 ? ' ' + '★'.repeat(stars) : '';
 }
 
-interface WeightedObservation {
+export interface WeightedObservation {
   obs: TurboRankObservation;
   w: number;
 }
+
+const EXPERIMENTAL_V2_MAX_BALANCE_WEIGHT = 0.05;
+const EXPERIMENTAL_V2_RESULT_PRIOR_SIGMA = 250;
+const EXPERIMENTAL_V2_TEAM_AVG_ELO_SCALE = 800;
 
 function average(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -195,6 +199,116 @@ function weightedTrimmedMean(
   }
 
   return keptWeight > 0 ? sum / keptWeight : weightedMean(items, value);
+}
+
+function filledSideSums(obs: TurboRankObservation): { allySum: number; enemySum: number } {
+  const allyVisible = clamp(obs.allyVisibleRanks ?? 0, 0, 4);
+  const enemyVisible = clamp(obs.enemyVisibleRanks ?? 0, 0, 5);
+  const allyAverage = obs.allyMMR ?? obs.lobbyMMR;
+  const enemyAverage = obs.enemyMMR ?? obs.lobbyMMR;
+  return {
+    allySum: allyAverage * allyVisible + obs.lobbyMMR * (4 - allyVisible),
+    enemySum: enemyAverage * enemyVisible + obs.lobbyMMR * (5 - enemyVisible),
+  };
+}
+
+function experimentalV2ExpectedWin(rating: number, obs: TurboRankObservation): number {
+  const { allySum, enemySum } = filledSideSums(obs);
+  const ownTeamAverage = (rating + allySum) / 5;
+  const enemyTeamAverage = enemySum / 5;
+  return 1 / (1 + Math.pow(10, -(ownTeamAverage - enemyTeamAverage) / EXPERIMENTAL_V2_TEAM_AVG_ELO_SCALE));
+}
+
+/**
+ * Conservative latent estimator selected by the read-only cohort experiment:
+ *  - robust lobby placement is the dominant prior
+ *  - team-balance inversion can pull that prior by at most 5%
+ *  - wins/losses update it through a strongly regularized team-result likelihood
+ */
+export function computeTurboExperimentalV2(
+  weighted: WeightedObservation[],
+  currentMMR: number,
+): TurboRankExperimentalEstimate {
+  const trimmed = weightedTrimmedMean(weighted, item => item.obs.lobbyMMR);
+  const median = weightedMedian(weighted, item => item.obs.lobbyMMR);
+  const robustLobbyMMR = Math.round(trimmed * 0.65 + median * 0.35);
+
+  const balanceRows = weighted
+    .filter(({ obs }) =>
+      obs.allyMMR != null
+      && obs.enemyMMR != null
+      && (obs.allyVisibleRanks ?? 0) >= 2
+      && (obs.enemyVisibleRanks ?? 0) >= 3)
+    .map((item) => {
+      const sideCompleteness = Math.min(
+        ((item.obs.allyVisibleRanks ?? 0) + (item.obs.enemyVisibleRanks ?? 0)) / 9,
+        1,
+      );
+      return { ...item, w: item.w * sideCompleteness };
+    });
+
+  let balanceInvertedMMR: number | null = null;
+  let balanceWeight = 0;
+  let balanceAdjustment = 0;
+  if (balanceRows.length > 0) {
+    const inversion = (item: WeightedObservation) => {
+      const { allySum, enemySum } = filledSideSums(item.obs);
+      return clamp(enemySum - allySum, 0, 8000);
+    };
+    const balanceTrimmed = weightedTrimmedMean(balanceRows, inversion, 0.15);
+    const balanceMedian = weightedMedian(balanceRows, inversion);
+    balanceInvertedMMR = Math.round(balanceTrimmed * 0.5 + balanceMedian * 0.5);
+    const effectiveWeight = balanceRows.reduce((sum, item) => sum + item.w, 0);
+    balanceWeight = Math.min(
+      EXPERIMENTAL_V2_MAX_BALANCE_WEIGHT,
+      EXPERIMENTAL_V2_MAX_BALANCE_WEIGHT * effectiveWeight / (effectiveWeight + 12),
+    );
+    balanceAdjustment = Math.round(
+      balanceWeight * clamp(balanceInvertedMMR - robustLobbyMMR, -900, 900),
+    );
+  }
+
+  const priorMean = robustLobbyMMR + balanceAdjustment;
+  const resultRows = weighted.filter(({ obs }) => typeof obs.won === 'boolean');
+  const priorVariance = EXPERIMENTAL_V2_RESULT_PRIOR_SIGMA ** 2;
+  const derivative = Math.LN10 / (5 * EXPERIMENTAL_V2_TEAM_AVG_ELO_SCALE);
+  let rating = priorMean;
+
+  for (let iteration = 0; iteration < 20; iteration++) {
+    let gradient = -(rating - priorMean) / priorVariance;
+    let hessian = -1 / priorVariance;
+    for (const item of resultRows) {
+      const probability = clamp(experimentalV2ExpectedWin(rating, item.obs), 1e-6, 1 - 1e-6);
+      const actual = item.obs.won ? 1 : 0;
+      gradient += item.w * derivative * (actual - probability);
+      hessian -= item.w * derivative * derivative * probability * (1 - probability);
+    }
+    const step = gradient / hessian;
+    rating = clamp(rating - step, 0, 8000);
+    if (Math.abs(step) < 0.01) break;
+  }
+
+  let information = 1 / priorVariance;
+  for (const item of resultRows) {
+    const probability = experimentalV2ExpectedWin(rating, item.obs);
+    information += item.w * derivative * derivative * probability * (1 - probability);
+  }
+
+  const experimentalMMR = Math.round(rating);
+  return {
+    version: 2,
+    rawLobbyMMR: currentMMR,
+    robustLobbyMMR,
+    balanceInvertedMMR,
+    balanceWeight: Math.round(balanceWeight * 1000) / 1000,
+    balanceAdjustment,
+    resultAdjustment: Math.round(rating - priorMean),
+    resultSampleSize: resultRows.length,
+    resultPosteriorSD: Math.round(Math.sqrt(1 / information)),
+    experimentalMMR,
+    medal: mmrToMedal(experimentalMMR).medal,
+    deltaFromCurrent: experimentalMMR - currentMMR,
+  };
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────
@@ -413,7 +527,7 @@ export class TurboRankService {
     if (totalWeight === 0) return null;
 
     const estimatedMMR = Math.round(weightedSum / totalWeight);
-    const experimental = this.computeExperimentalEstimate(weighted, estimatedMMR);
+    const experimental = computeTurboExperimentalV2(weighted, estimatedMMR);
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
     // Confidence from the visible-rank-weighted effective sample. ~12 full lobbies -> ~100%.
@@ -461,67 +575,6 @@ export class TurboRankService {
     };
   }
 
-  /**
-   * Experimental estimator kept out of production ranking:
-   *  - robustLobbyMMR blends a trimmed weighted mean with weighted median
-   *  - sideAdjustedMMR adds a small result-aware nudge from ally/enemy rank split
-   */
-  private computeExperimentalEstimate(
-    weighted: WeightedObservation[],
-    currentMMR: number,
-  ): TurboRankExperimentalEstimate {
-    const trimmed = weightedTrimmedMean(weighted, item => item.obs.lobbyMMR);
-    const median = weightedMedian(weighted, item => item.obs.lobbyMMR);
-    const robustLobbyMMR = Math.round(trimmed * 0.65 + median * 0.35);
-
-    const sideRows = weighted.filter(({ obs }) =>
-      obs.allyMMR != null
-      && obs.enemyMMR != null
-      && typeof obs.won === 'boolean'
-      && (obs.allyVisibleRanks ?? 0) > 0
-      && (obs.enemyVisibleRanks ?? 0) > 0,
-    );
-
-    let sideAdjustment: number | null = null;
-    let sideAdjustedMMR: number | null = null;
-    if (sideRows.length >= 3) {
-      let residualSum = 0;
-      let residualWeight = 0;
-
-      for (const item of sideRows) {
-        const obs = item.obs;
-        const sideDiff = (obs.enemyMMR ?? 0) - (obs.allyMMR ?? 0);
-        const expectedWin = 1 / (1 + Math.pow(10, sideDiff / 400));
-        const actualWin = obs.won ? 1 : 0;
-        const residual = actualWin - expectedWin;
-        const sideCompleteness = Math.min(
-          ((obs.allyVisibleRanks ?? 0) + (obs.enemyVisibleRanks ?? 0)) / 9,
-          1,
-        );
-        const w = item.w * sideCompleteness;
-        residualSum += residual * w;
-        residualWeight += w;
-      }
-
-      if (residualWeight > 0) {
-        sideAdjustment = Math.round(clamp((residualSum / residualWeight) * 260, -180, 180));
-        sideAdjustedMMR = robustLobbyMMR + sideAdjustment;
-      }
-    }
-
-    const experimentalMMR = Math.round(sideAdjustedMMR ?? robustLobbyMMR);
-    return {
-      rawLobbyMMR: currentMMR,
-      robustLobbyMMR,
-      sideAdjustedMMR,
-      experimentalMMR,
-      medal: mmrToMedal(experimentalMMR).medal,
-      deltaFromCurrent: experimentalMMR - currentMMR,
-      sideAdjustment,
-      sideSampleSize: sideRows.length,
-    };
-  }
-
   private weightedObservationsFromCache(observations: TurboRankObservation[]): WeightedObservation[] | null {
     if (observations.length === 0) return null;
 
@@ -554,7 +607,7 @@ export class TurboRankService {
 
     return {
       ...estimate,
-      experimental: this.computeExperimentalEstimate(weighted, estimate.estimatedMMR),
+      experimental: computeTurboExperimentalV2(weighted, estimate.estimatedMMR),
     };
   }
 
