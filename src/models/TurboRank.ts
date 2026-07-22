@@ -21,27 +21,35 @@ export interface TurboRankObservation {
   visibleRanks: number;
   /** Raw rank_tier ints of the visible other players (for lobby composition display). */
   tiers: number[];
-  /** Whether the tracked player won the match (display only — not used in the estimate). */
+  /** Whether the tracked player won the match (used only by Experimental V2, never the official estimate). */
   won?: boolean;
 }
 
 /** Non-authoritative estimator outputs used for comparison and validation only. */
 export interface TurboRankExperimentalEstimate {
+  /** Experimental estimator schema/version. Version 2 is the conservative latent model. */
+  version: 2;
   /** The current production estimate, copied here as the raw baseline. */
   rawLobbyMMR: number;
   /** Robust lobby read using median/trimmed averaging to reduce outlier impact. */
   robustLobbyMMR: number;
-  /** Optional result-aware side adjustment from ally/enemy rank split. */
-  sideAdjustedMMR?: number | null;
+  /** Team-balance inversion read before shrinkage, when side-complete games exist. */
+  balanceInvertedMMR: number | null;
+  /** Maximum 0.05 reliability weight applied to the balance inversion. */
+  balanceWeight: number;
+  /** Shrunk balance pull applied to robustLobbyMMR. */
+  balanceAdjustment: number;
+  /** Elo-likelihood adjustment applied after the robust/balance prior. */
+  resultAdjustment: number;
+  /** Matches with a known result used by the likelihood update. */
+  resultSampleSize: number;
+  /** Posterior SD of the result adjustment model; not total estimator uncertainty. */
+  resultPosteriorSD: number;
   /** The experimental headline value. Not used for rank, lean, or leaderboards. */
   experimentalMMR: number;
   medal: string;
   /** experimentalMMR - estimatedMMR. */
   deltaFromCurrent: number;
-  /** Average side/result nudge in MMR, when side data exists. */
-  sideAdjustment?: number | null;
-  /** Number of observations with usable ally/enemy split and outcome. */
-  sideSampleSize: number;
 }
 
 /** Computed rank estimate for a player. */
