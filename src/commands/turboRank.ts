@@ -897,8 +897,30 @@ async function turboRankAudit(message: Message, args: string[], userDataService:
 /** Quality bar for the default board — keeps out tiny-sample / low-conf / party guesses. */
 const LB_MIN_SOLO = 10;
 const LB_MIN_CONF = 40;
+/** Keep room for the per-page intro/footer beneath Discord's 4,096-char description cap. */
+const LB_PAGE_BODY_LIMIT = 3600;
 function isLeaderboardQuality(estimate: { confidence: number; soloSampleSize: number; partyFallback: boolean }): boolean {
   return !estimate.partyFallback && estimate.confidence >= LB_MIN_CONF && estimate.soloSampleSize >= LB_MIN_SOLO;
+}
+
+function paginateLeaderboardLines(lines: string[]): string[][] {
+  const pages: string[][] = [];
+  let page: string[] = [];
+  let pageLength = 0;
+
+  for (const line of lines) {
+    const addedLength = line.length + (page.length > 0 ? 1 : 0);
+    if (page.length > 0 && pageLength + addedLength > LB_PAGE_BODY_LIMIT) {
+      pages.push(page);
+      page = [];
+      pageLength = 0;
+    }
+    page.push(line);
+    pageLength += line.length + (page.length > 1 ? 1 : 0);
+  }
+
+  if (page.length > 0) pages.push(page);
+  return pages;
 }
 
 async function turboRankAll(message: Message, showEveryone = false) {
@@ -949,19 +971,25 @@ async function turboRankAll(message: Message, showEveryone = false) {
     const footerNote = footerBits.length ? `\n\n_See \`+turborank all everyone\` for ${footerBits.join(' and ')}._` : '';
 
     const top = ranked[0];
-    const embed = new EmbedBuilder()
-      .setColor('#ffd700')
-      .setTitle(showEveryone ? '🔮 Hidden Turbo Rank — Everyone' : '🔮 Hidden Turbo Rank Leaderboard')
-      .setDescription(
-        `Estimated hidden Turbo MMR from solo-lobby rank analysis.\n` +
-        `👑 Top: **${top.steamName ?? 'Player'}** at **${top.estimate.medal}**\n\n` +
-        lines.join('\n') +
-        footerNote,
-      )
-      .setFooter({ text: 'medals: ⭐ Immortal 🔴 Divine 🟠 Ancient 🟡 Legend 🟣 Archon 🔵 Crusader 🟢 Guardian 🟤 Herald' })
-      .setTimestamp();
+    const pages = paginateLeaderboardLines(lines);
+    const baseTitle = showEveryone ? '🔮 Hidden Turbo Rank — Everyone' : '🔮 Hidden Turbo Rank Leaderboard';
 
-    await message.reply({ embeds: [embed] });
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+      const pageLabel = pages.length > 1 ? ` (${pageIndex + 1}/${pages.length})` : '';
+      const intro = pageIndex === 0
+        ? `Estimated hidden Turbo MMR from solo-lobby rank analysis.\n` +
+          `👑 Top: **${top.steamName ?? 'Player'}** at **${top.estimate.medal}**\n\n`
+        : '';
+      const ending = pageIndex === pages.length - 1 ? footerNote : '';
+      const embed = new EmbedBuilder()
+        .setColor('#ffd700')
+        .setTitle(baseTitle + pageLabel)
+        .setDescription(intro + pages[pageIndex].join('\n') + ending)
+        .setFooter({ text: 'medals: ⭐ Immortal 🔴 Divine 🟠 Ancient 🟡 Legend 🟣 Archon 🔵 Crusader 🟢 Guardian 🟤 Herald' })
+        .setTimestamp();
+
+      await message.reply({ embeds: [embed] });
+    }
   } catch (error) {
     logger.error('Error in turborank all:', error);
     await message.reply('An error occurred. Please try again later.');
