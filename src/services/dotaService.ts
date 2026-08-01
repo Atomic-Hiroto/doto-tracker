@@ -1,5 +1,4 @@
 import { Client, TextBasedChannel, EmbedBuilder, AttachmentBuilder } from 'discord.js';
-import axios from 'axios';
 import { Match } from '../models/Match';
 import { UserDataService } from './userDataService';
 import { TurboStatsService } from './turboStatsService';
@@ -476,7 +475,9 @@ async function displayCombinedScoreboard(matchId: number, players: Array<{ steam
 
 async function isMatchParsed(matchId: number): Promise<boolean> {
   try {
-    const response = await opendotaClient.get(`/matches/${matchId}`);
+    // refresh: the parsed flag is exactly the thing that changes under us, and a
+    // cached "not parsed yet" would make waitForMatchParse spin until it times out.
+    const response = await opendotaClient.get(`/matches/${matchId}`, { refresh: true } as any);
     return !!response.data.version;
   } catch (error) {
     logger.error(`Error checking if match ${matchId} is parsed:`, error);
@@ -486,8 +487,9 @@ async function isMatchParsed(matchId: number): Promise<boolean> {
 
 export async function requestMatchParse(matchId: number): Promise<boolean> {
   try {
-    // Use axios directly — opendotaClient's axiosRetry skips non-idempotent POST requests
-    const response = await axios.post(`https://api.opendota.com/api/request/${matchId}`, null, {
+    // Goes through opendotaClient so it draws from the shared rate-limit budget.
+    // axiosRetry still skips it (non-idempotent POST), which is what we want.
+    const response = await opendotaClient.post(`/request/${matchId}`, null, {
       timeout: 15000,
     });
     const job = response.data?.job;
