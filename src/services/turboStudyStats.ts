@@ -722,6 +722,95 @@ export function resolutionWithCI(
   };
 }
 
+// ── Win-rate dispersion ──────────────────────────────────────────────────────
+
+export interface Spread {
+  /** SD of the win rates as observed, including binomial noise. */
+  raw: number;
+  /** SD after subtracting mean sampling variance — the true between-hero spread. */
+  corrected: number;
+  /** Share of the observed variance that is real signal rather than sampling noise. */
+  reliability: number;
+  n: number;
+}
+
+/**
+ * Sampling-corrected spread of a set of win rates.
+ *
+ * Each hero's win rate carries binomial noise with variance p(1−p)/n, so the raw
+ * cross-hero SD always overstates real dispersion. Comparing two modes with different
+ * per-hero sample sizes without this correction would report the *smaller* sample as
+ * more imbalanced purely because it is noisier.
+ */
+export function correctedSpread(pairs: Array<{ wr: number; n: number }>): Spread {
+  if (pairs.length === 0) return { raw: 0, corrected: 0, reliability: 0, n: 0 };
+  const m = mean(pairs.map((p) => p.wr));
+  const observedVar = mean(pairs.map((p) => (p.wr - m) ** 2));
+  const samplingVar = mean(pairs.map((p) => (p.wr * (1 - p.wr)) / Math.max(1, p.n)));
+  return {
+    raw: Math.sqrt(observedVar),
+    corrected: Math.sqrt(Math.max(0, observedVar - samplingVar)),
+    reliability: observedVar > 0 ? Math.max(0, 1 - samplingVar / observedVar) : 0,
+    n: pairs.length,
+  };
+}
+
+export interface SpreadComparison {
+  a: Spread;
+  b: Spread;
+  ratio: number;
+  lo: number;
+  hi: number;
+  /** True when the interval excludes 1, i.e. the two modes really do differ. */
+  significant: boolean;
+  iterations: number;
+}
+
+/**
+ * Ratio of two corrected spreads, with a bootstrap interval over the shared units.
+ *
+ * "Turbo win rates are 42% more spread out" is the headline claim of the hero study and
+ * it was previously printed bare. The two spreads come from the *same* heroes, so the
+ * resample is paired — dropping a genuinely broken hero has to remove it from both
+ * sides or the ratio would inherit variance that does not exist.
+ */
+export function compareSpreads(
+  pairs: Array<{ aWr: number; aN: number; bWr: number; bN: number }>,
+  iterations = 2000,
+  seed = 0x5b1,
+): SpreadComparison | null {
+  if (pairs.length < 8) return null;
+  const a = correctedSpread(pairs.map((p) => ({ wr: p.aWr, n: p.aN })));
+  const b = correctedSpread(pairs.map((p) => ({ wr: p.bWr, n: p.bN })));
+  if (!(b.corrected > 0)) return null;
+
+  const rand = mulberry32(seed);
+  const ratios: number[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const draw = pairs.map(() => pairs[Math.floor(rand() * pairs.length)]);
+    const da = correctedSpread(draw.map((p) => ({ wr: p.aWr, n: p.aN })));
+    const db = correctedSpread(draw.map((p) => ({ wr: p.bWr, n: p.bN })));
+    if (db.corrected > 0) ratios.push(da.corrected / db.corrected);
+  }
+  if (ratios.length < 20) return null;
+  ratios.sort((x, z) => x - z);
+  const lo = percentile(ratios, 0.025);
+  const hi = percentile(ratios, 0.975);
+  return { a, b, ratio: a.corrected / b.corrected, lo, hi, significant: lo > 1 || hi < 1, iterations: ratios.length };
+}
+
+/** Gini coefficient (0 = perfectly even, 1 = one unit takes everything). Scale-invariant. */
+export function gini(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const total = sorted.reduce((s, v) => s + v, 0);
+  if (total === 0) return 0;
+  let cum = 0;
+  for (let i = 0; i < n; i++) cum += (i + 1) * sorted[i];
+  return (2 * cum) / (n * total) - (n + 1) / n;
+}
+
 // ── Mechanical null for the regression slope ─────────────────────────────────
 
 export interface MechanicalNull {
