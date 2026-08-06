@@ -46,6 +46,34 @@ function specialistThreshold(turboWR: number, turboN: number, rankedWR: number, 
   const se = Math.sqrt(stdErr(turboWR, turboN) ** 2 + stdErr(rankedWR, rankedN) ** 2);
   return Math.max(SPECIALIST_DELTA, Z_95 * se);
 }
+/**
+ * Positions where a hero also has to *actually be played there* to be listed.
+ *
+ * Stratz infers position after the fact, and the two halves of that inference are not equally
+ * trustworthy. Positions 1/2/3 come from lane, which is robust — you cannot accidentally be in mid.
+ * Positions 4/5 come from farm priority, which is an *outcome*: a carry who lost farm priority gets
+ * labelled a support. So pos 4/5 accumulate misfiled cores, and the mislabelling means opposite
+ * things in the two modes we compare — in Turbo gold is abundant enough that a "starved" Spectre
+ * still finishes its items, while in Ranked the same label mostly marks a game already lost. That
+ * asymmetry is what produced a 🔥+7.3 turbo-specialist tag for Spectre as a hard support.
+ *
+ * Every demotion path (1→4/5, 3→4/5) lands here, so gating these two positions catches the artefact
+ * without touching the lane-inferred ones. A flat gate across all five would gut Mid, where genuine
+ * flex heroes legitimately sit at 6–8% of their own games.
+ */
+const OFF_ROLE_POSITIONS = new Set([4, 5]);
+/** Below this fraction of a hero's own games, that position is a mislabel rather than a role. */
+const MIN_POSITION_SHARE = 0.10;
+
+/** Total games per hero across all five positions — free, we already hold every position's full list. */
+function heroTotals(byPosition: Record<number, TurboMetaPositionHero[]>): Map<number, number> {
+  const totals = new Map<number, number>();
+  for (let pos = 1; pos <= 5; pos++) {
+    for (const r of byPosition[pos] ?? []) totals.set(r.heroId, (totals.get(r.heroId) ?? 0) + r.matchCount);
+  }
+  return totals;
+}
+
 // Absolute floor so a hero with a handful of games never tops a role (full pool).
 const MIN_GAMES_FLOOR = 2000;
 // Lower floor when a rank/patch filter shrinks the pool, so narrow filters still return heroes.
@@ -72,10 +100,15 @@ function wilsonLowerBound(wins: number, n: number): number {
   return (centre - margin) / denom;
 }
 
-function rankPosition(rows: TurboMetaPositionHero[], floor: number): { ranked: RankedHero[]; gate: number; totalGames: number } {
+function rankPosition(
+  rows: TurboMetaPositionHero[],
+  floor: number,
+  pos: number,
+  totals: Map<number, number>,
+): { ranked: RankedHero[]; gate: number; totalGames: number; offRoleHidden: number } {
   const totalGames = rows.reduce((sum, r) => sum + r.matchCount, 0);
   const gate = Math.max(floor, Math.round(totalGames * MIN_GAMES_FRACTION));
-  const ranked = rows
+  const eligible = rows
     .filter((r) => r.matchCount >= gate)
     .map((r) => ({
       heroId: r.heroId,
@@ -84,7 +117,17 @@ function rankPosition(rows: TurboMetaPositionHero[], floor: number): { ranked: R
       wilson: wilsonLowerBound(r.winCount, r.matchCount),
     }))
     .sort((a, b) => b.wilson - a.wilson);
-  return { ranked, gate, totalGames };
+
+  if (!OFF_ROLE_POSITIONS.has(pos)) return { ranked: eligible, gate, totalGames, offRoleHidden: 0 };
+
+  const onRole = (h: RankedHero) => {
+    const total = totals.get(h.heroId) ?? h.matchCount;
+    return total <= 0 || h.matchCount / total >= MIN_POSITION_SHARE;
+  };
+  const ranked = eligible.filter(onRole);
+  // Only worth telling the reader about heroes that would otherwise have been on the board.
+  const offRoleHidden = eligible.slice(0, TOP_N).filter((h) => !onRole(h)).length;
+  return { ranked, gate, totalGames, offRoleHidden };
 }
 
 function fmtGames(n: number): string {
@@ -265,9 +308,12 @@ export async function turboMeta(message: Message, args: string[] = []) {
 
     const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
     const filtered = opts.patch || opts.brackets.length > 0;
+    const totals = heroTotals(byPosition);
+    let anyOffRoleHidden = false;
     for (let pos = 1; pos <= 5; pos++) {
       const rows = byPosition[pos] ?? [];
-      const { ranked, gate } = rankPosition(rows, filtered ? FILTERED_GAMES_FLOOR : MIN_GAMES_FLOOR);
+      const { ranked, gate, offRoleHidden } = rankPosition(rows, filtered ? FILTERED_GAMES_FLOOR : MIN_GAMES_FLOOR, pos, totals);
+      if (offRoleHidden > 0) anyOffRoleHidden = true;
       if (ranked.length === 0) {
         fields.push({ name: POSITION_LABELS[pos], value: '_not enough data_', inline: false });
         continue;
@@ -297,8 +343,9 @@ export async function turboMeta(message: Message, args: string[] = []) {
         // (54.8% on 375k games correctly outranking 54.9% on 76k), which reads as a sorting bug.
         return `${medal} **${name}** — ${(h.wilson * 100).toFixed(1)}% ⌊conf⌋ · ${(h.winRate * 100).toFixed(1)}% raw · ${fmtGames(h.matchCount)} games${spec}${marker}`;
       });
+      const hiddenNote = offRoleHidden > 0 ? ` · ${offRoleHidden} off-role hidden` : '';
       fields.push({
-        name: `${POSITION_LABELS[pos]}  _(min ${fmtGames(gate)} games)_`,
+        name: `${POSITION_LABELS[pos]}  _(min ${fmtGames(gate)} games${hiddenNote})_`,
         value: lines.join('\n'),
         inline: false,
       });
@@ -320,6 +367,10 @@ export async function turboMeta(message: Message, args: string[] = []) {
     const specialistNote = hasRankedBaseline
       ? `\n🔥+x = **turbo specialist**: wins x pp more in Turbo than in same-role Ranked (vs ranked all-pick, same window${opts.brackets.length ? '/rank' : ''}) — turbo-favoured, not just universally strong.`
       : '';
+    const offRoleNote = anyOffRoleHidden
+      ? '\n_Off-role hidden:_ position is inferred from farm priority at pos 4/5, so a starved carry gets filed as a support. ' +
+        `A hero needs ${Math.round(MIN_POSITION_SHARE * 100)}%+ of its own games at that position to be listed there. Pos 1–3 are lane-inferred and unfiltered.`
+      : '';
     fields.push({
       name: 'Method & caveats',
       value:
@@ -327,6 +378,7 @@ export async function turboMeta(message: Message, args: string[] = []) {
         'Ranking uses the Wilson 95% lower bound, not raw WR, with a per-role sample gate. ' +
         windowNote +
         specialistNote +
+        offRoleNote +
         '\nFlags: `+turbometa [patch] [rank]` — e.g. `+turbometa immortal`, `+turbometa patch divine+`.',
       inline: false,
     });
