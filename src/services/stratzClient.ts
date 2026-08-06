@@ -873,9 +873,15 @@ export async function fetchStratzTurboMetaByPosition(opts: TurboMetaOptions = {}
 
 // ── Ranked baseline for turbo-specialist tagging ─────────────────────────────
 
+/** Ranked win rate plus the sample behind it, so callers can size their own error bars. */
+export interface RankedBaselineEntry {
+  winRate: number;
+  matchCount: number;
+}
+
 export interface TurboRankedBaseline {
-  /** pos -> heroId -> ranked win rate (0..1), only heroes with a stable per-position sample. */
-  byPosition: Record<number, Record<number, number>>;
+  /** pos -> heroId -> ranked baseline, only heroes with a stable per-position sample. */
+  byPosition: Record<number, Record<number, RankedBaselineEntry>>;
 }
 
 // Per hero per position (pooled across the requested brackets) needed before a ranked WR is a
@@ -891,7 +897,7 @@ const rankedBaselineCache = new Map<string, { ts: number; result: TurboRankedBas
  * degrade the core meta — it just yields no tags. Cached 45 min like the turbo side. Empty on error.
  */
 export async function fetchStratzRankedBaselineByPosition(opts: TurboMetaOptions = {}): Promise<TurboRankedBaseline> {
-  const byPosition: Record<number, Record<number, number>> = {};
+  const byPosition: Record<number, Record<number, RankedBaselineEntry>> = {};
   for (let i = 1; i <= 5; i++) byPosition[i] = {};
   if (!STRATZ_API_KEY) return { byPosition };
 
@@ -926,7 +932,7 @@ export async function fetchStratzRankedBaselineByPosition(opts: TurboMetaOptions
         agg.set(heroId, e);
       }
       for (const [heroId, { m, w }] of agg) {
-        if (m >= RANKED_BASELINE_MIN_GAMES) byPosition[i][heroId] = w / m;
+        if (m >= RANKED_BASELINE_MIN_GAMES) byPosition[i][heroId] = { winRate: w / m, matchCount: m };
       }
     }
 

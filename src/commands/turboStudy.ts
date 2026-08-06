@@ -9,6 +9,7 @@ import { renderTurboStudyScatter, renderTurboStudyResidual } from '../services/c
 import { turboScorecard } from './turboFun';
 import { turboStudyDeep } from './turboStudyDeep';
 import { logger } from '../services/loggerService';
+import { safeFields } from '../utils/embedFields';
 import {
   Correlation,
   Disattenuated,
@@ -439,42 +440,6 @@ function fitLines(lines: string[], emptyText: string, limit = 1000, sep = '\n'):
   return selected.join(sep);
 }
 
-/** Discord rejects an embed whose title + description + all field names/values exceed this. */
-const EMBED_TEXT_LIMIT = 6000;
-/** Discord rejects an embed containing any field value longer than this. */
-const EMBED_FIELD_LIMIT = 1024;
-
-/**
- * Last line of defence on Discord's embed size caps.
- *
- * A single oversized field — or a total that creeps past 6000 characters — makes the API
- * reject the *entire* embed, so a report that grows one line too long fails as "an error
- * occurred" with nothing rendered. Every field goes through here, and the total budget is
- * spent from the bottom of the report upward, so a formatting change can only ever cost a
- * truncated trailing paragraph, never the headline numbers and never the whole study.
- *
- * @param reserve characters already spent on the title and description.
- */
-function safeFields(fields: Array<{ name: string; value: string; inline?: boolean }>, reserve = 0) {
-  const out = fields.map((f) => ({
-    name: f.name.slice(0, 256),
-    value: f.value && f.value.length > 0
-      ? (f.value.length > EMBED_FIELD_LIMIT ? `${f.value.slice(0, EMBED_FIELD_LIMIT - 9)}\n…(cut)` : f.value)
-      : '—',
-    inline: f.inline ?? false,
-  }));
-
-  const budget = EMBED_TEXT_LIMIT - 100 - reserve; // 100 = margin for future chrome
-  let total = out.reduce((sum, f) => sum + f.name.length + f.value.length, 0);
-  for (let i = out.length - 1; i >= 0 && total > budget; i--) {
-    const field = out[i];
-    const keep = field.value.length - (total - budget) - 8;
-    const next = keep > 0 ? `${field.value.slice(0, keep)}\n…(cut)` : '—';
-    total -= field.value.length - next.length;
-    field.value = next;
-  }
-  return out;
-}
 
 // ── Command ──────────────────────────────────────────────────────────────────
 
