@@ -134,6 +134,67 @@ function precisionFor(
   return { precisionSD, kishN, spread: Math.round(RANGE_Z_80 * precisionSD) };
 }
 
+/**
+ * Apply the estimator's weighting to an arbitrary set of observations.
+ *
+ * Module-level and pure so the study can run the *same* weighting over a subset of a
+ * player's matches (split-half reliability) without duplicating the formula. Any drift
+ * between this and the real estimator would make the reliability figure meaningless.
+ */
+export function weighObservations(observations: TurboRankObservation[]): WeightedObservation[] | null {
+  if (observations.length === 0) return null;
+
+  const now = Date.now() / 1000;
+  const decayLambda = Math.LN2 / (RECENCY_HALF_LIFE_DAYS * 86400);
+  const soloObs = observations.filter(o => o.partySize === 1);
+  const partyFallback = soloObs.length === 0;
+  const targets = partyFallback ? observations : soloObs;
+
+  const weighted: WeightedObservation[] = [];
+  let totalWeight = 0;
+  for (const obs of targets) {
+    const ageSec = Math.max(0, now - obs.timestamp);
+    const recency = Math.exp(-decayLambda * ageSec);
+    const completeness = Math.min(obs.visibleRanks, 9) / 9;
+    const w = recency * completeness * (partyFallback ? obs.partyWeight : 1.0);
+    totalWeight += w;
+    weighted.push({ obs, w });
+  }
+
+  return totalWeight > 0 ? weighted : null;
+}
+
+/**
+ * The estimator's point estimate alone, over whatever observations are handed in.
+ *
+ * Exposed for split-half reliability: estimating a player twice from disjoint halves of
+ * their own match history is the only way to separate "the estimator is noisy" from
+ * "this player genuinely plays above their ranked medal", and both readings have to
+ * come out of the identical formula for that split to mean anything.
+ */
+export function pointEstimateFrom(
+  observations: TurboRankObservation[],
+): { mmr: number; kishN: number; n: number } | null {
+  const weighted = weighObservations(observations);
+  if (!weighted) return null;
+
+  let weightedSum = 0;
+  let totalWeight = 0;
+  let weightSquares = 0;
+  for (const { obs, w } of weighted) {
+    weightedSum += obs.lobbyMMR * w;
+    totalWeight += w;
+    weightSquares += w * w;
+  }
+  if (totalWeight === 0) return null;
+
+  return {
+    mmr: weightedSum / totalWeight,
+    kishN: weightSquares > 0 ? (totalWeight * totalWeight) / weightSquares : 1,
+    n: weighted.length,
+  };
+}
+
 /** Max observations to keep per player (oldest pruned on save). */
 const MAX_OBSERVATIONS = 200;
 
@@ -644,29 +705,6 @@ export class TurboRankService {
     };
   }
 
-  private weightedObservationsFromCache(observations: TurboRankObservation[]): WeightedObservation[] | null {
-    if (observations.length === 0) return null;
-
-    const now = Date.now() / 1000;
-    const decayLambda = Math.LN2 / (RECENCY_HALF_LIFE_DAYS * 86400);
-    const soloObs = observations.filter(o => o.partySize === 1);
-    const partyFallback = soloObs.length === 0;
-    const targets = partyFallback ? observations : soloObs;
-
-    const weighted: WeightedObservation[] = [];
-    let totalWeight = 0;
-    for (const obs of targets) {
-      const ageSec = Math.max(0, now - obs.timestamp);
-      const recency = Math.exp(-decayLambda * ageSec);
-      const completeness = Math.min(obs.visibleRanks, 9) / 9;
-      const w = recency * completeness * (partyFallback ? obs.partyWeight : 1.0);
-      totalWeight += w;
-      weighted.push({ obs, w });
-    }
-
-    return totalWeight > 0 ? weighted : null;
-  }
-
   /**
    * Recompute the derived-on-read parts of a stored estimate: the experimental V2
    * read, and the precision/range block.
@@ -682,7 +720,7 @@ export class TurboRankService {
     estimate: TurboRankEstimate,
     observations: TurboRankObservation[],
   ): TurboRankEstimate {
-    const weighted = this.weightedObservationsFromCache(observations);
+    const weighted = weighObservations(observations);
     if (!weighted) return estimate;
 
     const { precisionSD, kishN, spread } = precisionFor(weighted, estimate.estimatedMMR);
@@ -966,8 +1004,20 @@ export class TurboRankService {
     return this.data.players.find(p => p.steamId === steamId)?.steamName;
   }
 
-  /** All players with estimates, sorted by MMR descending. */
-  getAllEstimates(): Array<{ discordId: string; steamId: string; steamName?: string; discovered?: boolean; estimate: TurboRankEstimate }> {
+  /**
+   * All players with estimates, sorted by MMR descending.
+   *
+   * `observations` is handed out (read-only by convention) so the study can re-run the
+   * estimator over subsets for split-half reliability. Callers must not mutate it.
+   */
+  getAllEstimates(): Array<{
+    discordId: string;
+    steamId: string;
+    steamName?: string;
+    discovered?: boolean;
+    estimate: TurboRankEstimate;
+    observations: readonly TurboRankObservation[];
+  }> {
     return this.data.players
       .filter(p => p.estimate != null)
       .map(p => ({
@@ -976,6 +1026,7 @@ export class TurboRankService {
         steamName: p.steamName,
         discovered: p.discovered,
         estimate: this.withDerivedStats(p.estimate!, p.observations),
+        observations: p.observations,
       }))
       .sort((a, b) => b.estimate.estimatedMMR - a.estimate.estimatedMMR);
   }

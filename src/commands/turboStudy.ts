@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { AttachmentBuilder, EmbedBuilder, Message } from 'discord.js';
-import { turboRankService, rankTierToMMR, rankTierToMedal } from '../services/turboRankService';
-import { TurboRankEstimate } from '../models/TurboRank';
+import { turboRankService, rankTierToMMR, rankTierToMedal, pointEstimateFrom } from '../services/turboRankService';
+import { TurboRankEstimate, TurboRankObservation } from '../models/TurboRank';
 import { TurboStatsService } from '../services/turboStatsService';
 import { UserDataService } from '../services/userDataService';
 import { opendotaClient } from '../services/apiClient';
@@ -11,17 +11,32 @@ import { turboStudyDeep } from './turboStudyDeep';
 import { logger } from '../services/loggerService';
 import {
   Correlation,
+  Disattenuated,
   ErrorStats,
   Fit,
+  MechanicalNull,
+  PredictiveValue,
+  ResolutionCI,
+  SplitHalf,
+  VarianceDecomposition,
   calibrationCheck,
+  combineReliability,
+  disattenuate,
   errorStats,
   fmtCorr,
   linearFit,
+  mechanicalNullSlope,
+  median,
   outlierCut,
   pairedMAEComparison,
   pearson,
-  resolution,
+  predictiveValue,
+  resolutionWithCI,
+  sd,
   spearman,
+  splitHalfReliability,
+  thorndikeCase2,
+  varianceDecomposition,
   weightedPearson,
 } from '../services/turboStudyStats';
 
@@ -30,6 +45,8 @@ interface StudyCandidate {
   steamId: string;
   name: string;
   estimate: TurboRankEstimate;
+  /** Raw match history, needed to re-estimate from halves for the reliability split. */
+  observations: readonly TurboRankObservation[];
   turboScore?: number;
   turboGames?: number;
   turboWinRate?: number;
@@ -97,6 +114,63 @@ function isCeiling(row: StudyRow): boolean {
 
 function daysSince(ms: number): number {
   return Math.floor((Date.now() - ms) / 86400000);
+}
+
+/**
+ * Assumed reliability of the visible ranked medal as a measure of ranked skill.
+ *
+ * Unlike the turbo estimate, this one cannot be measured here — a player has exactly one
+ * medal, so there is no second reading to correlate against. 0.90 allows for staleness
+ * (medals lag current form and decay when someone stops queueing ranked) on top of the
+ * negligible loss from 153-MMR star discretisation. Everything derived from it is
+ * reported with a sensitivity range so the assumption is visible rather than buried.
+ */
+const RANKED_MEDAL_RELIABILITY = Number(process.env.TURBO_RANKED_RELIABILITY || '0.90');
+
+/**
+ * Assumed SD of the structural gap between "average medal of my lobbies" and "my turbo
+ * skill" — the error term split-half is blind to, because it is constant within a
+ * player and cancels out of both halves.
+ *
+ * Matches the estimator's own TURBO_BIAS_SD_MMR. It is almost certainly an
+ * *over*-estimate: it was originally measured as the residual SD about the ranked
+ * regression, which contains the very turbo-lean the study is trying to size. Charging
+ * all of it against the instrument therefore gives a deliberately conservative floor on
+ * how much lean is real, and the report shows the optimistic end alongside it.
+ */
+const STRUCTURAL_SD_MMR = Number(process.env.TURBO_BIAS_SD_MMR || '630');
+
+/**
+ * SD of ranked MMR across the actual Dota population, for the range-restriction
+ * correction. An assumption, not a measurement: it is the one number in the study that
+ * comes from outside the cohort, and the corrected figure moves roughly linearly with it.
+ */
+const POPULATION_RANKED_SD_MMR = Number(process.env.TURBO_POPULATION_RANKED_SD || '1400');
+
+/** Turbo lobby averages top out around here; the ceiling drives the mechanical slope. */
+const TURBO_LOBBY_CEILING_MMR = 4500;
+
+/** Minimum Kish sample each half needs before a player can join the reliability split. */
+const MIN_HALF_KISH = 2;
+
+/**
+ * Estimate every player twice, from disjoint halves of their own match history.
+ *
+ * Interleaved by time (even-indexed matches vs odd-indexed) rather than cut into an
+ * older and a newer block: a chronological split would confound estimator noise with
+ * real skill drift, and would hand nearly all the recency weight to one side.
+ */
+function splitHalfRows(rows: StudyRow[]): Array<{ a: number; b: number; full: number }> {
+  const out: Array<{ a: number; b: number; full: number }> = [];
+  for (const row of rows) {
+    const ordered = [...row.observations].sort((x, y) => x.timestamp - y.timestamp);
+    if (ordered.length < 4) continue;
+    const a = pointEstimateFrom(ordered.filter((_, i) => i % 2 === 0));
+    const b = pointEstimateFrom(ordered.filter((_, i) => i % 2 === 1));
+    if (!a || !b || a.kishN < MIN_HALF_KISH || b.kishN < MIN_HALF_KISH) continue;
+    out.push({ a: a.mmr, b: b.mmr, full: row.estimate.estimatedMMR });
+  }
+  return out;
 }
 
 /**
@@ -276,64 +350,76 @@ const STUDY_BRACKETS = [
 // ── Narrative ────────────────────────────────────────────────────────────────
 
 /**
- * Plain-language read of the headline stats.
+ * Plain-language read of the headline finding.
  *
- * Rewritten after the audit. The old version reported the full-cohort r as the answer
- * to "does ranked skill carry into Turbo?" and turned R² into "about 81% of your Turbo
- * skill is just your ranked medal" — a variance-explained figure read as a causal
- * share, on a cohort spanning Herald to Immortal. Across that range almost any signal
- * correlates; the honest questions are how tight the range-restricted correlation is
- * and whether the estimate can separate two players who are actually close.
+ * Rewritten twice. The first version reported the full-cohort r as the answer to "does
+ * ranked skill carry into Turbo?" and turned R² into "about 81% of your Turbo skill is
+ * just your ranked medal" — a variance share read as a causal one, across a cohort
+ * spanning Herald to Immortal, where almost any signal correlates.
+ *
+ * The second version fixed the statistics but kept describing the study as an accuracy
+ * audit of the estimator: it called the turbo-minus-ranked gap "error". That gap is the
+ * *finding*, not a mistake — it is turbo-lean. Once that is the estimand, the questions
+ * change: how correlated are the two latent skills, how much of turbo is its own thing,
+ * and how much does either number survive being measured with a noisy instrument.
  */
-function plainEnglish(
-  headline: Correlation | null,
-  restricted: Correlation | null,
-  fit: Fit | null,
-  res: ReturnType<typeof resolution> | null,
-  stats: ErrorStats | null,
-  ceilingCount: number,
-): string {
+function plainEnglish(input: {
+  band: Correlation | null;
+  trueCorr: Disattenuated | null;
+  populationCorr: number | null;
+  decomposition: VarianceDecomposition | null;
+  decompositionBest: VarianceDecomposition | null;
+  split: SplitHalf | null;
+  res: ResolutionCI;
+  predictive: PredictiveValue | null;
+  mechanical: MechanicalNull | null;
+  ceilingCount: number;
+}): string {
+  const { band, trueCorr, populationCorr, decomposition, decompositionBest, res, predictive, mechanical } = input;
   const lines: string[] = [];
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-  if (headline) {
+  if (band && trueCorr) {
     lines.push(
-      `**Does ranked skill carry into Turbo?** Coarsely, yes — across the whole ladder the link is ` +
-      `**${headline.r.toFixed(2)}** (${headline.lo.toFixed(2)}–${headline.hi.toFixed(2)}, n=${headline.n}).`,
-    );
-  }
-  if (restricted) {
-    lines.push(
-      `**How much of that is just telling Herald from Divine?** Most of it. Among players a few medals apart it drops to ` +
-      `**${restricted.r.toFixed(2)}** (${restricted.lo.toFixed(2)}–${restricted.hi.toFixed(2)}, n=${restricted.n})` +
-      (restricted.spansZero ? ' — that interval includes zero, so within the band there is no link to claim.' : '.'),
-    );
-  }
-  if (res && res.nearPairs > 0) {
-    lines.push(
-      `**Can it rank two players who are close?** For pairs within one medal it gets the order right ` +
-      `**${Math.round(res.nearPairsAccuracy * 100)}%** of the time — a coin flip is 50%. ` +
-      `Across all pairs it is ${Math.round(res.allPairsAccuracy * 100)}%, but that is the easy question.`,
-    );
-  }
-  if (stats) {
-    lines.push(
-      `**How far off is one player's number?** Typically **${Math.round(stats.medianAbsGap)} MMR** ` +
-      `(~${(stats.medianAbsGap / MEDAL_SPAN_MMR).toFixed(1)} of a medal tier). Read the medal, not the digits.`,
-    );
-  }
-  if (fit && fit.slopeHi < 1) {
-    lines.push(
-      `**Why are the dots flatter than the diagonal?** Turbo compresses the range — slope **${fit.slope.toFixed(2)}** ` +
-      `(${fit.slopeLo.toFixed(2)}–${fit.slopeHi.toFixed(2)}), reliably under 1, so weak players read high and strong players read low.` +
-      (ceilingCount > 0
-        ? ` The ${ceilingCount} Immortal${ceilingCount > 1 ? 's' : ''} sit above Turbo's ~4–4.5k ceiling and are excluded throughout.`
+      `**How correlated are Turbo skill and ranked skill?** Among players in the same broad band the raw link is ` +
+      `**${band.r.toFixed(2)}** (${band.lo.toFixed(2)}–${band.hi.toFixed(2)}, n=${band.n}). Both sides are measured with ` +
+      `error, which drags any correlation downward, so the *underlying* skills correlate about ` +
+      `**${trueCorr.corrected.toFixed(2)}** (${trueCorr.sensitivityLo.toFixed(2)}–${trueCorr.sensitivityHi.toFixed(2)} over ` +
+      'plausible medal reliability).' +
+      (populationCorr != null
+        ? ` Widened from this band to the whole player base it would be ~**${populationCorr.toFixed(2)}**.`
         : ''),
     );
+  } else if (band) {
+    lines.push(
+      `**How correlated are Turbo skill and ranked skill?** Raw link **${band.r.toFixed(2)}** ` +
+      `(${band.lo.toFixed(2)}–${band.hi.toFixed(2)}, n=${band.n}). Not enough split-half data to correct it for ` +
+      'measurement error yet, so treat it as a floor.',
+    );
+  }
+
+  if (decomposition && decompositionBest) {
+    lines.push(
+      `**Is Turbo its own skill?** Somewhere between **${pct(decomposition.specificPct)}** and ` +
+      `**${pct(decompositionBest.specificPct)}** of the spread in Turbo estimates is Turbo-specific rather than shared ` +
+      `with ranked — worth **±${Math.round(decomposition.specificSD)}–${Math.round(decompositionBest.specificSD)} MMR**. ` +
+      'The range is wide because no split of a player\'s own matches can reveal how far their lobby average sits from their ' +
+      'true skill. Even the pessimistic end says Turbo-lean is real.',
+    );
+  }
+
+  // The slope, pair-ordering and predictive numbers each have their own field below.
+  // Repeating them in full here is what used to push this field past Discord's 1024
+  // cap and silently drop the last paragraphs, so this is a one-line pointer instead.
+  const caveats: string[] = [];
+  if (mechanical?.explained) caveats.push('the flat slope is an instrument artefact, not Turbo compressing skill');
+  if (res.nearPairs > 0 && res.nearLo <= 0.5) caveats.push('close-call ordering is not settled — its interval reaches the coin flip');
+  if (predictive) caveats.push(`one player's number carries ±${Math.round(predictive.interval95)} MMR at 95%, so read the cohort and not the individual`);
+  if (caveats.length > 0) {
+    lines.push(`**The catch:** ${caveats.join('; ')}. Detail in the fields below.`);
   }
 
   if (lines.length === 0) return 'Not enough data yet for a plain-language read.';
-  // Discord caps a field at 1024 characters and rejects the whole embed if any field
-  // is over — drop trailing paragraphs rather than lose the report.
   return fitLines(lines, 'Not enough data yet for a plain-language read.', 1000, '\n\n');
 }
 
@@ -435,6 +521,7 @@ export async function turboStudy(message: Message, args: string[], userDataServi
         steamId: entry.steamId,
         name: user?.username ?? entry.steamName ?? entry.steamId,
         estimate: entry.estimate,
+        observations: entry.observations,
         turboScore: stats?.rating,
         turboGames,
         turboWinRate: stats && turboGames ? (stats.wins / turboGames) * 100 : undefined,
@@ -496,7 +583,66 @@ export async function turboStudy(message: Message, args: string[], userDataServi
     const midRows = rows.filter((r) => r.visibleRankTier >= 40 && r.visibleRankTier < 80);
     const restrictedCorr = pearson(pointsOf(midRows));
 
-    const res = resolution(pointsOf(rows), MEDAL_SPAN_MMR);
+    // Player-level bootstrap, not a binomial on pair count: 317 pairs from 48 players
+    // are heavily clustered, and the naive interval is about half the honest width.
+    const res = resolutionWithCI(pointsOf(rows), MEDAL_SPAN_MMR);
+
+    // ── Reliability ──────────────────────────────────────────────────────────
+    // Split-half measures sampling noise and is blind to the structural term, so the
+    // decomposition is bracketed rather than pinned: the optimistic end assumes the
+    // lobby average is an unbiased readout of turbo skill, the conservative end charges
+    // the whole assumed structural SD against it. The truth is in between and this
+    // design cannot say where — so both ends get reported.
+    const split = splitHalfReliability(splitHalfRows(rows));
+    const relOptimistic = split ? combineReliability(split.totalSD, split.samplingNoiseSD, 0) : null;
+    const relConservative = split
+      ? combineReliability(split.totalSD, split.samplingNoiseSD, STRUCTURAL_SD_MMR)
+      : null;
+
+    // Observed correlations are attenuated by noise on *both* axes, so the raw numbers
+    // understate the finding. Correct the range-restricted one — it is the estimand the
+    // study actually cares about — using the conservative reliability so the headline
+    // never leans on the most flattering assumption.
+    const bandCorr = restrictedCorr ?? headlineCorr;
+    const trueCorr = relConservative && bandCorr
+      ? disattenuate(bandCorr.r, relConservative.reliability, RANKED_MEDAL_RELIABILITY)
+      : null;
+
+    // How wide is the band we measured in, versus the population we want to speak about?
+    const bandSD = sd(midRows.length >= 8 ? midRows.map((r) => r.visibleMMR) : rows.map((r) => r.visibleMMR));
+    const populationCorr = trueCorr && bandSD
+      ? thorndikeCase2(trueCorr.corrected, bandSD, POPULATION_RANKED_SD_MMR)
+      : null;
+
+    const decomposition: VarianceDecomposition | null =
+      relConservative && trueCorr ? varianceDecomposition(relConservative, trueCorr.corrected) : null;
+    const decompositionBest: VarianceDecomposition | null =
+      relOptimistic && trueCorr ? varianceDecomposition(relOptimistic, trueCorr.corrected) : null;
+
+    // The causal-free framing: how much does knowing turbo narrow a guess at ranked?
+    const predictive = predictiveValue(pointsOf(rows));
+    const predictiveBand = midRows.length >= 8 ? predictiveValue(pointsOf(midRows)) : null;
+
+    // ── Is the sub-1 slope a fact about Dota, or about averaging nine neighbours? ──
+    const medianKish = median(rows.map((r) => r.estimate.kishSample ?? r.estimate.effectiveSample)) ?? 8;
+    const withinPlayerSD = median(
+      rows
+        .map((r) => sd(r.observations.filter((o) => o.partySize === 1).map((o) => o.lobbyMMR)))
+        .filter((v): v is number => v != null),
+    ) ?? 349;
+    const mechanical = fit
+      ? mechanicalNullSlope(rows.map((r) => r.visibleMMR), {
+        lobbiesPerPlayer: medianKish,
+        // lobbyMMR is a mean of 9, so an individual opponent's spread is ~3× the
+        // spread of the lobby means we can observe directly.
+        opponentSD: withinPlayerSD * 3,
+        ceiling: TURBO_LOBBY_CEILING_MMR,
+        floor: 0,
+        observedSlope: fit.slope,
+        observedSlopeLo: fit.slopeLo,
+        observedSlopeHi: fit.slopeHi,
+      })
+      : null;
 
     // ── Should the estimator apply the bias correction it keeps measuring? ────
     const calibration = calibrationCheck(pointsOf(rows));
@@ -577,7 +723,9 @@ export async function turboStudy(message: Message, args: string[], userDataServi
       'Use the CSV to check whether a formula change moves MAE by more than its standard error.',
     ].filter((line): line is string => !!line);
 
-    // Bias by ranked bracket, each with the interval that says whether it is real.
+    // Lean by ranked bracket. This is the slope re-expressed in three buckets, so if the
+    // slope is mechanical then so is the pattern here — say so rather than letting a
+    // reader treat it as independent corroboration.
     const bracketLines = STUDY_BRACKETS.map((b) => {
       const inB = rows.filter((r) => r.visibleMMR >= b.lo && r.visibleMMR < b.hi);
       const s = errorStats(inB.map(gapOf));
@@ -585,6 +733,9 @@ export async function turboStudy(message: Message, args: string[], userDataServi
       const straddles = s.meanGapLo <= 0 && s.meanGapHi >= 0;
       return `${b.name}: **${fmtMmr(s.meanGap)}** _(n=${s.n}, 95% ${Math.round(s.meanGapLo)}…${Math.round(s.meanGapHi)}${straddles ? ' — includes 0' : ''})_`;
     });
+    if (mechanical?.explained) {
+      bracketLines.push('⚠️ _This is the slope in three buckets, and the slope is an artefact — not independent evidence._');
+    }
 
     const byGap = [...rows].sort((a, z) => Math.abs(gapOf(a)) - Math.abs(gapOf(z)));
     const best = byGap[0];
@@ -595,33 +746,39 @@ export async function turboStudy(message: Message, args: string[], userDataServi
 
     let fitNote = 'n/a';
     if (fit) {
-      const belowOne = fit.slopeHi < 1;
-      const aboveOne = fit.slopeLo > 1;
       fitNote =
         `Slope **${fit.slope.toFixed(2)}** (95% ${fit.slopeLo.toFixed(2)}–${fit.slopeHi.toFixed(2)}), intercept ${fmtMmr(fit.intercept)}, ` +
         `residual SD **${Math.round(fit.residualSD)} MMR**.\n` +
-        (belowOne
-          ? '↳ Reliably below 1: Turbo compresses the skill range. Low ranks over-estimated, high ranks under-estimated.'
-          : aboveOne
-            ? '↳ Reliably above 1: estimates fan out vs ranked.'
-            : '↳ The interval includes 1, so this cohort cannot establish compression either way.');
+        (mechanical
+          ? mechanical.explained
+            ? `↳ ⚠️ Do not read this as "Turbo compresses skill". Averaging nine neighbours on a bounded ladder produces ` +
+              `**${mechanical.slope.toFixed(2)}** (${mechanical.lo.toFixed(2)}–${mechanical.hi.toFixed(2)}) with zero compression, and ` +
+              `${fit.slope.toFixed(2)} is inside that. The slope is an instrument artefact.`
+            : `↳ Beyond the artefact: the mechanical null predicts ${mechanical.slope.toFixed(2)} ` +
+              `(${mechanical.lo.toFixed(2)}–${mechanical.hi.toFixed(2)}) and the observed ${fit.slope.toFixed(2)} falls outside it.`
+          : fit.slopeHi < 1
+            ? '↳ Below 1, but no mechanical null was run this time, so the cause is not established.'
+            : '↳ The interval includes 1.');
       if (trimmedFit && outliers.length > 0) {
         fitNote += `\n↳ Without the ${outliers.length} outlier(s): slope **${trimmedFit.slope.toFixed(2)}**.`;
       }
     }
 
     const rangeLines: string[] = [
-      `✅ **Measurable (Herald–Divine, n=${stats.n}):** MAE **${Math.round(stats.mae)} ±${Math.round(stats.maeSE)} MMR**, ` +
-      `median |gap| **${Math.round(stats.medianAbsGap)}** _(≈${(stats.medianAbsGap / MEDAL_SPAN_MMR).toFixed(1)} medal tiers)_, RMSE **${Math.round(stats.rmse)}**.`,
+      `✅ **Measurable (Herald–Divine, n=${stats.n}):** mean |lean| **${Math.round(stats.mae)} ±${Math.round(stats.maeSE)} MMR**, ` +
+      `median **${Math.round(stats.medianAbsGap)}** _(≈${(stats.medianAbsGap / MEDAL_SPAN_MMR).toFixed(1)} medal tiers)_.`,
     ];
-    if (trimmedStats && outliers.length > 0) {
-      rangeLines.push(`↳ Excluding ${outliers.length} outlier(s): MAE **${Math.round(trimmedStats.mae)}**, RMSE **${Math.round(trimmedStats.rmse)}**.`);
+    if (split) {
+      rangeLines.push(
+        `↳ Sampling noise accounts for only ~**${Math.round(split.samplingNoiseSD)} MMR** of that; the structural term is ` +
+        `assumed at ±${STRUCTURAL_SD_MMR} MMR and the remainder is real lean.`,
+      );
     }
     if (ceilingRows.length > 0) {
       const c = errorStats(ceilingRows.map(gapOf))!;
       rangeLines.push(
-        `🧢 **Ceiling (Immortal, n=${c.n}) — excluded from every statistic above:** mean gap ${fmtMmr(c.meanGap)}. ` +
-        'Turbo lobbies top out ~4–4.5k and their x-axis comes from an unvalidated 3-point curve — "elite, unmeasurable", not error.',
+        `🧢 **Immortal (n=${c.n}) — held out of everything:** mean lean ${fmtMmr(c.meanGap)}. Turbo lobbies top out ~4–4.5k, ` +
+        'so the estimator cannot measure this group at all. Not a finding about them.',
       );
     }
 
@@ -689,24 +846,133 @@ export async function turboStudy(message: Message, args: string[], userDataServi
     const residualAttachment = new AttachmentBuilder(residual, { name: 'turbo-bias.png' });
     const csvAttachment = new AttachmentBuilder(toCsv(candidates), { name: 'turbo-study.csv' });
 
-    const title = crewOnly ? '📊 Turbo Study — Crew' : '📊 Turbo Study';
+    // ── Message 1: the finding ───────────────────────────────────────────────
+    const title = crewOnly ? '📊 Turbo vs Ranked — Crew' : '📊 Turbo vs Ranked Skill';
     const description =
-      (crewOnly
-        ? 'Crew-only report (discovered randoms excluded). '
-        : 'Diagnostic report for hidden Turbo rank estimates. ') +
-      `All statistics run on the **${rows.length}** Herald–Divine players; ` +
-      `${ceilingRows.length} Immortal(s) are plotted but held out.`;
+      (crewOnly ? 'Crew-only (discovered randoms excluded). ' : '') +
+      `How much does ranked skill carry into Turbo? Measured on **${rows.length}** Herald–Divine players; ` +
+      `${ceilingRows.length} Immortal(s) plotted but held out.`;
 
-    const embed = new EmbedBuilder()
+    const reliabilityLine = split
+      ? `Sampling noise: **±${Math.round(split.samplingNoiseSD)} MMR** of a **±${Math.round(split.totalSD)} MMR** spread ` +
+        `_(split-half ${split.samplingReliability.toFixed(3)}, n=${split.n} players)_\n` +
+        'Each player is estimated twice from alternating halves of their own matches. Sampling error is negligible, ' +
+        '**so more games will not improve any estimate.**\n' +
+        '⚠️ _What this cannot see:_ the estimator reads your lobby average, and how far that sits from your real skill ' +
+        'is constant within a player, so it cancels out of both halves. That term is assumed at ' +
+        `±${STRUCTURAL_SD_MMR} MMR and is the widest source of doubt in this report.`
+      : 'Not enough players with ≥4 matches on both sides of the split, so estimator noise and real Turbo-lean cannot be ' +
+        'separated and every lean figure below is an upper bound.';
+
+    const decompositionLine = decomposition && decompositionBest
+      ? `Shared with ranked skill: **${Math.round(decomposition.sharedPct * 100)}–${Math.round(decompositionBest.sharedPct * 100)}%**\n` +
+        `Turbo-specific: **${Math.round(decomposition.specificPct * 100)}–${Math.round(decompositionBest.specificPct * 100)}%** ` +
+        `_(±${Math.round(decomposition.specificSD)}–${Math.round(decompositionBest.specificSD)} MMR)_\n` +
+        `Instrument noise: **${Math.round(decompositionBest.noisePct * 100)}–${Math.round(decomposition.noisePct * 100)}%**\n` +
+        `_Two ends of one assumption: the low-noise end trusts the lobby average as an unbiased readout of skill, the ` +
+        `high-noise end charges the full ±${STRUCTURAL_SD_MMR} MMR structural term against it. Uses disattenuated ` +
+        `r=${decomposition.rTrue.toFixed(2)}._`
+      : 'Needs the reliability split above.';
+
+    const findings = new EmbedBuilder()
       .setColor('#2563eb')
       .setTitle(title)
       .setDescription(description)
       .addFields(safeFields([
         {
           name: '🟢 In Plain English',
-          value: plainEnglish(headlineCorr, restrictedCorr, fit, res, stats, ceilingRows.length),
+          value: plainEnglish({
+            band: restrictedCorr ?? headlineCorr,
+            trueCorr,
+            populationCorr,
+            decomposition,
+            decompositionBest,
+            split,
+            res,
+            predictive: predictiveBand ?? predictive,
+            mechanical,
+            ceilingCount: ceilingRows.length,
+          }),
           inline: false,
         },
+        {
+          name: '🔬 Instrument reliability',
+          value: reliabilityLine,
+          inline: false,
+        },
+        {
+          name: '🧬 What is Turbo skill made of?',
+          value: decompositionLine,
+          inline: false,
+        },
+        {
+          name: 'Correlations _(r [95% interval] n)_',
+          value:
+            `Whole ladder: **${fmtCorr(headlineCorr)}**\n` +
+            `Archon–Divine only: **${fmtCorr(restrictedCorr)}**\n` +
+            (trueCorr
+              ? `↳ corrected for measurement error: **${trueCorr.corrected.toFixed(2)}** ` +
+                `_(${trueCorr.sensitivityLo.toFixed(2)}–${trueCorr.sensitivityHi.toFixed(2)} over plausible medal reliability)_\n`
+              : '') +
+            (populationCorr != null
+              ? `↳ extrapolated to the player population: **~${populationCorr.toFixed(2)}** _(assumes SD ${POPULATION_RANKED_SD_MMR})_\n`
+              : '') +
+            `Rank-order/Spearman: **${fmtCorr(rankOrderCorr)}**\n` +
+            `Quality rows only: **${fmtCorr(highQualityCorr)}**`,
+          inline: false,
+        },
+        {
+          name: '🎯 Can it separate two close players?',
+          value:
+            `Order correct, ≤1 medal apart: **${Math.round(res.nearPairsAccuracy * 100)}%** ` +
+            `_(95% ${Math.round(res.nearLo * 100)}–${Math.round(res.nearHi * 100)}%, ${res.nearPairs} pairs from ${rows.length} players)_\n` +
+            `Order correct, all pairs: **${Math.round(res.allPairsAccuracy * 100)}%** ` +
+            `_(95% ${Math.round(res.allLo * 100)}–${Math.round(res.allHi * 100)}%)_\n` +
+            '_Bootstrapped over players, not pairs — pairs from 48 players are not independent._',
+          inline: false,
+        },
+        {
+          name: '📐 Is the flat slope real?',
+          value: fitNote,
+          inline: false,
+        },
+        {
+          name: '🔮 Predictive value',
+          value: predictive
+            ? `Knowing Turbo rank narrows a guess at ranked MMR from **±${Math.round(predictive.priorSD)}** to ` +
+              `**±${Math.round(predictive.posteriorSD)} MMR** _(${Math.round(predictive.reductionPct * 100)}% cut, whole ladder)_\n` +
+              (predictiveBand
+                ? `Within Archon–Divine: **±${Math.round(predictiveBand.priorSD)}** → **±${Math.round(predictiveBand.posteriorSD)} MMR** ` +
+                  `_(${Math.round(predictiveBand.reductionPct * 100)}% cut)_\n`
+                : '') +
+              `One player's 95% interval: **±${Math.round(predictive.interval95)} MMR** — cohort-level only, never an individual read.`
+            : 'n/a',
+          inline: false,
+        },
+        { name: 'Turbo-lean by measurable range', value: rangeLines.join('\n'), inline: false },
+        { name: 'Turbo-lean by ranked bracket', value: bracketLines.join('\n'), inline: false },
+        {
+          name: '⚠️ What this cannot say',
+          value:
+            '**No causation.** Nothing here shows Turbo skill *causes* ranked skill or the reverse; general Dota ability drives both.\n' +
+            '**No single "the" correlation.** It depends on the skill band, and always will.\n' +
+            '**Nothing about Immortals**, who sit above the estimator\'s ceiling.\n' +
+            'The cohort is a friend group plus their frequent teammates, so intervals assume an independence that does not hold, ' +
+            'and the estimator was tuned on these same players.',
+          inline: false,
+        },
+      ], title.length + description.length))
+      .setImage('attachment://turbo-study.png')
+      .setTimestamp();
+
+    // ── Message 2: estimator diagnostics ─────────────────────────────────────
+    const diagTitle = '🔧 Turbo Study — Estimator Diagnostics';
+    const diagDescription = 'Health of the instrument behind the report above. Not findings about Dota.';
+    const diagnostics = new EmbedBuilder()
+      .setColor('#64748b')
+      .setTitle(diagTitle)
+      .setDescription(diagDescription)
+      .addFields(safeFields([
         {
           name: 'Coverage',
           value:
@@ -716,57 +982,27 @@ export async function turboStudy(message: Message, args: string[], userDataServi
         },
         { name: '🏆 Top Turbo (estimated)', value: fitLines(topTurbo, '—'), inline: true },
         { name: '🎖️ Top Ranked (visible MMR)', value: fitLines(topRanked, '—'), inline: true },
-        {
-          name: 'Correlations _(r [95% interval] n)_',
-          value:
-            `Turbo vs ranked: **${fmtCorr(headlineCorr)}**\n` +
-            `Archon–Divine only: **${fmtCorr(restrictedCorr)}**\n` +
-            `Inverse-variance weighted: **${fmtCorr(weightedCorr)}**\n` +
-            `Rank-order/Spearman: **${fmtCorr(rankOrderCorr)}**\n` +
-            `Quality rows only: **${fmtCorr(highQualityCorr)}**\n` +
-            `Turbo score vs Turbo rank: **${fmtCorr(scoreCorr)}**`,
-          inline: false,
-        },
-        {
-          name: 'Resolution — the test that matters',
-          value:
-            `Correct ordering, players ≤1 medal apart: **${Math.round(res.nearPairsAccuracy * 100)}%** _(${res.nearPairs} pairs; 50% = coin flip)_\n` +
-            `Correct ordering, all pairs: **${Math.round(res.allPairsAccuracy * 100)}%** _(${res.allPairs} pairs)_\n` +
-            `Median error: **${Math.round(stats.medianAbsGap)} MMR** ≈ **${(stats.medianAbsGap / MEDAL_SPAN_MMR).toFixed(1)} medal tiers**`,
-          inline: false,
-        },
-        {
-          name: 'Gap / Error',
-          value:
-            `Average gap: **${fmtMmr(stats.meanGap)}** _(95% ${Math.round(stats.meanGapLo)}…${Math.round(stats.meanGapHi)})_ | median: **${fmtMmr(stats.medianGap)}**\n` +
-            `MAE: **${Math.round(stats.mae)} ±${Math.round(stats.maeSE)} MMR** | RMSE: **${Math.round(stats.rmse)} MMR**`,
-          inline: false,
-        },
-        { name: 'Error by Range', value: rangeLines.join('\n'), inline: false },
-        { name: '🎯 Should we apply the bias correction?', value: calibrationLine, inline: false },
         { name: 'Estimator Health', value: healthLines.join('\n'), inline: false },
+        { name: 'Should we apply the bias correction?', value: calibrationLine, inline: false },
         { name: 'Experimental Estimator V2', value: experimentalStudyLine, inline: false },
         { name: 'Experimental V2 Movers', value: experimentalMoversLine, inline: false },
-        { name: 'Bias by Ranked Bracket', value: bracketLines.join('\n'), inline: false },
-        { name: 'Fit Interpretation', value: fitNote, inline: false },
-        { name: 'Calibration Extremes', value: extremesLine, inline: true },
+        { name: 'Largest Turbo-lean', value: fitLines(largestGaps, 'None found.'), inline: false },
+        { name: 'Lean Extremes', value: extremesLine, inline: true },
         { name: 'Trend vs Last Run', value: trendLine, inline: true },
-        { name: 'Largest Gaps', value: fitLines(largestGaps, 'No large gaps found.'), inline: false },
+        { name: 'Turbo score vs Turbo rank', value: fmtCorr(scoreCorr), inline: false },
+        { name: 'Inverse-variance weighted r', value: fmtCorr(weightedCorr), inline: false },
         { name: 'Next Actions', value: fitLines(actionLines, 'No immediate study actions.'), inline: false },
-        {
-          name: 'Caveats',
-          value:
-            '~15 numbers at 95% each — expect one to look "significant" by chance; treat a surprising line as a hypothesis.\n' +
-            'Intervals assume independent players, but peer-discovered players joined *because* they share lobbies with a seed, ' +
-            'so the true intervals are wider.\n' +
-            'Ranked ≠ Turbo: part of every gap is real turbo-lean, not estimator error. Visible medals can also be stale.',
-          inline: false,
-        },
-      ], title.length + description.length))
-      .setImage('attachment://turbo-study.png')
+      ], diagTitle.length + diagDescription.length))
+      .setImage('attachment://turbo-bias.png')
       .setTimestamp();
 
-    await progress.edit({ content: null, embeds: [embed], files: [scatterAttachment, residualAttachment, csvAttachment] });
+    // Two messages, because Discord's 6000-character ceiling applies to the whole
+    // message, not per embed. The findings land first and stand alone; if the
+    // diagnostics follow-up fails the report is still complete.
+    await progress.edit({ content: null, embeds: [findings], files: [scatterAttachment, csvAttachment] });
+    if (message.channel.isSendable()) {
+      await message.channel.send({ embeds: [diagnostics], files: [residualAttachment] });
+    }
   } catch (error) {
     logger.error('Error in turbo study command:', error);
     await message.reply('An error occurred while building the Turbo study. Please try again later.');

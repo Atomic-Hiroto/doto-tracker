@@ -419,6 +419,407 @@ export function resolution(points: Point[], nearBand: number): Resolution {
   };
 }
 
+// ── Deterministic RNG ────────────────────────────────────────────────────────
+
+/**
+ * Seeded PRNG. The bootstrap and the mechanical-null simulation must return the same
+ * numbers for the same cohort on every run, otherwise `+turbostudy` would report a
+ * different confidence interval each time it is called and the trend line would be
+ * measuring the RNG.
+ */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function gaussian(rand: () => number): number {
+  const u = Math.max(1e-12, rand());
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand());
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return NaN;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))));
+  return sorted[idx];
+}
+
+// ── Split-half reliability ───────────────────────────────────────────────────
+
+export interface SplitHalf {
+  /** Players with enough matches on both sides of the split. */
+  n: number;
+  excluded: number;
+  /** Correlation between the two half-length estimates. */
+  halfCorr: Correlation;
+  /**
+   * Spearman-Brown corrected to full length. This is *sampling* reliability only —
+   * see the doc comment on splitHalfReliability for what it cannot see.
+   */
+  samplingReliability: number;
+  samplingReliabilityLo: number;
+  samplingReliabilityHi: number;
+  /** SD of the estimate across players, and the sampling-noise part of it. */
+  totalSD: number;
+  samplingNoiseSD: number;
+}
+
+const spearmanBrown = (r: number): number => (r <= -1 ? 0 : Math.min(1, Math.max(0, (2 * r) / (1 + r))));
+
+/**
+ * Reliability of the *lobby sampling*, measured by estimating each player twice from
+ * alternating halves of their own match history.
+ *
+ * Read the limitation before using the number. The two halves share more than the
+ * player's turbo skill — they share the player's actual lobbies. So this sees the
+ * sampling error of the weighted lobby mean and nothing else. The dominant error term,
+ * the structural gap between "average medal of the people I get matched with" and "my
+ * turbo skill", is *constant within a player* and therefore cancels out of both halves
+ * by construction.
+ *
+ * On the live cohort that makes this number ~1.00, which is true and nearly useless:
+ * sampling error is ±60 MMR against a between-player spread of ±1250. It establishes
+ * that more games will not help, and it puts an **upper bound** on total reliability.
+ * It does not establish that the estimator is unbiased. Feed it through
+ * `combineReliability` with a structural term before using it to disattenuate anything.
+ *
+ * Callers must interleave (odd/even by timestamp) rather than cut front/back: a
+ * chronological split would confound sampling noise with genuine skill drift, and would
+ * put nearly all the recency weight in one half.
+ */
+export function splitHalfReliability(
+  rows: Array<{ a: number; b: number; full: number }>,
+  minN = 8,
+): SplitHalf | null {
+  const usable = rows.filter((r) => Number.isFinite(r.a) && Number.isFinite(r.b) && Number.isFinite(r.full));
+  if (usable.length < minN) return null;
+
+  const halfCorr = pearson(usable.map((r) => ({ x: r.a, y: r.b })), minN);
+  if (!halfCorr) return null;
+
+  const samplingReliability = spearmanBrown(halfCorr.r);
+  const totalSD = sd(usable.map((r) => r.full)) ?? 0;
+  return {
+    n: usable.length,
+    excluded: rows.length - usable.length,
+    halfCorr,
+    samplingReliability,
+    samplingReliabilityLo: spearmanBrown(halfCorr.lo),
+    samplingReliabilityHi: spearmanBrown(halfCorr.hi),
+    totalSD,
+    samplingNoiseSD: totalSD * Math.sqrt(Math.max(0, 1 - samplingReliability)),
+  };
+}
+
+export interface Reliability {
+  totalSD: number;
+  samplingNoiseSD: number;
+  structuralSD: number;
+  /** Share of the estimate's variance that is true between-player signal. */
+  reliability: number;
+}
+
+/**
+ * Total reliability = what split-half can measure, plus what it cannot.
+ *
+ * Split-half only sees sampling noise. The other error term — the estimator reading a
+ * player's lobby average rather than their skill — is invisible to any split of that
+ * player's own matches, so it has to be supplied as an assumption. Callers should run
+ * this at both ends of a plausible range and report the span, because the assumption is
+ * doing more work than the measurement.
+ */
+export function combineReliability(totalSD: number, samplingNoiseSD: number, structuralSD: number): Reliability {
+  const totalVar = totalSD * totalSD;
+  const errorVar = samplingNoiseSD * samplingNoiseSD + structuralSD * structuralSD;
+  return {
+    totalSD,
+    samplingNoiseSD,
+    structuralSD,
+    reliability: totalVar > 0 ? Math.max(0, Math.min(1, 1 - errorVar / totalVar)) : 0,
+  };
+}
+
+// ── Correction for measurement error ─────────────────────────────────────────
+
+export interface Disattenuated {
+  observed: number;
+  relX: number;
+  relY: number;
+  corrected: number;
+  /** True when the correction pushes past 1.0 — a sign the reliability inputs are too low. */
+  capped: boolean;
+  /** Corrected r at the low and high end of the plausible ranked-reliability range. */
+  sensitivityLo: number;
+  sensitivityHi: number;
+}
+
+/**
+ * Undo the attenuation that measurement error puts on a correlation.
+ *
+ * Both axes are noisy proxies for a latent skill, so the observed r is a *lower bound*
+ * on the correlation between the underlying quantities: r_obs = r_true·√(relX·relY).
+ * Reporting the raw number understates the finding, which is the one direction of bias
+ * this study was previously silent about.
+ *
+ * relX (the ranked medal's reliability) cannot be measured here — there are no repeat
+ * measurements of a player's medal — so it is an assumption, and the sensitivity bounds
+ * exist so nobody reads the headline as if it were estimated.
+ */
+export function disattenuate(observed: number, relY: number, relX: number, relXLo = 0.80, relXHi = 1.0): Disattenuated {
+  const correct = (rx: number) => {
+    const denom = Math.sqrt(Math.max(1e-6, rx * relY));
+    return observed / denom;
+  };
+  const raw = correct(relX);
+  return {
+    observed,
+    relX,
+    relY,
+    corrected: Math.min(1, raw),
+    capped: raw > 1,
+    sensitivityLo: Math.min(1, correct(relXHi)),
+    sensitivityHi: Math.min(1, correct(relXLo)),
+  };
+}
+
+/**
+ * Thorndike Case 2 correction for restriction of range on x.
+ *
+ * The cohort is a friend group plus their frequent teammates, and the headline
+ * correlation is computed inside a skill band. Correlations are acutely sensitive to
+ * how wide a slice you look at, so a number from this cohort does not transfer to "Dota
+ * players" without saying what the population spread is.
+ *
+ * Assumes the relationship is linear and the residual spread is the same inside and
+ * outside the selected band. Both are assumptions, not findings.
+ */
+export function thorndikeCase2(r: number, sampleSD: number, populationSD: number): number | null {
+  if (!(sampleSD > 0) || !(populationSD > 0)) return null;
+  const k = populationSD / sampleSD;
+  const corrected = (r * k) / Math.sqrt(1 + r * r * (k * k - 1));
+  return Math.max(-1, Math.min(1, corrected));
+}
+
+// ── Variance decomposition ───────────────────────────────────────────────────
+
+export interface VarianceDecomposition {
+  reliability: number;
+  rTrue: number;
+  /** Shares of the total variance in the turbo estimate. Sum to 1. */
+  noisePct: number;
+  sharedPct: number;
+  specificPct: number;
+  totalSD: number;
+  /** SD of the turbo-specific component, in MMR. The size of "turbo is its own skill". */
+  specificSD: number;
+}
+
+/**
+ * Split the spread in turbo estimates into three parts: measurement noise, skill shared
+ * with ranked, and skill that is turbo-specific.
+ *
+ * This is the answer to "does turbo skill matter on its own, or is it just ranked skill
+ * measured badly?" — a question the study could not previously address, because it had
+ * no way to tell its own noise apart from a real effect.
+ */
+export function varianceDecomposition(rel: Reliability, rTrue: number): VarianceDecomposition {
+  const reliability = Math.max(0, Math.min(1, rel.reliability));
+  const shared = reliability * Math.min(1, rTrue * rTrue);
+  return {
+    reliability,
+    rTrue,
+    noisePct: 1 - reliability,
+    sharedPct: shared,
+    specificPct: Math.max(0, reliability - shared),
+    totalSD: rel.totalSD,
+    specificSD: rel.totalSD * Math.sqrt(Math.max(0, reliability - shared)),
+  };
+}
+
+// ── Predictive value ─────────────────────────────────────────────────────────
+
+export interface PredictiveValue {
+  n: number;
+  /** SD of ranked MMR before knowing anything (the marginal spread). */
+  priorSD: number;
+  /** Residual SD after conditioning on the turbo estimate. */
+  posteriorSD: number;
+  reductionPct: number;
+  /** Half-width of a 95% prediction interval for one player. */
+  interval95: number;
+}
+
+/**
+ * How much does knowing someone's turbo rank actually narrow a guess at their ranked
+ * MMR? This is the only *causal-free* framing the design supports — it makes no claim
+ * that one determines the other, just that one carries information about the other.
+ */
+export function predictiveValue(points: Point[], minN = 8): PredictiveValue | null {
+  const corr = pearson(points, minN);
+  const priorSD = sd(points.map((p) => p.x));
+  if (!corr || priorSD == null) return null;
+  const posteriorSD = priorSD * Math.sqrt(Math.max(0, 1 - corr.r * corr.r));
+  return {
+    n: corr.n,
+    priorSD,
+    posteriorSD,
+    reductionPct: priorSD > 0 ? 1 - posteriorSD / priorSD : 0,
+    interval95: 1.96 * posteriorSD,
+  };
+}
+
+// ── Cluster bootstrap for pair-ordering ──────────────────────────────────────
+
+export interface ResolutionCI extends Resolution {
+  nearLo: number;
+  nearHi: number;
+  allLo: number;
+  allHi: number;
+  iterations: number;
+}
+
+/**
+ * Pair-ordering accuracy with a *player-level* bootstrap interval.
+ *
+ * The naive binomial interval on 317 pairs is badly wrong: those pairs come from 48
+ * players, so each player appears in roughly a dozen of them and the pairs are nowhere
+ * near independent. Resampling players (not pairs) with replacement respects that
+ * clustering and typically doubles the interval — which matters a great deal when the
+ * point estimate is 67% and the null is 50%.
+ */
+export function resolutionWithCI(
+  points: Point[],
+  nearBand: number,
+  iterations = 2000,
+  seed = 0x7b0,
+): ResolutionCI {
+  const base = resolution(points, nearBand);
+  const rand = mulberry32(seed);
+  const nearSamples: number[] = [];
+  const allSamples: number[] = [];
+
+  for (let b = 0; b < iterations; b++) {
+    const draw: Point[] = [];
+    for (let i = 0; i < points.length; i++) draw.push(points[Math.floor(rand() * points.length)]);
+    const res = resolution(draw, nearBand);
+    if (res.nearPairs > 0) nearSamples.push(res.nearPairsAccuracy);
+    if (res.allPairs > 0) allSamples.push(res.allPairsAccuracy);
+  }
+  nearSamples.sort((a, z) => a - z);
+  allSamples.sort((a, z) => a - z);
+
+  return {
+    ...base,
+    nearLo: percentile(nearSamples, 0.025),
+    nearHi: percentile(nearSamples, 0.975),
+    allLo: percentile(allSamples, 0.025),
+    allHi: percentile(allSamples, 0.975),
+    iterations,
+  };
+}
+
+// ── Mechanical null for the regression slope ─────────────────────────────────
+
+export interface MechanicalNull {
+  /** Median slope produced by the simulation under "no compression whatsoever". */
+  slope: number;
+  lo: number;
+  hi: number;
+  observedSlope: number;
+  iterations: number;
+  /**
+   * True when the mechanical slope is inside the *observed* slope's confidence interval,
+   * i.e. the data cannot tell real compression apart from the artefact.
+   *
+   * The test runs this way round on purpose. The simulated interval only carries Monte
+   * Carlo error — it says nothing about uncertainty in the parameters fed to the sim, so
+   * it is far tighter than our actual knowledge and testing against it would manufacture
+   * significance. The observed slope is the quantity with genuine sampling uncertainty,
+   * so the null value is what gets checked against its interval.
+   */
+  explained: boolean;
+}
+
+/**
+ * What slope would this estimator produce if Turbo compressed nothing at all?
+ *
+ * The study reports slope ≈ 0.75 and reads it as "Turbo compresses the skill range" — a
+ * substantive claim about the game. But the estimate *is* the mean of nine other
+ * players' medals, and averaging neighbours on a finite ladder produces a slope below 1
+ * on its own: at the top there is nobody above you to average in, at the bottom nobody
+ * below. Add the ~4–4.5k ceiling on turbo lobby averages and the shrinkage gets
+ * stronger still.
+ *
+ * So the interpretation needs a null. This simulates players whose turbo skill is
+ * *exactly* their ranked skill, runs the real lobby-averaging estimator over synthetic
+ * matches, and reports the slope that falls out. If the observed slope sits inside that
+ * interval, the compression reading is an artefact of the instrument and must not be
+ * reported as a fact about Dota.
+ */
+export function mechanicalNullSlope(
+  trueMMRs: number[],
+  opts: {
+    lobbiesPerPlayer: number;
+    opponentSD: number;
+    ceiling: number;
+    floor: number;
+    observedSlope: number;
+    /** 95% interval of the observed slope; the null value is tested against this. */
+    observedSlopeLo: number;
+    observedSlopeHi: number;
+    /** Medal grid step; opponents' MMR is only ever read through a discretised medal. */
+    gridStep?: number;
+    iterations?: number;
+    seed?: number;
+  },
+): MechanicalNull | null {
+  const { lobbiesPerPlayer, opponentSD, ceiling, floor, observedSlope, observedSlopeLo, observedSlopeHi } = opts;
+  const iterations = opts.iterations ?? 400;
+  const gridStep = opts.gridStep ?? 153;
+  if (trueMMRs.length < 8 || !(opponentSD > 0) || lobbiesPerPlayer < 1) return null;
+
+  const rand = mulberry32(opts.seed ?? 0xd07a);
+  const lobbies = Math.max(1, Math.round(lobbiesPerPlayer));
+  const slopes: number[] = [];
+
+  for (let iter = 0; iter < iterations; iter++) {
+    const points: Point[] = [];
+    for (const truth of trueMMRs) {
+      let total = 0;
+      for (let l = 0; l < lobbies; l++) {
+        let lobbySum = 0;
+        for (let o = 0; o < 9; o++) {
+          // A teammate near your skill, but the ladder has ends — that clamp is the
+          // entire mechanism under test.
+          const raw = truth + gaussian(rand) * opponentSD;
+          const clamped = Math.max(floor, Math.min(ceiling, raw));
+          lobbySum += Math.round(clamped / gridStep) * gridStep;
+        }
+        total += lobbySum / 9;
+      }
+      points.push({ x: truth, y: total / lobbies });
+    }
+    const fit = linearFit(points, 8);
+    if (fit) slopes.push(fit.slope);
+  }
+  if (slopes.length < 20) return null;
+
+  slopes.sort((a, z) => a - z);
+  const mechanicalSlope = percentile(slopes, 0.5);
+  return {
+    slope: mechanicalSlope,
+    lo: percentile(slopes, 0.025),
+    hi: percentile(slopes, 0.975),
+    observedSlope,
+    iterations: slopes.length,
+    explained: mechanicalSlope >= observedSlopeLo && mechanicalSlope <= observedSlopeHi,
+  };
+}
+
 // ── Formatting ───────────────────────────────────────────────────────────────
 
 /**
