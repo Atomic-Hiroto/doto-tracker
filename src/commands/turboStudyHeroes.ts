@@ -2,6 +2,7 @@ import { AttachmentBuilder, EmbedBuilder, Message } from 'discord.js';
 import { opendotaClient } from '../services/apiClient';
 import { renderTurboHeroBalanceScatter, HeroBalancePoint } from '../services/chartService';
 import { logger } from '../services/loggerService';
+import { safeFields } from '../utils/embedFields';
 import {
   compareSpreads,
   correctedSpread,
@@ -63,29 +64,6 @@ const BRACKET_NAMES: Record<number, string> = {
   5: 'Legend', 6: 'Ancient', 7: 'Divine', 8: 'Immortal',
 };
 
-/**
- * Discord rejects an embed with any field over 1024 characters, or 6000 total, and the
- * whole report is lost rather than one line. Same guard as `+turbostudy`, which learned
- * this the hard way.
- */
-function safeFields(fields: Array<{ name: string; value: string; inline?: boolean }>, reserve = 0) {
-  const out = fields.map((f) => ({
-    name: f.name.slice(0, 256),
-    value: f.value && f.value.length > 0
-      ? (f.value.length > 1024 ? `${f.value.slice(0, 1015)}\n…(cut)` : f.value)
-      : '—',
-    inline: f.inline ?? false,
-  }));
-  const budget = 6000 - 100 - reserve;
-  let total = out.reduce((sum, f) => sum + f.name.length + f.value.length, 0);
-  for (let i = out.length - 1; i >= 0 && total > budget; i--) {
-    const keep = out[i].value.length - (total - budget) - 8;
-    const next = keep > 0 ? `${out[i].value.slice(0, keep)}\n…(cut)` : '—';
-    total -= out[i].value.length - next.length;
-    out[i].value = next;
-  }
-  return out;
-}
 
 function fmtPct(v: number): string {
   return `${(v * 100).toFixed(1)}%`;
