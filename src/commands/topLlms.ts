@@ -53,6 +53,8 @@ interface LoadedBenchmarks {
 interface NormalizedBenchmarkRow {
   benchmark: string;
   source: string;
+  /** Stable comparison key; never shown to users. */
+  modelKey: string;
   model: string;
   variant: string;
   organization: string;
@@ -288,7 +290,7 @@ function average(values: number[]): number | null {
   return valid.reduce((sum, value) => sum + value, 0) / valid.length;
 }
 
-function canonicalModelName(rawName: string): string {
+export function canonicalModelName(rawName: string): string {
   const withoutPrefix = htmlDecode(rawName)
     .replace(/^\*/, '')
     .replace(/^[a-z0-9_.-]+\//i, '')
@@ -365,6 +367,34 @@ function canonicalModelName(rawName: string): string {
     .replace(/[-_]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Identity must not depend on how a source capitalizes or separates a model name.
+ * Explicit aliases above improve display names, but new releases still merge safely
+ * before we have written a model-specific rule for them.
+ */
+export function canonicalModelKey(rawName: string): string {
+  return canonicalModelName(rawName)
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function preferredModelName(rows: NormalizedBenchmarkRow[]): string {
+  const counts = new Map<string, number>();
+  for (const row of rows) counts.set(row.model, (counts.get(row.model) || 0) + 1);
+
+  return [...counts.keys()].sort((a, b) => {
+    // Prefer a source-provided display label over an all-lowercase API slug.
+    const aReadable = /[A-Z]/.test(a) ? 1 : 0;
+    const bReadable = /[A-Z]/.test(b) ? 1 : 0;
+    return bReadable - aReadable
+      || (counts.get(b) || 0) - (counts.get(a) || 0)
+      || a.length - b.length
+      || a.localeCompare(b);
+  })[0];
 }
 
 async function fetchLmCouncilTables(): Promise<BenchmarkTable[]> {
@@ -633,13 +663,14 @@ async function loadBenchmarks(lmCouncilOnly: boolean, forceRefresh = false): Pro
 }
 
 function bestRowsByCanonicalModel(table: BenchmarkTable): NormalizedBenchmarkRow[] {
-  const byModel = new Map<string, RawBenchmarkRow & { canonical: string }>();
+  const byModel = new Map<string, RawBenchmarkRow & { canonical: string; modelKey: string }>();
 
   for (const row of table.rows) {
     const canonical = canonicalModelName(row.model);
-    const existing = byModel.get(canonical);
+    const modelKey = canonicalModelKey(row.model);
+    const existing = byModel.get(modelKey);
     if (!existing) {
-      byModel.set(canonical, { ...row, canonical });
+      byModel.set(modelKey, { ...row, canonical, modelKey });
       continue;
     }
 
@@ -647,7 +678,7 @@ function bestRowsByCanonicalModel(table: BenchmarkTable): NormalizedBenchmarkRow
       ? row.score > existing.score
       : row.rank < existing.rank;
 
-    if (shouldReplace) byModel.set(canonical, { ...row, canonical });
+    if (shouldReplace) byModel.set(modelKey, { ...row, canonical, modelKey });
   }
 
   const rows = [...byModel.values()].sort((a, b) => a.rank - b.rank);
@@ -660,6 +691,7 @@ function bestRowsByCanonicalModel(table: BenchmarkTable): NormalizedBenchmarkRow
   return rows.map((row, index) => ({
     benchmark: table.name,
     source: table.source,
+    modelKey: row.modelKey,
     model: row.canonical,
     variant: row.variant,
     organization: row.organization,
@@ -676,9 +708,9 @@ function aggregateBenchmarks(tables: BenchmarkTable[]): ModelAggregate[] {
 
   for (const table of tables) {
     for (const row of bestRowsByCanonicalModel(table)) {
-      const existing = byModel.get(row.model) || [];
+      const existing = byModel.get(row.modelKey) || [];
       existing.push(row);
-      byModel.set(row.model, existing);
+      byModel.set(row.modelKey, existing);
     }
   }
 
@@ -690,7 +722,8 @@ function aggregateBenchmarks(tables: BenchmarkTable[]): ModelAggregate[] {
     : 0;
 
   return [...byModel.entries()]
-    .map(([model, rows]) => {
+    .map(([modelKey, rows]) => {
+      const model = preferredModelName(rows);
       const bestBenchmark = [...rows].sort((a, b) => b.normalizedScore - a.normalizedScore)[0];
       const orgCounts = rows.reduce((map, row) => {
         map.set(row.organization, (map.get(row.organization) || 0) + 1);
@@ -718,7 +751,7 @@ function aggregateBenchmarks(tables: BenchmarkTable[]): ModelAggregate[] {
         wins: rows.filter((row) => row.rank === 1).length,
         top3s,
         bestBenchmark,
-        variants: new Set(rows.map((row) => row.variant).filter((variant) => canonicalModelName(variant) !== model)),
+        variants: new Set(rows.map((row) => row.variant).filter((variant) => canonicalModelKey(variant) !== modelKey)),
       };
     })
     .sort((a, b) =>

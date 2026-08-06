@@ -6,6 +6,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "tsc && node dist/index.js",
     "test:analyze": "npx -y tsx scripts/test-analyze.ts",
+    "test:topllms": "npx -y tsx scripts/test-topllms-canonicalization.ts",
     "test:turbo-estimator": "tsc && node scripts/test-turbo-experimental-v2.mjs",
     "remote-deploy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1"
   },
