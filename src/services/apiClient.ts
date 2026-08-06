@@ -11,6 +11,13 @@ const RATE_LIMIT_PER_MIN = parseInt(
 );
 const RATE_WINDOW_MS = 60_000;
 
+// The free tier also caps the day, and that ceiling is much easier to walk into
+// unnoticed than the per-minute one, so track it and say so in the logs.
+const DAILY_BUDGET = parseInt(
+    process.env.OPENDOTA_DAILY_BUDGET || (HAS_API_KEY ? '50000' : '2000'),
+    10
+);
+
 // Match details are effectively immutable once the game ends, and the poll loop
 // asks for the same match several times in a row (parsed check → turbo stats →
 // scoreboard). Everything else gets a short TTL just to absorb bursts.
@@ -32,6 +39,24 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const callTimes: number[] = [];
 let reserveChain: Promise<void> = Promise.resolve();
 
+let usageDay = '';
+let usageCount = 0;
+
+function recordUsage() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today !== usageDay) {
+        if (usageDay) logger.info(`OpenDota usage for ${usageDay}: ${usageCount}/${DAILY_BUDGET} calls`);
+        usageDay = today;
+        usageCount = 0;
+    }
+    usageCount++;
+    if (usageCount === Math.floor(DAILY_BUDGET * 0.8)) {
+        logger.warn(`OpenDota daily usage at ${usageCount}/${DAILY_BUDGET} — approaching the cap`);
+    } else if (usageCount === DAILY_BUDGET) {
+        logger.error(`OpenDota daily budget of ${DAILY_BUDGET} exhausted; expect 429s until midnight UTC`);
+    }
+}
+
 function reserveSlot(): Promise<void> {
     const next = reserveChain.then(async () => {
         for (;;) {
@@ -39,6 +64,7 @@ function reserveSlot(): Promise<void> {
             while (callTimes.length && now - callTimes[0] >= RATE_WINDOW_MS) callTimes.shift();
             if (callTimes.length < RATE_LIMIT_PER_MIN) {
                 callTimes.push(now);
+                recordUsage();
                 return;
             }
             const waitMs = RATE_WINDOW_MS - (now - callTimes[0]) + 25;
