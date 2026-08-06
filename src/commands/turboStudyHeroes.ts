@@ -1,8 +1,15 @@
 import { AttachmentBuilder, EmbedBuilder, Message } from 'discord.js';
 import { opendotaClient } from '../services/apiClient';
-import { dotaDataService } from '../services/dotaDataService';
 import { renderTurboHeroBalanceScatter, HeroBalancePoint } from '../services/chartService';
 import { logger } from '../services/loggerService';
+import {
+  compareSpreads,
+  correctedSpread,
+  fmtCorr,
+  gini,
+  pearson,
+  spearman,
+} from '../services/turboStudyStats';
 
 // +turbostudyheroes — the analytical sibling of +turbostudy, but for the META rather than
 // for players. It asks: how differently does a hero perform in Turbo vs Ranked, and is
@@ -42,41 +49,42 @@ interface HeroRow {
   dShare: number;       // turboShare - rankedShare
 }
 
-function pearson(pts: Array<{ x: number; y: number }>): number | null {
-  if (pts.length < 3) return null;
-  const xm = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-  const ym = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-  let cov = 0, xv = 0, yv = 0;
-  for (const p of pts) { const dx = p.x - xm, dy = p.y - ym; cov += dx * dy; xv += dx * dx; yv += dy * dy; }
-  const denom = Math.sqrt(xv * yv);
-  return denom === 0 ? null : cov / denom;
-}
+/**
+ * "How far off a coin flip is this hero?" bands. Counting heroes outside a band answers
+ * "how broken is the meta" far more legibly than a standard deviation does — a reader
+ * knows what "49 heroes are more than 3% off 50%" means.
+ */
+const IMBALANCE_BANDS = [0.03, 0.05];
+
+/** Ranked bracket ids that OpenDota actually populates, checked at runtime. */
+const ALL_BRACKETS = [1, 2, 3, 4, 5, 6, 7, 8];
+const BRACKET_NAMES: Record<number, string> = {
+  1: 'Herald', 2: 'Guardian', 3: 'Crusader', 4: 'Archon',
+  5: 'Legend', 6: 'Ancient', 7: 'Divine', 8: 'Immortal',
+};
 
 /**
- * Sampling-corrected spread (stdev) of win rates. The raw cross-hero stdev mixes *true* spread
- * with binomial sampling noise — each hero's WR has SE = sqrt(p(1-p)/n), and at the 400-game floor
- * that's ~±2.5%, comparable to the whole spread. Since Turbo has far fewer games per hero than
- * all-bracket Ranked, its raw spread is inflated more, which would overstate "Turbo is X% wider".
- * We subtract the mean sampling variance to estimate the true spread. Returns raw + corrected.
+ * Discord rejects an embed with any field over 1024 characters, or 6000 total, and the
+ * whole report is lost rather than one line. Same guard as `+turbostudy`, which learned
+ * this the hard way.
  */
-function correctedSpread(pairs: Array<{ wr: number; n: number }>): { raw: number; corrected: number } {
-  if (pairs.length === 0) return { raw: 0, corrected: 0 };
-  const mean = pairs.reduce((s, p) => s + p.wr, 0) / pairs.length;
-  const observedVar = pairs.reduce((s, p) => s + (p.wr - mean) ** 2, 0) / pairs.length;
-  const samplingVar = pairs.reduce((s, p) => s + (p.wr * (1 - p.wr)) / Math.max(1, p.n), 0) / pairs.length;
-  return { raw: Math.sqrt(observedVar), corrected: Math.sqrt(Math.max(0, observedVar - samplingVar)) };
-}
-
-/** Gini coefficient of a distribution (0 = everyone picked equally, 1 = one hero hogs all picks). */
-function gini(vals: number[]): number {
-  if (vals.length === 0) return 0;
-  const sorted = [...vals].sort((a, b) => a - b);
-  const n = sorted.length;
-  const total = sorted.reduce((s, v) => s + v, 0);
-  if (total === 0) return 0;
-  let cum = 0;
-  for (let i = 0; i < n; i++) cum += (i + 1) * sorted[i];
-  return (2 * cum) / (n * total) - (n + 1) / n;
+function safeFields(fields: Array<{ name: string; value: string; inline?: boolean }>, reserve = 0) {
+  const out = fields.map((f) => ({
+    name: f.name.slice(0, 256),
+    value: f.value && f.value.length > 0
+      ? (f.value.length > 1024 ? `${f.value.slice(0, 1015)}\n…(cut)` : f.value)
+      : '—',
+    inline: f.inline ?? false,
+  }));
+  const budget = 6000 - 100 - reserve;
+  let total = out.reduce((sum, f) => sum + f.name.length + f.value.length, 0);
+  for (let i = out.length - 1; i >= 0 && total > budget; i--) {
+    const keep = out[i].value.length - (total - budget) - 8;
+    const next = keep > 0 ? `${out[i].value.slice(0, keep)}\n…(cut)` : '—';
+    total -= out[i].value.length - next.length;
+    out[i].value = next;
+  }
+  return out;
 }
 
 function fmtPct(v: number): string {
@@ -113,11 +121,23 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
     const stats = await opendotaClient.get<any[]>('/heroStats').then((r) => r.data || []);
     if (!stats.length) return progress.edit('OpenDota returned no hero stats. Try again later.');
 
-    // Ranked pick/win per hero: one medal bracket, or the sum of all eight.
+    // OpenDota does not always populate every bracket — Immortal (8) is currently all
+    // zeros. Detect that up front instead of letting the pick filter empty the cohort
+    // and report it as "not enough heroes", which hides the real cause.
+    const populated = ALL_BRACKETS.filter((b) => stats.some((h: any) => Number(h[`${b}_pick`] || 0) > 0));
+    if (medalId && !populated.includes(medalId)) {
+      return progress.edit(
+        `OpenDota currently publishes no ${BRACKET_NAMES[medalId]} bracket data in \`/heroStats\` — every ` +
+        `${BRACKET_NAMES[medalId]} pick count is zero, so there is nothing to compare against. ` +
+        `Available brackets: ${populated.map((b) => BRACKET_NAMES[b]).join(', ')}.`,
+      );
+    }
+
+    // Ranked pick/win per hero: one medal bracket, or the sum of the populated ones.
     const rankedPickWin = (h: any): { picks: number; wins: number } => {
       if (medalId) return { picks: Number(h[`${medalId}_pick`] || 0), wins: Number(h[`${medalId}_win`] || 0) };
       let picks = 0, wins = 0;
-      for (let b = 1; b <= 8; b++) { picks += Number(h[`${b}_pick`] || 0); wins += Number(h[`${b}_win`] || 0); }
+      for (const b of populated) { picks += Number(h[`${b}_pick`] || 0); wins += Number(h[`${b}_win`] || 0); }
       return { picks, wins };
     };
 
@@ -145,17 +165,74 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
     });
 
     // ── Aggregate imbalance metrics ──────────────────────────────────────────
-    // Spreads are sampling-corrected so the "Turbo is X% wider" claim reflects true imbalance,
-    // not Turbo's smaller per-hero samples carrying more binomial noise.
-    const turboSpreadStats = correctedSpread(rows.map((r) => ({ wr: r.turboWR, n: r.turboPicks })));
-    const rankedSpreadStats = correctedSpread(rows.map((r) => ({ wr: r.rankedWR, n: r.rankedPicks })));
+    // Spreads are sampling-corrected so the "Turbo is X% wider" claim reflects true
+    // imbalance, not one mode's smaller per-hero samples carrying more binomial noise,
+    // and the ratio now carries a bootstrap interval over the heroes themselves.
+    const spreadCmp = compareSpreads(rows.map((r) => ({
+      aWr: r.turboWR, aN: r.turboPicks, bWr: r.rankedWR, bN: r.rankedPicks,
+    })));
+    const turboSpreadStats = spreadCmp?.a ?? correctedSpread(rows.map((r) => ({ wr: r.turboWR, n: r.turboPicks })));
+    const rankedSpreadStats = spreadCmp?.b ?? correctedSpread(rows.map((r) => ({ wr: r.rankedWR, n: r.rankedPicks })));
     const turboSpread = turboSpreadStats.corrected;
     const rankedSpread = rankedSpreadStats.corrected;
-    const spreadRatio = rankedSpread > 0 ? turboSpread / rankedSpread : null;
+    const spreadRatio = spreadCmp?.ratio ?? null;
     const meanAbsDWR = rows.reduce((s, r) => s + Math.abs(r.dWR), 0) / rows.length;
 
+    // ── Is Turbo only "wider" because low-skill players skew it? ─────────────
+    // Turbo has no medal brackets, so its playerbase mix is unknown and that is the
+    // obvious confound for the whole study. Ranked *does* have brackets, so measuring
+    // the spread inside each one tests it directly: if even the widest single bracket
+    // stays below Turbo, no skill mixture can explain the gap.
+    const bracketSpreads = populated.map((b) => ({
+      bracket: b,
+      name: BRACKET_NAMES[b],
+      spread: correctedSpread(
+        stats
+          .map((h: any) => ({ wr: Number(h[`${b}_win`] || 0) / Math.max(1, Number(h[`${b}_pick`] || 0)), n: Number(h[`${b}_pick`] || 0) }))
+          .filter((p) => p.n >= MIN_PICKS),
+      ).corrected,
+    })).filter((b) => b.spread > 0);
+    const widestBracket = bracketSpreads.reduce<{ name: string; spread: number } | null>(
+      (best, b) => (best == null || b.spread > best.spread ? b : best), null,
+    );
+    const skillConfoundRuledOut = widestBracket != null && turboSpread > widestBracket.spread;
+
+    // ── How many heroes are actually off-balance? ────────────────────────────
+    // A standard deviation is not something a reader can picture. Counting heroes
+    // outside a band around a coin flip is.
+    const offBalance = IMBALANCE_BANDS.map((band) => ({
+      band,
+      turbo: rows.filter((r) => Math.abs(r.turboWR - 0.5) > band).length,
+      ranked: rows.filter((r) => Math.abs(r.rankedWR - 0.5) > band).length,
+    }));
+
+    // ── Can you just pick a broken hero and win? ─────────────────────────────
+    // Top-10 rather than the single best hero: one hero can be contested away, a pool
+    // of ten is what a player can realistically always draw from.
+    const pickAdvantage = (wrKey: 'turboWR' | 'rankedWR', shareKey: 'turboShare' | 'rankedShare') => {
+      const byWR = [...rows].sort((a, b) => b[wrKey] - a[wrKey]);
+      const top10 = byWR.slice(0, 10);
+      const topWR = top10.reduce((s, r) => s + r[wrKey], 0) / top10.length;
+      const bottomWR = byWR.slice(-10).reduce((s, r) => s + r[wrKey], 0) / 10;
+      return {
+        best: byWR[0],
+        bestWR: byWR[0][wrKey],
+        topWR,
+        bottomWR,
+        swing: topWR - bottomWR,
+        // How often the choice alone flips a game you would otherwise have lost.
+        gamesPerExtraWin: topWR > 0.5 ? 1 / (topWR - 0.5) : Infinity,
+        // Do players actually take the free win rate on offer?
+        exploitedShare: top10.reduce((s, r) => s + r[shareKey], 0),
+      };
+    };
+    const turboPick = pickAdvantage('turboWR', 'turboShare');
+    const rankedPick = pickAdvantage('rankedWR', 'rankedShare');
+
     const wrCorr = pearson(rows.map((r) => ({ x: r.rankedWR, y: r.turboWR })));
-    const pickCorr = pearson(rows.map((r) => ({ x: r.rankedShare, y: r.turboShare })));
+    // Pick shares are compositional and heavily skewed, so the rank-based version is the
+    // honest one; Pearson here would be driven by a handful of top-picked heroes.
+    const pickCorr = spearman(rows.map((r) => ({ x: r.rankedShare, y: r.turboShare })));
 
     const top10Share = (key: 'turboShare' | 'rankedShare') =>
       [...rows].sort((a, b) => b[key] - a[key]).slice(0, 10).reduce((s, r) => s + r[key], 0);
@@ -175,30 +252,52 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
 
     // ── Plain-English read ─────────────────────────────────────────────────────
     const plain: string[] = [];
-    if (spreadRatio != null) {
+    const band3 = offBalance.find((b) => b.band === 0.03);
+    if (spreadRatio != null && spreadCmp) {
       const pct = Math.round((spreadRatio - 1) * 100);
       plain.push(
-        `**Is Turbo more imbalanced than ${rankedLabel}?** ` +
-        (Math.abs(pct) < 5
-          ? `Not really — win rates are spread about the same (${(turboSpread * 100).toFixed(1)}% vs ${(rankedSpread * 100).toFixed(1)}%).`
+        `**How broken is Turbo's hero balance?** ` +
+        (!spreadCmp.significant
+          ? `About the same as ${rankedLabel} — the ${spreadRatio.toFixed(2)}× spread ratio has an interval ` +
+            `(${spreadCmp.lo.toFixed(2)}–${spreadCmp.hi.toFixed(2)}) that includes 1, so no difference is established.`
           : pct > 0
-            ? `**Yes.** Turbo win rates are spread **${pct}% wider** (±${(turboSpread * 100).toFixed(1)}% vs ±${(rankedSpread * 100).toFixed(1)}%) — more genuinely strong and genuinely weak heroes.`
-            : `Actually **less** — Turbo win rates are **${-pct}% tighter** than ranked.`),
+            ? `**Substantially more than ${rankedLabel}.** Win rates are spread **${pct}% wider** ` +
+              `(±${(turboSpread * 100).toFixed(1)}% vs ±${(rankedSpread * 100).toFixed(1)}%, ratio ${spreadRatio.toFixed(2)}× ` +
+              `[${spreadCmp.lo.toFixed(2)}–${spreadCmp.hi.toFixed(2)}])` +
+              (band3 ? `. **${band3.turbo} of ${rows.length}** heroes sit more than 3% away from a coin flip in Turbo, against **${band3.ranked}** in ranked.` : '.')
+            : `**Less** than ${rankedLabel} — Turbo win rates are ${-pct}% tighter.`),
       );
     }
-    if (wrCorr != null) {
+
+    // The one confound worth pre-empting, because it is the first thing anyone asks.
+    if (widestBracket) {
       plain.push(
-        `**Do the same heroes win in both?** The win-rate link is **${wrCorr.toFixed(2)}/1.00** — ` +
-        (wrCorr >= 0.7 ? 'mostly the same heroes are good, just amplified.'
-          : wrCorr >= 0.4 ? 'related, but Turbo clearly reshuffles who is strong.'
-            : 'weak — Turbo is close to its own game balance-wise.'),
+        `**Just because worse players queue Turbo?** ${skillConfoundRuledOut ? '**No.**' : 'Possibly.'} ` +
+        `Ranked brackets run ±${(Math.min(...bracketSpreads.map((b) => b.spread)) * 100).toFixed(1)}–${(widestBracket.spread * 100).toFixed(1)}% ` +
+        `(widest: ${widestBracket.name}); Turbo is ±${(turboSpread * 100).toFixed(1)}%. ` +
+        (skillConfoundRuledOut
+          ? 'Wider than *any* single bracket, so no skill mixture produces it — the mode does.'
+          : 'It does not clear the widest bracket, so a skill-mix explanation survives.'),
       );
     }
-    if (buffed.length) {
+
+    plain.push(
+      `**Can you just pick a broken hero and win?** Yes, and more so than in ranked. Always drafting from the ten strongest ` +
+      `heroes wins **${fmtPct(turboPick.topWR)}** in Turbo — an extra win every **${Math.round(turboPick.gamesPerExtraWin)} games** ` +
+      `for the pick alone — against ${fmtPct(rankedPick.topWR)} and one every ${Math.round(rankedPick.gamesPerExtraWin)} in ranked. ` +
+      `Best-to-worst swing **${(turboPick.swing * 100).toFixed(1)}** vs ${(rankedPick.swing * 100).toFixed(1)} points. ` +
+      (turboPick.exploitedShare <= rankedPick.exploitedShare * 1.15
+        ? `Yet they are only **${fmtPct(turboPick.exploitedShare)}** of Turbo picks (${fmtPct(rankedPick.exploitedShare)} ranked) — largely unclaimed.`
+        : `And players take it: **${fmtPct(turboPick.exploitedShare)}** of Turbo picks vs ${fmtPct(rankedPick.exploitedShare)}.`),
+    );
+
+    if (wrCorr) {
       plain.push(
-        `**Who does Turbo break?** ${buffed.slice(0, 3).map((r) => r.name).join(', ')} gain the most ` +
-        '(fast gold + short games reward tanky/snowball/sustain heroes), while ' +
-        `${nerfed.slice(0, 3).map((r) => r.name).join(', ')} fall off the hardest.`,
+        `**Same heroes winning in both?** Link **${wrCorr.r.toFixed(2)}** [${wrCorr.lo.toFixed(2)}, ${wrCorr.hi.toFixed(2)}] — ` +
+        (wrCorr.r >= 0.7 ? 'mostly the same heroes, amplified.'
+          : wrCorr.r >= 0.4 ? 'related, but Turbo genuinely reshuffles who is strong.'
+            : 'weak — Turbo is close to its own game.') +
+        ` Best: **${turboPick.best.name}** ${fmtPct(turboPick.bestWR)} turbo, ${rankedPick.best.name} ${fmtPct(rankedPick.bestWR)} ranked.`,
       );
     }
 
@@ -219,16 +318,45 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
       .setColor('#f59e0b')
       .setTitle(`⚡ Turbo Hero Balance Study — vs ${rankedLabel}`)
       .setDescription(`How Turbo's hero meta diverges from ${rankedLabel}, across ${rows.length} heroes (OpenDota, current patch window).`)
-      .addFields(
+      .addFields(safeFields([
         { name: '🟢 In Plain English', value: plain.join('\n\n') || 'Not enough data.', inline: false },
         {
-          name: '📐 Imbalance Metrics',
+          name: '🔨 How broken is it?',
           value:
+            offBalance.map((b) =>
+              `Heroes more than **${(b.band * 100).toFixed(0)}%** off a coin flip: **${b.turbo}** turbo vs **${b.ranked}** ranked _(of ${rows.length})_`,
+            ).join('\n') + '\n' +
             `Win-rate spread: **±${(turboSpread * 100).toFixed(1)}%** turbo vs **±${(rankedSpread * 100).toFixed(1)}%** ranked` +
-            (spreadRatio != null ? ` (**${spreadRatio.toFixed(2)}×**)` : '') + '\n' +
-            `_↳ sampling-corrected; raw ±${(turboSpreadStats.raw * 100).toFixed(1)}% vs ±${(rankedSpreadStats.raw * 100).toFixed(1)}%_\n` +
+            (spreadCmp ? ` — **${spreadRatio!.toFixed(2)}×** _(95% ${spreadCmp.lo.toFixed(2)}–${spreadCmp.hi.toFixed(2)}${spreadCmp.significant ? '' : ', includes 1'})_` : '') + '\n' +
+            `_↳ sampling-corrected; raw ±${(turboSpreadStats.raw * 100).toFixed(1)}% vs ±${(rankedSpreadStats.raw * 100).toFixed(1)}%. ` +
+            `Signal is ${(turboSpreadStats.reliability * 100).toFixed(1)}% of the observed variance, so this is real spread, not small samples._`,
+          inline: false,
+        },
+        {
+          name: '🎲 Skill-mix control — Turbo vs each ranked bracket',
+          value:
+            bracketSpreads.map((b) => `${b.name}: ±${(b.spread * 100).toFixed(2)}%`).join(' · ') +
+            `\n**Turbo: ±${(turboSpread * 100).toFixed(2)}%**\n` +
+            (skillConfoundRuledOut
+              ? '_Turbo exceeds every individual bracket, so "worse players queue Turbo" cannot explain the spread._'
+              : '_Turbo does not exceed every bracket, so a skill-mix explanation survives._'),
+          inline: false,
+        },
+        {
+          name: '⚔️ Value of the pick itself',
+          value:
+            `Always drafting a top-10 hero: **${fmtPct(turboPick.topWR)}** turbo vs **${fmtPct(rankedPick.topWR)}** ranked\n` +
+            `↳ one extra win every **${Math.round(turboPick.gamesPerExtraWin)}** games vs **${Math.round(rankedPick.gamesPerExtraWin)}**\n` +
+            `Best-to-worst hero swing: **${(turboPick.swing * 100).toFixed(1)} pts** turbo vs **${(rankedPick.swing * 100).toFixed(1)} pts** ranked\n` +
+            `Share of picks going to that top-10: **${fmtPct(turboPick.exploitedShare)}** turbo vs **${fmtPct(rankedPick.exploitedShare)}** ranked`,
+          inline: false,
+        },
+        {
+          name: '📐 Other metrics',
+          value:
             `Mean |WR gap| per hero: **${(meanAbsDWR * 100).toFixed(1)}%**\n` +
-            `WR correlation: **${wrCorr?.toFixed(2) ?? 'n/a'}** · Pick correlation: **${pickCorr?.toFixed(2) ?? 'n/a'}**\n` +
+            `WR correlation: ${fmtCorr(wrCorr)}\n` +
+            `Pick-order correlation (Spearman): ${fmtCorr(pickCorr)}\n` +
             `Pick concentration (top-10 share): **${fmtPct(top10Share('turboShare'))}** turbo vs **${fmtPct(top10Share('rankedShare'))}** ranked\n` +
             `Pick Gini: **${turboGini.toFixed(2)}** turbo vs **${rankedGini.toFixed(2)}** ranked`,
           inline: false,
@@ -238,11 +366,15 @@ export async function turboStudyHeroes(message: Message, args: string[]) {
         { name: '🎯 Picked Much More in Turbo', value: byPickGain.map(pickLine).join('\n'), inline: false },
         {
           name: 'Caveats',
-          value: 'Whole-playerbase snapshot — Turbo has no skill brackets, so part of the gap is *who plays Turbo*, not pure balance. Ranked baseline = ' +
-            (medalId ? `${medalKey} medal only.` : 'all medals summed.') + ' Use a medal arg (e.g. `+turbostudyheroes immortal`) to control for skill.',
+          value:
+            `Hero-level only: this says nothing about item builds, lane setups or any other "strat" — \`/heroStats\` does not carry them.\n` +
+            `Ranked baseline = ${medalId ? `${medalKey} medal only` : `brackets ${populated.map((b) => BRACKET_NAMES[b]).join('/')} summed`}. ` +
+            `${populated.length < 8 ? `OpenDota publishes no data for ${ALL_BRACKETS.filter((b) => !populated.includes(b)).map((b) => BRACKET_NAMES[b]).join(', ')}. ` : ''}` +
+            'Turbo has no brackets of its own, which is why the per-bracket comparison above exists.\n' +
+            `Per-hero win rates are precise (${rows.length} heroes, all above ${MIN_PICKS} games), but a snapshot of one patch window is not a trend.`,
           inline: false,
         },
-      )
+      ]))
       .setImage('attachment://turbo-hero-balance.png')
       .setFooter({ text: 'Data: OpenDota /heroStats · +turbostudyheroes <medal> to pin the ranked bracket' })
       .setTimestamp();
