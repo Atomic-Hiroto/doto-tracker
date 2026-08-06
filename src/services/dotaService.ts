@@ -63,6 +63,9 @@ function parsedAchievementContext(match: any, detailedPlayer: any, isRadiant: bo
   };
 }
 
+// Cadence guard for the pending-parse recheck; see PARSED_RECHECK_INTERVAL.
+let lastParsedRecheck = 0;
+
 async function processPendingParsedAchievements(
   channel: TextBasedChannel,
   userDataService: UserDataService,
@@ -80,7 +83,13 @@ async function processPendingParsedAchievements(
         }
         const match = await matchRequests.get(matchId)!;
         if (!match?.version) {
-          remaining.push(matchId);
+          // Some matches never get parsed. Drop those instead of re-fetching them
+          // every cycle forever; keep the entry when start_time is unknown so a
+          // bad response cannot evict a match that is still legitimately waiting.
+          const startMs = Number(match?.start_time || 0) * 1000;
+          const tooOld = startMs > 0 && Date.now() - startMs > ProcessConstants.PARSED_PENDING_MAX_AGE_MS;
+          if (tooOld) logger.info(`Giving up on parse for match ${matchId} (unparsed after cutoff)`);
+          else remaining.push(matchId);
           continue;
         }
 
@@ -251,7 +260,10 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
     return;
   }
 
-  await processPendingParsedAchievements(channel, userDataService);
+  if (Date.now() - lastParsedRecheck >= ProcessConstants.PARSED_RECHECK_INTERVAL) {
+    lastParsedRecheck = Date.now();
+    await processPendingParsedAchievements(channel, userDataService);
+  }
 
   const recentMatches = new Map<number, Array<{ discordId: string; steamId: string; match: any; shouldPost: boolean }>>();
 
