@@ -294,7 +294,10 @@ function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typ
 
   const desc: string[] = [`**${estimate.medal}**  ·  est. ~${estimate.estimatedMMR} MMR`];
   if (estimate.rangeLow && estimate.rangeHigh && estimate.rangeLow !== estimate.rangeHigh) {
-    desc.push(`Likely range: ${estimate.rangeLow} – ${estimate.rangeHigh}`);
+    // 80% interval, dominated by the structural lobby-average-vs-rank gap rather than
+    // by sample size — so it stays wide even for players with hundreds of games.
+    desc.push(`80% range: ${estimate.rangeLow} – ${estimate.rangeHigh}`
+      + (estimate.precisionSD ? ` _(±${estimate.precisionSD} MMR typical error)_` : ''));
   }
   const leanLine = formatLean(estimate);
   if (leanLine) desc.push(leanLine);

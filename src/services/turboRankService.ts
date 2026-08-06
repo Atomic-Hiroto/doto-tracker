@@ -77,6 +77,63 @@ const RECENCY_HALF_LIFE_DAYS = 60;
 /** Minimum visible ranks in a match to consider it a useful observation. */
 const MIN_VISIBLE_RANKS = 3;
 
+/**
+ * Irreducible spread of the estimate around a player's visible ranked medal, in MMR,
+ * measured as the residual SD about the study's own regression on the live cohort
+ * (n=42 Herald–Divine, 2026-08). It is deliberately *not* derived from the lobby
+ * sample, because the sampling error of the lobby mean is not what dominates: even a
+ * player with 100 games has a lobby mean pinned to within ~50 MMR while sitting 600
+ * MMR from their medal. That gap is structural — turbo matchmaking is not ranked
+ * matchmaking — and no amount of extra games shrinks it.
+ *
+ * This is a conservative (wide) figure on purpose: part of the 630 is genuine
+ * turbo-lean rather than estimator error, and we would rather state a range that
+ * contains the truth than a tight one that does not.
+ */
+const ESTIMATE_BIAS_SD_MMR = parseInt(process.env.TURBO_BIAS_SD_MMR || '630', 10);
+
+/** z for an 80% interval. The displayed range says "80%", so this has to match it. */
+const RANGE_Z_80 = 1.2816;
+
+/**
+ * Typical SD of lobby MMR *within* one player's history, across the live cohort
+ * (median 349 MMR). Used as a floor when a player has too few weighted games to
+ * estimate their own spread: two lobbies that happen to land close together produce a
+ * near-zero sample variance, which would otherwise report a thin-sample estimate as
+ * the most precise one on the board.
+ */
+const TYPICAL_LOBBY_SD_MMR = 349;
+
+/**
+ * Split out so computeEstimate (fresh) and withDerivedStats (on read) cannot drift
+ * apart — they previously would have carried two copies of this arithmetic.
+ */
+function precisionFor(
+  weighted: WeightedObservation[],
+  estimatedMMR: number,
+): { precisionSD: number; kishN: number; spread: number } {
+  let totalWeight = 0;
+  let weightSquares = 0;
+  let variance = 0;
+  for (const { obs, w } of weighted) {
+    totalWeight += w;
+    weightSquares += w * w;
+    variance += w * Math.pow(obs.lobbyMMR - estimatedMMR, 2);
+  }
+
+  const kishN = totalWeight > 0 && weightSquares > 0
+    ? (totalWeight * totalWeight) / weightSquares
+    : 1;
+  const observedSD = totalWeight > 0 ? Math.sqrt(variance / totalWeight) : TYPICAL_LOBBY_SD_MMR;
+  // Below ~4 effective games the sample cannot speak for its own dispersion, so fall
+  // back to the cohort's typical spread rather than trusting a lucky-looking one.
+  const lobbySD = kishN < 4 ? Math.max(observedSD, TYPICAL_LOBBY_SD_MMR) : observedSD;
+  const samplingSE = lobbySD / Math.sqrt(Math.max(kishN, 1));
+  const precisionSD = Math.round(Math.sqrt(samplingSE ** 2 + ESTIMATE_BIAS_SD_MMR ** 2));
+
+  return { precisionSD, kishN, spread: Math.round(RANGE_Z_80 * precisionSD) };
+}
+
 /** Max observations to keep per player (oldest pruned on save). */
 const MAX_OBSERVATIONS = 200;
 
@@ -530,7 +587,11 @@ export class TurboRankService {
     const experimental = computeTurboExperimentalV2(weighted, estimatedMMR);
     const { tier, stars, medal } = mmrToMedal(estimatedMMR);
 
-    // Confidence from the visible-rank-weighted effective sample. ~12 full lobbies -> ~100%.
+    // Sample *coverage*, not statistical confidence: how much visible-rank-weighted
+    // lobby evidence exists, on a 0-100 scale where ~12 full lobbies reads 100. It
+    // says nothing about how close the estimate is to the truth — precisionSD below
+    // is the number that answers that. Kept on this scale because the leaderboard,
+    // `+turborank` and the study all gate on it.
     let confidence = Math.min(100, Math.max(10, Math.round(effectiveSample * 8)));
     // Turbo lobby averages cap ~4-4.5k MMR, so for players whose *visible ranked* rank sits at or
     // above that ceiling the estimate is structurally pinned and can't reflect their true skill no
@@ -540,15 +601,21 @@ export class TurboRankService {
     if (rankedMedalTier >= 8) confidence = Math.min(confidence, 40);       // Immortal — well above ceiling
     else if (rankedMedalTier === 7) confidence = Math.min(confidence, 75); // Divine — sits right at it
 
-    // Range = ±1 standard error of the weighted mean (clamped to a sensible width).
-    let variance = 0;
-    for (const { obs, w } of weighted) {
-      variance += w * Math.pow(obs.lobbyMMR - estimatedMMR, 2);
-    }
-    variance = variance / totalWeight;
-    const stdErr = Math.sqrt(variance) / Math.sqrt(Math.max(effectiveSample, 1));
-    const spread = Math.min(900, Math.max(120, Math.round(stdErr)));
-    const rangeLow = mmrToMedal(estimatedMMR - spread).medal;
+    // Uncertainty has two parts and the old code only had one of them.
+    //
+    // (a) Sampling error of the weighted lobby mean. The denominator must be Kish's
+    //     effective sample size (Σw)²/Σw², *not* `effectiveSample` — that quantity
+    //     drops the 60-day recency decay entirely, so a player whose 100 games are a
+    //     year old scored as if all 100 counted. On the live cohort that understated
+    //     the SE by up to 1.7×.
+    // (b) The structural gap between "average medal of my lobbies" and "my rank",
+    //     which does not shrink with more games. This dominates: it is ~630 MMR while
+    //     (a) is typically under 100.
+    //
+    // The old range was (a) alone, floored at 120 MMR — which pinned 39 of 49 live
+    // players to ±120 while their actual distance from their medal ran to ~570.
+    const { precisionSD, kishN, spread } = precisionFor(weighted, estimatedMMR);
+    const rangeLow = mmrToMedal(Math.max(0, estimatedMMR - spread)).medal;
     const rangeHigh = mmrToMedal(estimatedMMR + spread).medal;
 
     // Turbo-lean: how far above/below the visible ranked medal they actually play.
@@ -563,6 +630,8 @@ export class TurboRankService {
       rangeLow,
       rangeHigh,
       confidence,
+      precisionSD,
+      kishSample: Math.round(kishN * 100) / 100,
       sampleSize: observations.length,
       soloSampleSize: soloObs.length,
       effectiveSample: Math.round(effectiveSample * 100) / 100,
@@ -598,15 +667,32 @@ export class TurboRankService {
     return totalWeight > 0 ? weighted : null;
   }
 
-  private withCachedExperimental(
+  /**
+   * Recompute the derived-on-read parts of a stored estimate: the experimental V2
+   * read, and the precision/range block.
+   *
+   * Estimates are persisted, so a change to how uncertainty is computed would
+   * otherwise only reach a player the next time they were recalibrated — meaning the
+   * leaderboard would show a mix of old and new range semantics for weeks. These
+   * quantities are pure functions of the stored observations, so deriving them on
+   * every read keeps the whole cohort on one definition. The point estimate itself is
+   * left alone: that one *is* the stored record.
+   */
+  private withDerivedStats(
     estimate: TurboRankEstimate,
     observations: TurboRankObservation[],
   ): TurboRankEstimate {
     const weighted = this.weightedObservationsFromCache(observations);
     if (!weighted) return estimate;
 
+    const { precisionSD, kishN, spread } = precisionFor(weighted, estimate.estimatedMMR);
+
     return {
       ...estimate,
+      precisionSD,
+      kishSample: Math.round(kishN * 100) / 100,
+      rangeLow: mmrToMedal(Math.max(0, estimate.estimatedMMR - spread)).medal,
+      rangeHigh: mmrToMedal(estimate.estimatedMMR + spread).medal,
       experimental: computeTurboExperimentalV2(weighted, estimate.estimatedMMR),
     };
   }
@@ -856,12 +942,12 @@ export class TurboRankService {
 
   getEstimate(discordId: string): TurboRankEstimate | null {
     const player = this.data.players.find(p => p.discordId === discordId);
-    return player?.estimate ? this.withCachedExperimental(player.estimate, player.observations) : null;
+    return player?.estimate ? this.withDerivedStats(player.estimate, player.observations) : null;
   }
 
   getEstimateBySteamId(steamId: string): TurboRankEstimate | null {
     const player = this.data.players.find(p => p.steamId === steamId);
-    return player?.estimate ? this.withCachedExperimental(player.estimate, player.observations) : null;
+    return player?.estimate ? this.withDerivedStats(player.estimate, player.observations) : null;
   }
 
   getPlayerBySteamId(steamId: string): TurboRankPlayerData | undefined {
@@ -889,7 +975,7 @@ export class TurboRankService {
         steamId: p.steamId,
         steamName: p.steamName,
         discovered: p.discovered,
-        estimate: this.withCachedExperimental(p.estimate!, p.observations),
+        estimate: this.withDerivedStats(p.estimate!, p.observations),
       }))
       .sort((a, b) => b.estimate.estimatedMMR - a.estimate.estimatedMMR);
   }
@@ -930,17 +1016,18 @@ export class TurboRankService {
     // "unmeasurable", not "needs more games".
     const ceilingLimited = (estimate.rankedTier ?? 0) >= 70;
     const confLabel =
-      estimate.confidence >= 80 ? '🟢 High confidence'
-      : estimate.confidence >= 50 ? '🟡 Moderate confidence'
-      : ceilingLimited ? '🔴 Low confidence (ranked rank is above Turbo\'s resolution ceiling)'
-      : '🔴 Low confidence (need more solo games)';
+      estimate.confidence >= 80 ? '🟢 Good sample coverage'
+      : estimate.confidence >= 50 ? '🟡 Moderate sample coverage'
+      : ceilingLimited ? '🔴 Thin coverage (ranked rank is above Turbo\'s resolution ceiling)'
+      : '🔴 Thin coverage (need more solo games)';
     return [
       `**${tierToEmoji(estimate.medalTier)} Hidden Turbo Rank: ${estimate.medal}${starString(estimate.stars)}**`,
-      `Estimated MMR: **~${estimate.estimatedMMR}** (range ${estimate.rangeLow}–${estimate.rangeHigh})`,
+      `Estimated MMR: **~${estimate.estimatedMMR}** (80% range ${estimate.rangeLow}–${estimate.rangeHigh})`,
       `${confLabel} (${estimate.confidence}%)`,
+      estimate.precisionSD ? `Typical error: **±${estimate.precisionSD} MMR** — more games will not narrow this much` : '',
       ``,
       `📊 Based on **${estimate.soloSampleSize}** solo matches`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 }
 

@@ -62,11 +62,33 @@ export interface TurboRankEstimate {
   stars: number;
   /** Human-readable medal string, e.g. "Archon 3". */
   medal: string;
-  /** Low/high medal of the confidence range (e.g. "Legend 4" … "Ancient 2"). */
+  /**
+   * Low/high medal of the 80% range (e.g. "Legend 4" … "Ancient 2"), derived from
+   * precisionSD. Wide by design — see precisionSD.
+   */
   rangeLow: string;
   rangeHigh: string;
-  /** 0-100 confidence score based on visible-rank-weighted effective sample. */
+  /**
+   * 0-100 **sample coverage**, not statistical confidence: effectiveSample × 8,
+   * capped. It measures how much visible-rank lobby evidence backs the estimate and
+   * says nothing about how close the estimate is to the truth. Use `precisionSD` for
+   * that. Named `confidence` for backwards compatibility with stored data and the
+   * leaderboard/`+turborank` gates that read it.
+   */
   confidence: number;
+  /**
+   * Standard deviation of the estimate's error in MMR — the honest uncertainty.
+   * Combines the sampling error of the weighted lobby mean with the structural
+   * lobby-average-vs-rank gap, which dominates and does not shrink with more games.
+   * Recomputed on read, so it is present even on estimates stored before it existed.
+   */
+  precisionSD?: number;
+  /**
+   * Kish effective sample size (Σw)²/Σw² of the recency-and-completeness weights.
+   * The real denominator behind the sampling error, as opposed to `effectiveSample`
+   * which ignores recency decay.
+   */
+  kishSample?: number;
   /** Total number of observations used. */
   sampleSize: number;
   /** Number of solo-queue observations. */
