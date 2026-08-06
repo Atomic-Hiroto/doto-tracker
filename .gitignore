@@ -14,3 +14,6 @@ stratz_error.log
 prompt_dump*.txt
 rich_prompt_totality_dump*.txt
 *introspection*.json
+
+# local experiment scripts / rendered previews
+scratch/
