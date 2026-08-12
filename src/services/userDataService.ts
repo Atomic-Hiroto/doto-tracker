@@ -13,10 +13,21 @@ export class UserDataService {
 
   private loadUserData() {
     try {
-      this.userData = JSON.parse(fs.readFileSync(ProcessConstants.USER_DATA_FILE, 'utf8'));
-      this.userData.forEach(user => {
+      const loaded: UserData[] = JSON.parse(fs.readFileSync(ProcessConstants.USER_DATA_FILE, 'utf8'));
+
+      // Keep the first row per discordId. A duplicate row is not merely cosmetic: match polling
+      // walks the roster, so a duplicated player lands in a match's player list twice, which
+      // doubles their win/loss counters and every duo pairing they form in that match.
+      this.userData = loaded.filter(user => {
+        if (this.userDataMap.has(user.discordId)) {
+          logger.warn(`Dropping duplicate users.json row for ${user.discordId} (steamId ${user.steamId}).`);
+          return false;
+        }
         this.userDataMap.set(user.discordId, user);
+        return true;
       });
+      if (this.userData.length !== loaded.length) this.saveUserData();
+
       logger.info('User data loaded successfully');
     } catch (error) {
       logger.error('Error loading user data:', error);

@@ -94,6 +94,14 @@ export class TurboStatsService {
   }
 
   updatePairingStats(player1Id: string, player2Id: string, won: boolean) {
+    // A player is not their own duo partner. This only fires when the same discordId reaches
+    // processTurboMatch twice — a duplicated users.json row — but the record it would create is
+    // unrenderable (turboPairings resolves the "partner" back to the target), so refuse it here.
+    if (player1Id === player2Id) {
+      logger.warn(`Ignoring self-pairing for ${player1Id}: the same player was passed twice.`);
+      return;
+    }
+
     // Ensure consistent ordering for pairing key
     const [p1, p2] = [player1Id, player2Id].sort();
 
