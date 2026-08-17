@@ -133,10 +133,15 @@ export class TurboStatsService {
 
     const matchId = String(matchData.match_id ?? matchData.id ?? '');
     if (!matchId || participants.length === 0) return null;
+    const rawRank = matchData.averageRank ?? matchData.avg_rank_tier;
+    const averageRank = rawRank === null || rawRank === undefined || !Number.isFinite(Number(rawRank))
+      ? null
+      : Number(rawRank);
     return {
       matchId,
       timestamp: Number(matchData.start_time ?? matchData.startDateTime ?? Math.floor(Date.now() / 1000)),
       radiantWon: Boolean(matchData.radiant_win ?? matchData.didRadiantWin),
+      averageRank,
       source,
       players: participants
     };
@@ -153,6 +158,10 @@ export class TurboStatsService {
     let changed = false;
     if (existing.source !== incoming.source && existing.source !== 'both') {
       existing.source = 'both';
+      changed = true;
+    }
+    if ((existing.averageRank === null || existing.averageRank === undefined) && incoming.averageRank !== null && incoming.averageRank !== undefined) {
+      existing.averageRank = incoming.averageRank;
       changed = true;
     }
     for (const participant of incoming.players) {

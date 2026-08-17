@@ -33,6 +33,12 @@ export interface TurboTrackedMatch {
   matchId: string;
   timestamp: number;
   radiantWon: boolean;
+  /**
+   * Average lobby rank, on the source's own scale — Stratz `averageRank`, OpenDota `avg_rank_tier`.
+   * Stored raw and unnormalised: nothing reads it yet, and the two scales must be reconciled before
+   * anything does. Captured now so it lands on the next backfill rather than needing another one.
+   */
+  averageRank?: number | null;
   source: TurboMatchSource;
   players: TurboMatchParticipant[];
 }
