@@ -45,6 +45,8 @@ export interface TurboStatsData {
   ledgerVersion?: number;
   statsBuiltFromLedger?: boolean;
   lastBackfillAt?: number;
+  /** Snapshot of the pre-ledger tracked aggregate, retained for the default view. */
+  legacyTrackedPairings?: TurboPairing[];
 }
 
 export interface TurboPartyRecommendation {
@@ -58,6 +60,10 @@ export interface TurboPartyRecommendation {
   averagePairGames: number;
   exactLineupGames: number;
   exactLineupWins: number;
+  /** Lineups that cleared the evidence filter and were ranked against this one. */
+  evaluatedLineups: number;
+  /** How many of those sit inside the leader's confidence interval. */
+  indistinguishableLineups: number;
   strongestPair?: TurboPairing;
   weakestPair?: TurboPairing;
 }

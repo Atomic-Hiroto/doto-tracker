@@ -22,6 +22,20 @@ function parseWindow(args: string[]) {
   };
 }
 
+function parseOptions(args: string[]) {
+  const hasNumericWindow = args.some(arg => /^\d+$/.test(arg));
+  const allTime = args.some(arg => ['alltime', 'all-time', 'forever'].includes(arg.toLowerCase()));
+  const hasHistoryScope = args.some(arg => ['history', 'historical', 'past'].includes(arg.toLowerCase()));
+  const hasTrackedScope = args.some(arg => ['tracked', 'live'].includes(arg.toLowerCase()));
+  const explicitScope = hasHistoryScope || hasTrackedScope || args.some(arg => arg.toLowerCase() === 'all');
+  const scope = explicitScope ? parseScope(args) : (hasNumericWindow || allTime ? 'all' : 'tracked');
+  const legacyTrackedDefault = scope === 'tracked' && !hasNumericWindow && !allTime;
+  const window = legacyTrackedDefault
+    ? { days: null, sinceTimestamp: undefined, label: 'tracked aggregate' }
+    : parseWindow(args);
+  return { scope, window, minGames: legacyTrackedDefault ? 10 : 20 };
+}
+
 function evidence(pairing: { liveGames?: number; historicalGames?: number; verifiedPartyGames?: number }) {
   const parts: string[] = [];
   if (pairing.liveGames) parts.push(`${pairing.liveGames} tracked`);
@@ -39,26 +53,25 @@ function evidenceStrength(games: number) {
 
 export async function turboPairings(message: Message, turboStatsService: TurboStatsService, args: string[] = []) {
   try {
-    const scope = parseScope(args);
-    const window = parseWindow(args);
-    const pairings = turboStatsService.getPairingLeaderboard(10, 20, scope, window.sinceTimestamp);
+    const { scope, window, minGames } = parseOptions(args);
+    const pairings = turboStatsService.getPairingLeaderboard(10, minGames, scope, window.sinceTimestamp);
     if (pairings.length === 0) {
       const hint = scope === 'history'
         ? ' Ask the bot owner to run `+turbobackfill` first.'
-        : scope === 'tracked'
-          ? ' The tracked ledger starts with the new system; use `+turbopairs` while new live matches accumulate.'
+        : scope === 'tracked' && window.label !== 'tracked aggregate'
+          ? ' The tracked ledger starts with the new system; use plain `+turbopairs` for the legacy tracked snapshot.'
           : '';
-      return message.reply(`No turbo duo has 20+ ${scope} games together in the ${window.label} yet.${hint}`);
+      return message.reply(`No turbo duo has ${minGames}+ ${scope} games together in the ${window.label} yet.${hint}`);
     }
 
     const embed = new EmbedBuilder()
       .setColor('#ff6b6b')
       .setTitle('🤝 Best Turbo Duos')
-      .setDescription(`Top same-team pairings by Bayesian projected win rate · **${window.label}** · scope: **${scope}** · min 20 games`)
+      .setDescription(`Top same-team pairings by Bayesian projected win rate · **${window.label}** · scope: **${scope}** · min ${minGames} games`)
       .setFooter({ text: 'Projected WR uses a neutral 10–10 prior; same-team is treated as likely party.' })
       .setTimestamp();
 
-    let text = '';
+    const entries: Array<{ name: string; value: string }> = [];
     for (let i = 0; i < pairings.length; i++) {
       const pairing = pairings[i];
       try {
@@ -68,15 +81,16 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
         ]);
         const games = pairing.wins + pairing.losses;
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-        text += `${medal} **${user1.username}** + **${user2.username}**\n`;
-        text += `Projected WR: **${pairing.rating.toFixed(1)}%** · observed ${(pairing.wins / games * 100).toFixed(1)}% (${pairing.wins}–${pairing.losses})\n`;
-        text += `Evidence: ${evidenceStrength(games)} · ${games} games${evidence(pairing)}\n\n`;
+        entries.push({
+          name: `${medal} ${user1.username} + ${user2.username}`,
+          value: `Projected WR: **${pairing.rating.toFixed(1)}%** · observed ${(pairing.wins / games * 100).toFixed(1)}% (${pairing.wins}–${pairing.losses})\nEvidence: ${evidenceStrength(games)} · ${games} games${evidence(pairing)}`
+        });
       } catch (error) {
         logger.warn(`Could not fetch users for pairing ${pairing.player1} + ${pairing.player2}:`, error);
       }
     }
-    if (!text) return message.reply('Could not display pairing leaderboard due to user fetch errors.');
-    embed.addFields({ name: 'Best Duos', value: text.slice(0, 1024) });
+    if (!entries.length) return message.reply('Could not display pairing leaderboard due to user fetch errors.');
+    embed.addFields(entries);
     return message.reply({ embeds: [embed] });
   } catch (error) {
     logger.error('Error in turbo pairings command:', error);
@@ -87,8 +101,7 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
 export async function myTurboPairings(message: Message, turboStatsService: TurboStatsService, args: string[] = []) {
   try {
     const target = message.mentions.users.first() ?? message.author;
-    const scope = parseScope(args);
-    const window = parseWindow(args);
+    const { scope, window } = parseOptions(args);
     const pairings = turboStatsService.getPairingsForPlayer(target.id, scope, window.sinceTimestamp)
       .filter(pair => pair.wins + pair.losses >= 5)
       .sort((a, b) => b.rating - a.rating)
@@ -96,8 +109,8 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
     if (!pairings.length) {
       const hint = scope === 'history'
         ? ' Ask the bot owner to run `+turbobackfill` first.'
-        : scope === 'tracked'
-          ? ' The tracked ledger starts with the new system; use `+turbopairs` while new live matches accumulate.'
+        : scope === 'tracked' && window.label !== 'tracked aggregate'
+          ? ' The tracked ledger starts with the new system; use plain `+turbopairs` for the legacy tracked snapshot.'
           : '';
       return message.reply(`No duo has 5+ ${scope} games with **${target.username}** in the ${window.label} yet.${hint}`);
     }
@@ -108,21 +121,23 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
       .setDescription(`Best same-team partnerships by Bayesian projected win rate · **${window.label}** · scope: **${scope}** · min 5 games`)
       .setFooter({ text: 'Projected WR uses a neutral 10–10 prior; same-team is treated as likely party.' })
       .setTimestamp();
-    let text = '';
+    const entries: Array<{ name: string; value: string }> = [];
     for (let i = 0; i < pairings.length; i++) {
       const pairing = pairings[i];
       try {
         const partnerId = pairing.player1 === target.id ? pairing.player2 : pairing.player1;
         const partner = await message.client.users.fetch(partnerId);
         const games = pairing.wins + pairing.losses;
-        text += `${i + 1}. **${partner.username}** — **${pairing.rating.toFixed(1)}% projected**\n`;
-        text += `Observed ${(pairing.wins / games * 100).toFixed(1)}% (${pairing.wins}–${pairing.losses}) · ${evidenceStrength(games)} evidence${evidence(pairing)}\n\n`;
+        entries.push({
+          name: `${i + 1}. ${partner.username}`,
+          value: `**${pairing.rating.toFixed(1)}% projected** · observed ${(pairing.wins / games * 100).toFixed(1)}% (${pairing.wins}–${pairing.losses})\n${evidenceStrength(games)} evidence${evidence(pairing)}`
+        });
       } catch (error) {
         logger.warn('Could not fetch turbo duo partner:', error);
       }
     }
-    if (!text) return message.reply('Could not display pairing stats due to user fetch errors.');
-    embed.addFields({ name: 'Partners', value: text.slice(0, 1024) });
+    if (!entries.length) return message.reply('Could not display pairing stats due to user fetch errors.');
+    embed.addFields(entries);
     return message.reply({ embeds: [embed] });
   } catch (error) {
     logger.error('Error in personal turbo pairings command:', error);

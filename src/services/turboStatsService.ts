@@ -41,7 +41,8 @@ export class TurboStatsService {
           matches: loaded.matches || [],
           ledgerVersion: 1,
           statsBuiltFromLedger: loaded.statsBuiltFromLedger || false,
-          lastBackfillAt: loaded.lastBackfillAt
+          lastBackfillAt: loaded.lastBackfillAt,
+          legacyTrackedPairings: loaded.legacyTrackedPairings
         };
         for (const p of this.turboStats.playerStats) p.rating = this.calculateRating(p.wins, p.losses);
         for (const p of this.turboStats.pairings) p.rating = this.calculatePairRating(p.wins, p.losses);
@@ -114,8 +115,12 @@ export class TurboStatsService {
       const registered = bySteamId.get(steamId);
       if (!registered || seenDiscordIds.has(registered.discordId)) continue;
       const isRadiant = typeof raw.isRadiant === 'boolean' ? raw.isRadiant : Number(raw.player_slot ?? raw.playerSlot) < 128;
+      // A party id is a per-match index and it is zero-based, so party 0 is a real party — in
+      // practice the most common one. Treating it as falsy discarded roughly half of all party
+      // evidence, and did so silently, because both members of party 0 became "solo" together.
       const rawPartyId = raw.party_id ?? raw.partyId;
-      const partyId = Number(rawPartyId) > 0 ? Number(rawPartyId) : null;
+      const parsedPartyId = rawPartyId === null || rawPartyId === undefined ? NaN : Number(rawPartyId);
+      const partyId = Number.isFinite(parsedPartyId) ? parsedPartyId : null;
       participants.push({
         discordId: registered.discordId,
         steamId: registered.steamId,
@@ -176,6 +181,26 @@ export class TurboStatsService {
         }
       }
     }
+  }
+
+  private addMatchToLegacyTrackedPairings(match: TurboTrackedMatch) {
+    if (match.source === 'historical') return;
+    const aggregatePairings = this.turboStats.pairings;
+    this.turboStats.pairings = this.turboStats.legacyTrackedPairings || [];
+    for (const team of ['radiant', 'dire'] as const) {
+      const players = match.players.filter(player => player.team === team);
+      const won = team === 'radiant' ? match.radiantWon : !match.radiantWon;
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          this.updatePairingStatsInMemory(players[i], players[j], won, 'live', match.timestamp * 1000);
+        }
+      }
+    }
+    this.turboStats.legacyTrackedPairings = this.turboStats.pairings;
+    for (const pairing of this.turboStats.legacyTrackedPairings) {
+      pairing.rating = this.calculateRating(pairing.wins, pairing.losses);
+    }
+    this.turboStats.pairings = aggregatePairings;
   }
 
   private updatePlayerStatsInMemory(discordId: string, steamId: string, won: boolean, updatedAt = Date.now()) {
@@ -247,7 +272,10 @@ export class TurboStatsService {
   }
 
   getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPairing[] {
-    const stats = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
+    const legacyTracked = scope === 'tracked' && sinceTimestamp === undefined && this.turboStats.legacyTrackedPairings;
+    const stats = legacyTracked
+      ? this.turboStats.legacyTrackedPairings!
+      : this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
     return [...stats].filter(pair => pair.wins + pair.losses >= minGames).sort((a, b) => b.rating - a.rating).slice(0, limit);
   }
 
@@ -257,7 +285,10 @@ export class TurboStatsService {
   }
 
   getPairingsForPlayer(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number) {
-    const stats = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
+    const legacyTracked = scope === 'tracked' && sinceTimestamp === undefined && this.turboStats.legacyTrackedPairings;
+    const stats = legacyTracked
+      ? this.turboStats.legacyTrackedPairings!
+      : this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
     return stats.filter(pair => pair.player1 === discordId || pair.player2 === discordId);
   }
 
@@ -270,6 +301,7 @@ export class TurboStatsService {
     if (!deferRebuild) {
       if (result.inserted) {
         this.addMatchToAggregates(normalized);
+        this.addMatchToLegacyTrackedPairings(normalized);
         this.saveTurboStats();
       } else if (this.turboStats.statsBuiltFromLedger) {
         this.rebuildAggregatesFromLedger();
@@ -342,6 +374,8 @@ export class TurboStatsService {
         averagePairGames,
         exactLineupGames,
         exactLineupWins,
+        evaluatedLineups: 0,
+        indistinguishableLineups: 0,
         strongestPair: sortedPairs[0],
         weakestPair: sortedPairs[sortedPairs.length - 1]
       });
@@ -352,7 +386,21 @@ export class TurboStatsService {
       for (let i = start; i <= uniqueIds.length - (5 - picked.length); i++) choose(i + 1, [...picked, uniqueIds[i]]);
     };
     choose(0, []);
-    return recommendations.filter(rec => rec.coveredPairs >= 7).sort((a, b) => b.score - a.score).slice(0, limit);
+
+    const ranked = recommendations.filter(rec => rec.coveredPairs >= 7).sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    if (!best) return [];
+    // A lineup whose point estimate sits inside the leader's interval is not distinguishable from
+    // the leader on this evidence. Report how much of the field that covers so the caller can say
+    // whether the ordering is a real gap or a tiebreak on confidence.
+    const indistinguishable = ranked.filter(
+      rec => rec.predictedWinRate >= best.lowWinRate && rec.predictedWinRate <= best.highWinRate,
+    ).length;
+    for (const rec of ranked) {
+      rec.evaluatedLineups = ranked.length;
+      rec.indistinguishableLineups = indistinguishable;
+    }
+    return ranked.slice(0, limit);
   }
 
   getAllStats(): TurboStatsData {
