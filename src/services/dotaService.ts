@@ -268,6 +268,9 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
   const recentMatches = new Map<number, Array<{ discordId: string; steamId: string; match: any; shouldPost: boolean }>>();
 
   for (const user of userDataService.getAllUsers()) {
+    // Roster-only users are still recognized when they appear in a public
+    // teammate's match, but polling their inaccessible profile wastes quota.
+    if (user.historyAccessible === false) continue;
     try {
       const response = await opendotaClient.get<Array<any>>(`/players/${user.steamId}/recentMatches?limit=20`);
       const matches = response.data || [];

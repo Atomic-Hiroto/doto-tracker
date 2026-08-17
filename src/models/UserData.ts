@@ -2,6 +2,8 @@ export interface UserData {
     discordId: string,
     steamId: string,
     autoShow: boolean,
+    /** False for roster-only identities whose match history is private/unavailable. */
+    historyAccessible?: boolean,
     lastCheckedMatch: number | null,
     matchesTracked?: number,
     heroesPlayed?: number[],

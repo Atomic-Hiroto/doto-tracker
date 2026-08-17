@@ -23,7 +23,9 @@ function canRegisterOtherUser(message: Message): boolean {
 export async function register(message: Message, args: string[], userDataService: UserDataService) {
   const mentionedUser = message.mentions.users.first();
   const targetUser: User = mentionedUser ?? message.author;
-  const steamArgs = mentionedUser ? args.filter(arg => !isMentionToken(arg)) : args;
+  const nonMentionArgs = mentionedUser ? args.filter(arg => !isMentionToken(arg)) : args;
+  const rosterOnly = nonMentionArgs.some(arg => ['private', 'roster-only', 'rosteronly'].includes(arg.toLowerCase()));
+  const steamArgs = nonMentionArgs.filter(arg => !['private', 'roster-only', 'rosteronly'].includes(arg.toLowerCase()));
   const registeringOtherUser = targetUser.id !== message.author.id;
 
   if (steamArgs.length !== 1) {
@@ -64,7 +66,8 @@ export async function register(message: Message, args: string[], userDataService
   userDataService.addUser({
     discordId: targetUser.id,
     steamId: steamId,
-    autoShow: true,
+    autoShow: !rosterOnly,
+    historyAccessible: !rosterOnly,
     lastCheckedMatch: null,
     turboMatchesTracked: 0,
     turboHeroesPlayed: [],
@@ -73,7 +76,10 @@ export async function register(message: Message, args: string[], userDataService
     pendingParsedAchievements: [],
   });
 
-  message.reply(registeringOtherUser
+  const success = registeringOtherUser
     ? Replies.REGISTER_SUCCESS_FOR(targetUser.id, steamId)
-    : Replies.REGISTER_SUCCESS(steamId));
+    : Replies.REGISTER_SUCCESS(steamId);
+  message.reply(success + (rosterOnly
+    ? '\n🔒 Registered as roster-only: this player is recognized in teammates\' matches but their private profile will not be polled directly.'
+    : ''));
 }
