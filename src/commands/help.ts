@@ -52,7 +52,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+durationstudy [crew|90|all]` — crew Turbo vs normal game duration study',
       '`+topheroes` / `+topheros [@user]` — best turbo heroes (60d by default)',
       '`+turbopairs [@user]` — best turbo duos (global, or a player\'s)',
-      '`+turbopairs [all|tracked|history]` — choose duo evidence scope',
+      '`+turbopairs [days|alltime] [all|tracked|history]` — duo leaderboard (60 days by default)',
       '`+turboparty best [all|tracked|history]` — experimental optimal five-player party',
       '`+turbobackfill [days] [per-player]` — owner-only deduplicated Stratz history sync',
       '`+turbometa [patch] [rank]` — best turbo heroes per position (STRATZ, Wilson-ranked)',

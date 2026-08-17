@@ -26,12 +26,18 @@ export async function turboParty(message: Message, args: string[], users: UserDa
         .map(player => player.id);
     }
     if (candidateIds.length < 5) {
-      return message.reply(`Only ${candidateIds.length} registered players have ${scope} evidence. Run \`+turbobackfill\` after registering more players.`);
+      const next = scope === 'tracked'
+        ? 'The tracked ledger starts with the new system; use `+turboparty best all` while new live matches accumulate.'
+        : 'Run `+turbobackfill` after registering more players.';
+      return message.reply(`Only ${candidateIds.length} registered players have ${scope} evidence. ${next}`);
     }
 
     const recommendations = stats.recommendParties(candidateIds, scope, 3);
     if (!recommendations.length) {
-      return message.reply('There is not enough connected evidence yet (at least 6 of 10 duo links need 2+ games). Run `+turbobackfill`, then try again.');
+      const next = scope === 'tracked'
+        ? 'Use `+turboparty best all` while new live matches accumulate.'
+        : 'Run `+turbobackfill`, then try again.';
+      return message.reply(`There is not enough connected evidence yet (at least 6 of 10 duo links need 2+ games). ${next}`);
     }
 
     const fields = [];

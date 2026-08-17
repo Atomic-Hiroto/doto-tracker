@@ -64,6 +64,7 @@ try {
   assert.equal(service.processTurboMatch(live, roster), false, 'live replay must be idempotent');
   assert.equal(service.getPairingLeaderboard(20, 1, 'tracked').find(pair => pair.player1 === 'a' && pair.player2 === 'b')?.wins, 1);
   assert.equal(service.getPairingLeaderboard(20, 1, 'all').find(pair => pair.player1 === 'a' && pair.player2 === 'b')?.wins, 13);
+  assert.equal(service.getPairingLeaderboard(20, 1, 'all', 1_755_000_000).find(pair => pair.player1 === 'a' && pair.player2 === 'b')?.wins, 1, 'date windows must exclude older ledger matches');
 
   const recommendations = service.recommendParties(roster.map(player => player.discordId), 'all', 1);
   assert.equal(recommendations.length, 1);
