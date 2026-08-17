@@ -10,16 +10,28 @@ function parseScope(args: string[]): TurboStatsScope {
   return 'all';
 }
 
+function parseWindow(args: string[]) {
+  const allTime = args.some(arg => ['all', 'alltime', 'all-time', 'forever'].includes(arg.toLowerCase()));
+  if (allTime) return { sinceTimestamp: undefined, label: 'all imported history' };
+  const requested = args.map(arg => Number.parseInt(arg, 10)).find(value => Number.isFinite(value));
+  const days = Math.max(7, Math.min(1825, requested || 60));
+  return {
+    sinceTimestamp: Math.floor(Date.now() / 1000) - days * 86400,
+    label: `last ${days} days`
+  };
+}
+
 export async function turboParty(message: Message, args: string[], users: UserDataService, stats: TurboStatsService) {
   try {
     const scope = parseScope(args);
+    const window = parseWindow(args);
     let candidateIds = [...message.mentions.users.keys()];
     if (candidateIds.length > 0 && candidateIds.length < 5) {
-      return message.reply('Mention at least 5 registered players to define a candidate pool, or use `+turboparty best [all|tracked|history]` for everyone.');
+      return message.reply('Mention at least 5 registered players to define a candidate pool, or use `+turboparty best` for everyone (60 days by default).');
     }
     if (!candidateIds.length) {
       candidateIds = users.getAllUsers()
-        .map(user => ({ id: user.discordId, games: (() => { const s = stats.getPlayerStats(user.discordId, scope); return s ? s.wins + s.losses : 0; })() }))
+        .map(user => ({ id: user.discordId, games: (() => { const s = stats.getPlayerStats(user.discordId, scope, window.sinceTimestamp); return s ? s.wins + s.losses : 0; })() }))
         .filter(player => player.games > 0)
         .sort((a, b) => b.games - a.games)
         .slice(0, 20)
@@ -27,17 +39,17 @@ export async function turboParty(message: Message, args: string[], users: UserDa
     }
     if (candidateIds.length < 5) {
       const next = scope === 'tracked'
-        ? 'The tracked ledger starts with the new system; use `+turboparty best all` while new live matches accumulate.'
+        ? 'The tracked ledger starts with the new system; use `+turboparty best` while new live matches accumulate.'
         : 'Run `+turbobackfill` after registering more players.';
       return message.reply(`Only ${candidateIds.length} registered players have ${scope} evidence. ${next}`);
     }
 
-    const recommendations = stats.recommendParties(candidateIds, scope, 3);
+    const recommendations = stats.recommendParties(candidateIds, scope, 3, window.sinceTimestamp);
     if (!recommendations.length) {
       const next = scope === 'tracked'
-        ? 'Use `+turboparty best all` while new live matches accumulate.'
+        ? 'Use `+turboparty best` while new live matches accumulate.'
         : 'Run `+turbobackfill`, then try again.';
-      return message.reply(`There is not enough connected evidence yet (at least 6 of 10 duo links need 2+ games). ${next}`);
+      return message.reply(`There is not enough connected evidence yet (at least 7 of 10 duo links need 5+ games). ${next}`);
     }
 
     const fields = [];
@@ -66,9 +78,9 @@ export async function turboParty(message: Message, args: string[], users: UserDa
     const embed = new EmbedBuilder()
       .setColor('#8b5cf6')
       .setTitle('🧩 Optimal Turbo Party')
-      .setDescription(`Best five-player combinations from **${candidateIds.length}** candidates · scope: **${scope}**`)
+      .setDescription(`Best five-player combinations from **${candidateIds.length}** candidates · **${window.label}** · scope: **${scope}**`)
       .addFields(fields)
-      .setFooter({ text: 'Experimental projection: shrunk player WR + duo synergy + exact-lineup evidence. Association, not a causal guarantee.' })
+      .setFooter({ text: 'Projection: neutral 10–10 priors + duo synergy + exact-lineup evidence. Association, not a causal guarantee.' })
       .setTimestamp();
     return message.reply({ embeds: [embed] });
   } catch (error) {

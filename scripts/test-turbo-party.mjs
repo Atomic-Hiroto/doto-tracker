@@ -52,6 +52,7 @@ try {
   assert.equal(historyPair.wins, 12);
   assert.equal(historyPair.losses, 0);
   assert.equal(historyPair.verifiedPartyGames, 12);
+  assert.equal(historyPair.rating, 68.75, 'pair rating should use a neutral 10-10 Bayesian prior');
 
   const live = {
     match_id: 2000,

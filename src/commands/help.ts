@@ -53,7 +53,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+topheroes` / `+topheros [@user]` — best turbo heroes (60d by default)',
       '`+turbopairs [@user]` — best turbo duos (global, or a player\'s)',
       '`+turbopairs [days|alltime] [all|tracked|history]` — duo leaderboard (60 days by default)',
-      '`+turboparty best [all|tracked|history]` — experimental optimal five-player party',
+      '`+turboparty best [days|alltime] [tracked|history]` — optimal party (60 days by default)',
       '`+turbobackfill [days] [per-player]` — owner-only deduplicated Stratz history sync',
       '`+turbometa [patch] [rank]` — best turbo heroes per position (STRATZ, Wilson-ranked)',
     ],
