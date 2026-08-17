@@ -77,15 +77,19 @@ export class TurboStatsService {
     return scope === 'all' || (scope === 'tracked' ? source !== 'historical' : source !== 'live');
   }
 
-  private matchesForScope(scope: TurboStatsScope) {
-    return (this.turboStats.matches || []).filter(match => this.sourceMatchesScope(match.source, scope));
+  private matchesForScope(scope: TurboStatsScope, sinceTimestamp?: number) {
+    return (this.turboStats.matches || []).filter(match =>
+      this.sourceMatchesScope(match.source, scope)
+      && (sinceTimestamp === undefined || match.timestamp >= sinceTimestamp)
+    );
   }
 
-  private shouldDeriveFromLedger(scope: TurboStatsScope) {
+  private shouldDeriveFromLedger(scope: TurboStatsScope, sinceTimestamp?: number) {
     // Until the first backfill completes, the legacy aggregate contains tracked
     // matches that predate the ledger. Keep using it so deployment alone does not
     // make existing leaderboards appear to lose their history.
-    return Boolean(this.turboStats.statsBuiltFromLedger) || scope === 'history';
+    return Boolean(this.turboStats.statsBuiltFromLedger) || scope === 'history'
+      || (sinceTimestamp !== undefined && Boolean(this.turboStats.matches?.length));
   }
 
   private normalizeMatch(matchData: any, registeredPlayers: RegisteredPlayer[], source: Exclude<TurboMatchSource, 'both'>): TurboTrackedMatch | null {
@@ -191,12 +195,12 @@ export class TurboStatsService {
     stats.lastUpdated = Math.max(stats.lastUpdated, updatedAt);
   }
 
-  private deriveStats(scope: TurboStatsScope) {
+  private deriveStats(scope: TurboStatsScope, sinceTimestamp?: number) {
     const playerStats: TurboPlayerStats[] = [];
     const pairings: TurboPairing[] = [];
     const serviceData = this.turboStats;
     this.turboStats = { ...serviceData, playerStats, pairings };
-    for (const match of this.matchesForScope(scope)) this.addMatchToAggregates(match);
+    for (const match of this.matchesForScope(scope, sinceTimestamp)) this.addMatchToAggregates(match);
     this.turboStats = serviceData;
     return { playerStats, pairings };
   }
@@ -232,8 +236,8 @@ export class TurboStatsService {
     return [...stats].filter(player => player.wins + player.losses >= 10).sort((a, b) => b.rating - a.rating).slice(0, limit);
   }
 
-  getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all'): TurboPairing[] {
-    const stats = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope).pairings : this.turboStats.pairings;
+  getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPairing[] {
+    const stats = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
     return [...stats].filter(pair => pair.wins + pair.losses >= minGames).sort((a, b) => b.rating - a.rating).slice(0, limit);
   }
 
@@ -242,8 +246,8 @@ export class TurboStatsService {
     return stats.find(player => player.discordId === discordId);
   }
 
-  getPairingsForPlayer(discordId: string, scope: TurboStatsScope = 'all') {
-    const stats = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope).pairings : this.turboStats.pairings;
+  getPairingsForPlayer(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number) {
+    const stats = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
     return stats.filter(pair => pair.player1 === discordId || pair.player2 === discordId);
   }
 

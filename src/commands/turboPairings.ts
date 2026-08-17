@@ -10,6 +10,18 @@ function parseScope(args: string[]): TurboStatsScope {
   return 'all';
 }
 
+function parseWindow(args: string[]) {
+  const allTime = args.some(arg => ['alltime', 'all-time', 'forever'].includes(arg.toLowerCase()));
+  if (allTime) return { days: null, sinceTimestamp: undefined, label: 'all imported history' };
+  const requested = args.map(arg => Number.parseInt(arg, 10)).find(value => Number.isFinite(value));
+  const days = Math.max(7, Math.min(1825, requested || 60));
+  return {
+    days,
+    sinceTimestamp: Math.floor(Date.now() / 1000) - days * 86400,
+    label: `last ${days} days`
+  };
+}
+
 function evidence(pairing: { liveGames?: number; historicalGames?: number; verifiedPartyGames?: number }) {
   const parts: string[] = [];
   if (pairing.liveGames) parts.push(`${pairing.liveGames} tracked`);
@@ -21,16 +33,21 @@ function evidence(pairing: { liveGames?: number; historicalGames?: number; verif
 export async function turboPairings(message: Message, turboStatsService: TurboStatsService, args: string[] = []) {
   try {
     const scope = parseScope(args);
-    const pairings = turboStatsService.getPairingLeaderboard(10, 10, scope);
+    const window = parseWindow(args);
+    const pairings = turboStatsService.getPairingLeaderboard(10, 10, scope, window.sinceTimestamp);
     if (pairings.length === 0) {
-      const hint = scope === 'history' ? ' Ask the bot owner to run `+turbobackfill` first.' : '';
-      return message.reply(`No turbo duo has 10+ ${scope} games together yet.${hint}`);
+      const hint = scope === 'history'
+        ? ' Ask the bot owner to run `+turbobackfill` first.'
+        : scope === 'tracked'
+          ? ' The tracked ledger starts with the new system; use `+turbopairs` while new live matches accumulate.'
+          : '';
+      return message.reply(`No turbo duo has 10+ ${scope} games together in the ${window.label} yet.${hint}`);
     }
 
     const embed = new EmbedBuilder()
       .setColor('#ff6b6b')
       .setTitle('🤝 Best Turbo Duos')
-      .setDescription(`Top same-team pairings by conservative score · scope: **${scope}** · min 10 games`)
+      .setDescription(`Top same-team pairings by conservative score · **${window.label}** · scope: **${scope}** · min 10 games`)
       .setFooter({ text: 'Same team is treated as likely party; verified-party counts require a positive matching party ID.' })
       .setTimestamp();
 
@@ -63,19 +80,24 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
   try {
     const target = message.mentions.users.first() ?? message.author;
     const scope = parseScope(args);
-    const pairings = turboStatsService.getPairingsForPlayer(target.id, scope)
+    const window = parseWindow(args);
+    const pairings = turboStatsService.getPairingsForPlayer(target.id, scope, window.sinceTimestamp)
       .filter(pair => pair.wins + pair.losses >= 2)
       .sort((a, b) => b.rating - a.rating)
       .slice(0, 10);
     if (!pairings.length) {
-      const hint = scope === 'history' ? ' Ask the bot owner to run `+turbobackfill` first.' : '';
-      return message.reply(`No duo has 2+ ${scope} games with **${target.username}** yet.${hint}`);
+      const hint = scope === 'history'
+        ? ' Ask the bot owner to run `+turbobackfill` first.'
+        : scope === 'tracked'
+          ? ' The tracked ledger starts with the new system; use `+turbopairs` while new live matches accumulate.'
+          : '';
+      return message.reply(`No duo has 2+ ${scope} games with **${target.username}** in the ${window.label} yet.${hint}`);
     }
 
     const embed = new EmbedBuilder()
       .setColor('#4ecdc4')
       .setTitle(`🤝 Turbo Duos — ${target.username}`)
-      .setDescription(`Best same-team partnerships · scope: **${scope}** · min 2 games`)
+      .setDescription(`Best same-team partnerships · **${window.label}** · scope: **${scope}** · min 2 games`)
       .setFooter({ text: 'Same team is treated as likely party; verified-party counts require a positive matching party ID.' })
       .setTimestamp();
     let text = '';
