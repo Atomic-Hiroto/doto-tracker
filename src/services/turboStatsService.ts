@@ -44,7 +44,7 @@ export class TurboStatsService {
           lastBackfillAt: loaded.lastBackfillAt
         };
         for (const p of this.turboStats.playerStats) p.rating = this.calculateRating(p.wins, p.losses);
-        for (const p of this.turboStats.pairings) p.rating = this.calculateRating(p.wins, p.losses);
+        for (const p of this.turboStats.pairings) p.rating = this.calculatePairRating(p.wins, p.losses);
         this.saveTurboStats();
         logger.info(`Turbo stats loaded (${this.turboStats.matches?.length || 0} ledger matches)`);
       }
@@ -71,6 +71,16 @@ export class TurboStatsService {
     const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n);
     const activityBonus = Math.min(n, 100) * 0.02;
     return Math.round((((centre - margin) / denom) * 100 + activityBonus) * 100) / 100;
+  }
+
+  /**
+   * Bayesian expected win rate with a neutral Beta(10, 10) prior. The prior is
+   * equivalent to 20 games at 50%, keeping hot small samples from dominating
+   * while leaving established pairings close to their observed win rate.
+   */
+  private calculatePairRating(wins: number, losses: number): number {
+    const projected = (wins + 10) / (wins + losses + 20);
+    return Math.round(projected * 10000) / 100;
   }
 
   private sourceMatchesScope(source: TurboMatchSource, scope: TurboStatsScope) {
@@ -191,7 +201,7 @@ export class TurboStatsService {
     if (source !== 'historical') stats.liveGames = (stats.liveGames || 0) + 1;
     if (source !== 'live') stats.historicalGames = (stats.historicalGames || 0) + 1;
     if (a.partyId !== null && a.partyId === b.partyId) stats.verifiedPartyGames = (stats.verifiedPartyGames || 0) + 1;
-    stats.rating = this.calculateRating(stats.wins, stats.losses);
+    stats.rating = this.calculatePairRating(stats.wins, stats.losses);
     stats.lastUpdated = Math.max(stats.lastUpdated, updatedAt);
   }
 
@@ -241,8 +251,8 @@ export class TurboStatsService {
     return [...stats].filter(pair => pair.wins + pair.losses >= minGames).sort((a, b) => b.rating - a.rating).slice(0, limit);
   }
 
-  getPlayerStats(discordId: string, scope: TurboStatsScope = 'all'): TurboPlayerStats | undefined {
-    const stats = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope).playerStats : this.turboStats.playerStats;
+  getPlayerStats(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPlayerStats | undefined {
+    const stats = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).playerStats : this.turboStats.playerStats;
     return stats.find(player => player.discordId === discordId);
   }
 
@@ -272,13 +282,13 @@ export class TurboStatsService {
     return true;
   }
 
-  recommendParties(candidateIds: string[], scope: TurboStatsScope = 'all', limit = 3): TurboPartyRecommendation[] {
+  recommendParties(candidateIds: string[], scope: TurboStatsScope = 'all', limit = 3, sinceTimestamp?: number): TurboPartyRecommendation[] {
     const uniqueIds = [...new Set(candidateIds)];
     if (uniqueIds.length < 5) return [];
-    const { playerStats, pairings } = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope) : { playerStats: this.turboStats.playerStats, pairings: this.turboStats.pairings };
+    const { playerStats, pairings } = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp) : { playerStats: this.turboStats.playerStats, pairings: this.turboStats.pairings };
     const playerMap = new Map(playerStats.map(player => [player.discordId, player]));
     const pairMap = new Map(pairings.map(pair => [[pair.player1, pair.player2].sort().join(':'), pair]));
-    const matches = this.matchesForScope(scope);
+    const matches = this.matchesForScope(scope, sinceTimestamp);
     const exactLineups = new Map<string, { games: number; wins: number }>();
     for (const match of matches) for (const team of ['radiant', 'dire'] as const) {
       const ids = match.players.filter(player => player.team === team).map(player => player.discordId);
@@ -294,7 +304,7 @@ export class TurboStatsService {
     const evaluate = (ids: string[]) => {
       const individualRates = ids.map(id => {
         const stats = playerMap.get(id);
-        return ((stats?.wins || 0) + 5) / ((stats ? stats.wins + stats.losses : 0) + 10);
+        return ((stats?.wins || 0) + 10) / ((stats ? stats.wins + stats.losses : 0) + 20);
       });
       const base = individualRates.reduce((sum, rate) => sum + rate, 0) / 5;
       const observedPairs: TurboPairing[] = [];
@@ -303,10 +313,10 @@ export class TurboStatsService {
       for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
         const pair = pairMap.get([ids[i], ids[j]].sort().join(':'));
         const games = pair ? pair.wins + pair.losses : 0;
-        const pairRate = ((pair?.wins || 0) + 5) / (games + 10);
+        const pairRate = ((pair?.wins || 0) + 10) / (games + 20);
         residualTotal += pairRate - (individualRates[i] + individualRates[j]) / 2;
         averagePairGames += games;
-        if (pair && games >= 2) observedPairs.push(pair);
+        if (pair && games >= 5) observedPairs.push(pair);
       }
       averagePairGames /= 10;
       let predicted = Math.max(0.35, Math.min(0.70, base + 0.75 * (residualTotal / 10)));
@@ -314,7 +324,7 @@ export class TurboStatsService {
       const exactLineupGames = exact?.games || 0;
       const exactLineupWins = exact?.wins || 0;
       if (exactLineupGames) {
-        const lineupPosterior = (exactLineupWins + 5) / (exactLineupGames + 10);
+        const lineupPosterior = (exactLineupWins + 10) / (exactLineupGames + 20);
         const weight = exactLineupGames / (exactLineupGames + 20);
         predicted = predicted * (1 - weight) + lineupPosterior * weight;
       }
@@ -342,7 +352,7 @@ export class TurboStatsService {
       for (let i = start; i <= uniqueIds.length - (5 - picked.length); i++) choose(i + 1, [...picked, uniqueIds[i]]);
     };
     choose(0, []);
-    return recommendations.filter(rec => rec.coveredPairs >= 6).sort((a, b) => b.score - a.score).slice(0, limit);
+    return recommendations.filter(rec => rec.coveredPairs >= 7).sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   getAllStats(): TurboStatsData {
