@@ -8,6 +8,7 @@
     "test:analyze": "npx -y tsx scripts/test-analyze.ts",
     "test:topllms": "npx -y tsx scripts/test-topllms-canonicalization.ts",
     "test:turbo-estimator": "tsc && node scripts/test-turbo-experimental-v2.mjs",
+    "test:turbo-party": "tsc && node scripts/test-turbo-party.mjs",
     "remote-deploy": "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1"
   },
   "devDependencies": {

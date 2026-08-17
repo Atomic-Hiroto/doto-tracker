@@ -324,7 +324,10 @@ export async function checkNewMatches(client: Client, userDataService: UserDataS
       matchDetailsData = matchDetails.data;
       if (turboStatsService) {
         const registeredPlayers = players.map(p => ({ discordId: p.discordId, steamId: p.steamId }));
-        turboStatsService.processTurboMatch(matchDetailsData, registeredPlayers);
+        // The polling cursor only tells us which registered players discovered this match.
+        // Pair stats need every registered participant present in the lobby.
+        const fullRegisteredRoster = userDataService.getAllUsers().map(user => ({ discordId: user.discordId, steamId: user.steamId }));
+        turboStatsService.processTurboMatch(matchDetailsData, fullRegisteredRoster);
 
         // Update hidden turbo rank estimates (piggybacks on the same match data)
         if (matchDetailsData.game_mode === 23) {

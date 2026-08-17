@@ -1,215 +1,344 @@
 import fs from 'fs';
-import { TurboStatsData, TurboPlayerStats, TurboPairing } from '../models/TurboStats';
-import { ProcessConstants } from '../constants';
+import {
+  TurboMatchParticipant,
+  TurboMatchSource,
+  TurboPairing,
+  TurboPartyRecommendation,
+  TurboPlayerStats,
+  TurboStatsData,
+  TurboStatsScope,
+  TurboTrackedMatch
+} from '../models/TurboStats';
 import { logger } from './loggerService';
 
 const TURBO_STATS_FILE = 'turboStats.json';
-const TURBO_GAME_MODE = 23; // Turbo mode ID in Dota 2
+const TURBO_GAME_MODE = 23;
+
+type RegisteredPlayer = { discordId: string; steamId: string };
 
 export class TurboStatsService {
   private turboStats: TurboStatsData = {
     playerStats: [],
     pairings: [],
-    lastProcessedMatch: null
+    lastProcessedMatch: null,
+    matches: [],
+    ledgerVersion: 1,
+    statsBuiltFromLedger: false
   };
 
-  constructor() {
+  constructor(private readonly filePath = TURBO_STATS_FILE) {
     this.loadTurboStats();
   }
 
   private loadTurboStats() {
     try {
-      if (fs.existsSync(TURBO_STATS_FILE)) {
-        this.turboStats = JSON.parse(fs.readFileSync(TURBO_STATS_FILE, 'utf8'));
-        // Recompute every rating with the current formula so a formula change
-        // applies to existing records immediately, not only when a player next
-        // plays. (Ratings are derived from wins/losses, so this is lossless.)
+      if (fs.existsSync(this.filePath)) {
+        const loaded = JSON.parse(fs.readFileSync(this.filePath, 'utf8')) as TurboStatsData;
+        this.turboStats = {
+          playerStats: loaded.playerStats || [],
+          pairings: loaded.pairings || [],
+          lastProcessedMatch: loaded.lastProcessedMatch ?? null,
+          matches: loaded.matches || [],
+          ledgerVersion: 1,
+          statsBuiltFromLedger: loaded.statsBuiltFromLedger || false,
+          lastBackfillAt: loaded.lastBackfillAt
+        };
         for (const p of this.turboStats.playerStats) p.rating = this.calculateRating(p.wins, p.losses);
         for (const p of this.turboStats.pairings) p.rating = this.calculateRating(p.wins, p.losses);
         this.saveTurboStats();
-        logger.info('Turbo stats loaded and ratings recomputed');
+        logger.info(`Turbo stats loaded (${this.turboStats.matches?.length || 0} ledger matches)`);
       }
     } catch (error) {
       logger.error('Error loading turbo stats:', error);
-      this.turboStats = {
-        playerStats: [],
-        pairings: [],
-        lastProcessedMatch: null
-      };
     }
   }
 
   private saveTurboStats() {
     try {
-      fs.writeFileSync(TURBO_STATS_FILE, JSON.stringify(this.turboStats, null, 2));
+      fs.writeFileSync(this.filePath, JSON.stringify(this.turboStats, null, 2));
     } catch (error) {
       logger.error('Error saving turbo stats:', error);
     }
   }
 
-  // Wilson lower bound of the win rate (95% confidence) + a small, capped
-  // activity nudge. This ranks by a *conservative* win-rate estimate: small
-  // samples are pulled down automatically, and grinding a low win rate no longer
-  // beats genuine skill. Score is ~0–100 (skilled players land ~50–65).
   private calculateRating(wins: number, losses: number): number {
     const n = wins + losses;
     if (n === 0) return 0;
-
-    const z = 1.96; // 95% confidence
+    const z = 1.96;
     const p = wins / n;
     const denom = 1 + (z * z) / n;
     const centre = p + (z * z) / (2 * n);
     const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n);
-    const wilson = (centre - margin) / denom;
+    const activityBonus = Math.min(n, 100) * 0.02;
+    return Math.round((((centre - margin) / denom) * 100 + activityBonus) * 100) / 100;
+  }
 
-    const activityBonus = Math.min(n, 100) * 0.02; // max +2, just a tiebreaker
-    return Math.round((wilson * 100 + activityBonus) * 100) / 100;
+  private sourceMatchesScope(source: TurboMatchSource, scope: TurboStatsScope) {
+    return scope === 'all' || (scope === 'tracked' ? source !== 'historical' : source !== 'live');
+  }
+
+  private matchesForScope(scope: TurboStatsScope) {
+    return (this.turboStats.matches || []).filter(match => this.sourceMatchesScope(match.source, scope));
+  }
+
+  private shouldDeriveFromLedger(scope: TurboStatsScope) {
+    // Until the first backfill completes, the legacy aggregate contains tracked
+    // matches that predate the ledger. Keep using it so deployment alone does not
+    // make existing leaderboards appear to lose their history.
+    return Boolean(this.turboStats.statsBuiltFromLedger) || scope === 'history';
+  }
+
+  private normalizeMatch(matchData: any, registeredPlayers: RegisteredPlayer[], source: Exclude<TurboMatchSource, 'both'>): TurboTrackedMatch | null {
+    if (source === 'live' && Number(matchData.game_mode ?? matchData.gameMode) !== TURBO_GAME_MODE) return null;
+    const rawPlayers = Array.isArray(matchData.players) ? matchData.players : [];
+    const bySteamId = new Map(registeredPlayers.map(player => [String(player.steamId), player]));
+    const participants: TurboMatchParticipant[] = [];
+    const seenDiscordIds = new Set<string>();
+
+    for (const raw of rawPlayers) {
+      const steamId = String(raw.account_id ?? raw.steamAccountId ?? '');
+      const registered = bySteamId.get(steamId);
+      if (!registered || seenDiscordIds.has(registered.discordId)) continue;
+      const isRadiant = typeof raw.isRadiant === 'boolean' ? raw.isRadiant : Number(raw.player_slot ?? raw.playerSlot) < 128;
+      const rawPartyId = raw.party_id ?? raw.partyId;
+      const partyId = Number(rawPartyId) > 0 ? Number(rawPartyId) : null;
+      participants.push({
+        discordId: registered.discordId,
+        steamId: registered.steamId,
+        team: isRadiant ? 'radiant' : 'dire',
+        partyId
+      });
+      seenDiscordIds.add(registered.discordId);
+    }
+
+    const matchId = String(matchData.match_id ?? matchData.id ?? '');
+    if (!matchId || participants.length === 0) return null;
+    return {
+      matchId,
+      timestamp: Number(matchData.start_time ?? matchData.startDateTime ?? Math.floor(Date.now() / 1000)),
+      radiantWon: Boolean(matchData.radiant_win ?? matchData.didRadiantWin),
+      source,
+      players: participants
+    };
+  }
+
+  private mergeLedgerMatch(incoming: TurboTrackedMatch): { changed: boolean; inserted: boolean } {
+    const matches = this.turboStats.matches || (this.turboStats.matches = []);
+    const existing = matches.find(match => match.matchId === incoming.matchId);
+    if (!existing) {
+      matches.push(incoming);
+      return { changed: true, inserted: true };
+    }
+
+    let changed = false;
+    if (existing.source !== incoming.source && existing.source !== 'both') {
+      existing.source = 'both';
+      changed = true;
+    }
+    for (const participant of incoming.players) {
+      const old = existing.players.find(player => player.discordId === participant.discordId);
+      if (!old) {
+        existing.players.push(participant);
+        changed = true;
+      } else if (old.partyId === null && participant.partyId !== null) {
+        old.partyId = participant.partyId;
+        changed = true;
+      }
+    }
+    return { changed, inserted: false };
+  }
+
+  private addMatchToAggregates(match: TurboTrackedMatch) {
+    for (const player of match.players) {
+      const won = player.team === 'radiant' ? match.radiantWon : !match.radiantWon;
+      this.updatePlayerStatsInMemory(player.discordId, player.steamId, won, match.timestamp * 1000);
+    }
+    for (const team of ['radiant', 'dire'] as const) {
+      const players = match.players.filter(player => player.team === team);
+      const won = team === 'radiant' ? match.radiantWon : !match.radiantWon;
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          this.updatePairingStatsInMemory(players[i], players[j], won, match.source, match.timestamp * 1000);
+        }
+      }
+    }
+  }
+
+  private updatePlayerStatsInMemory(discordId: string, steamId: string, won: boolean, updatedAt = Date.now()) {
+    let stats = this.turboStats.playerStats.find(player => player.discordId === discordId);
+    if (!stats) {
+      stats = { discordId, steamId, wins: 0, losses: 0, rating: 0, lastUpdated: updatedAt };
+      this.turboStats.playerStats.push(stats);
+    }
+    won ? stats.wins++ : stats.losses++;
+    stats.rating = this.calculateRating(stats.wins, stats.losses);
+    stats.lastUpdated = Math.max(stats.lastUpdated, updatedAt);
+  }
+
+  private updatePairingStatsInMemory(a: TurboMatchParticipant, b: TurboMatchParticipant, won: boolean, source: TurboMatchSource, updatedAt: number) {
+    if (a.discordId === b.discordId) return;
+    const [player1, player2] = [a.discordId, b.discordId].sort();
+    let stats = this.turboStats.pairings.find(pair => pair.player1 === player1 && pair.player2 === player2);
+    if (!stats) {
+      stats = { player1, player2, wins: 0, losses: 0, rating: 0, lastUpdated: updatedAt, liveGames: 0, historicalGames: 0, verifiedPartyGames: 0 };
+      this.turboStats.pairings.push(stats);
+    }
+    won ? stats.wins++ : stats.losses++;
+    if (source !== 'historical') stats.liveGames = (stats.liveGames || 0) + 1;
+    if (source !== 'live') stats.historicalGames = (stats.historicalGames || 0) + 1;
+    if (a.partyId !== null && a.partyId === b.partyId) stats.verifiedPartyGames = (stats.verifiedPartyGames || 0) + 1;
+    stats.rating = this.calculateRating(stats.wins, stats.losses);
+    stats.lastUpdated = Math.max(stats.lastUpdated, updatedAt);
+  }
+
+  private deriveStats(scope: TurboStatsScope) {
+    const playerStats: TurboPlayerStats[] = [];
+    const pairings: TurboPairing[] = [];
+    const serviceData = this.turboStats;
+    this.turboStats = { ...serviceData, playerStats, pairings };
+    for (const match of this.matchesForScope(scope)) this.addMatchToAggregates(match);
+    this.turboStats = serviceData;
+    return { playerStats, pairings };
+  }
+
+  rebuildAggregatesFromLedger() {
+    const derived = this.deriveStats('all');
+    this.turboStats.playerStats = derived.playerStats;
+    this.turboStats.pairings = derived.pairings;
+    this.turboStats.statsBuiltFromLedger = true;
+    this.turboStats.ledgerVersion = 1;
+    this.saveTurboStats();
+  }
+
+  markBackfillComplete() {
+    this.turboStats.lastBackfillAt = Date.now();
+    this.rebuildAggregatesFromLedger();
   }
 
   updatePlayerStats(discordId: string, steamId: string, won: boolean) {
-    let playerStats = this.turboStats.playerStats.find(p => p.discordId === discordId);
-
-    if (!playerStats) {
-      playerStats = {
-        discordId,
-        steamId,
-        wins: 0,
-        losses: 0,
-        rating: 0,
-        lastUpdated: Date.now()
-      };
-      this.turboStats.playerStats.push(playerStats);
-    }
-
-    if (won) {
-      playerStats.wins++;
-    } else {
-      playerStats.losses++;
-    }
-
-    playerStats.rating = this.calculateRating(playerStats.wins, playerStats.losses);
-    playerStats.lastUpdated = Date.now();
-
+    this.updatePlayerStatsInMemory(discordId, steamId, won);
     this.saveTurboStats();
   }
 
   updatePairingStats(player1Id: string, player2Id: string, won: boolean) {
-    // A player is not their own duo partner. This only fires when the same discordId reaches
-    // processTurboMatch twice — a duplicated users.json row — but the record it would create is
-    // unrenderable (turboPairings resolves the "partner" back to the target), so refuse it here.
-    if (player1Id === player2Id) {
-      logger.warn(`Ignoring self-pairing for ${player1Id}: the same player was passed twice.`);
-      return;
-    }
-
-    // Ensure consistent ordering for pairing key
-    const [p1, p2] = [player1Id, player2Id].sort();
-
-    let pairing = this.turboStats.pairings.find(
-      p => (p.player1 === p1 && p.player2 === p2)
-    );
-
-    if (!pairing) {
-      pairing = {
-        player1: p1,
-        player2: p2,
-        wins: 0,
-        losses: 0,
-        rating: 0,
-        lastUpdated: Date.now()
-      };
-      this.turboStats.pairings.push(pairing);
-    }
-
-    if (won) {
-      pairing.wins++;
-    } else {
-      pairing.losses++;
-    }
-
-    pairing.rating = this.calculateRating(pairing.wins, pairing.losses);
-    pairing.lastUpdated = Date.now();
-
+    const a: TurboMatchParticipant = { discordId: player1Id, steamId: '', team: 'radiant', partyId: null };
+    const b: TurboMatchParticipant = { discordId: player2Id, steamId: '', team: 'radiant', partyId: null };
+    this.updatePairingStatsInMemory(a, b, won, 'live', Date.now());
     this.saveTurboStats();
   }
 
-  getPlayerLeaderboard(limit = 10): TurboPlayerStats[] {
-    return [...this.turboStats.playerStats]
-      .filter(p => p.wins + p.losses >= 10) // Minimum 10 games to appear on leaderboard
-      .sort((a, b) => b.rating - a.rating)
-      .slice(0, limit);
+  getPlayerLeaderboard(limit = 10, scope: TurboStatsScope = 'all'): TurboPlayerStats[] {
+    const stats = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope).playerStats : this.turboStats.playerStats;
+    return [...stats].filter(player => player.wins + player.losses >= 10).sort((a, b) => b.rating - a.rating).slice(0, limit);
   }
 
-  getPairingLeaderboard(limit = 10): TurboPairing[] {
-    return [...this.turboStats.pairings]
-      .filter(p => p.wins + p.losses >= 10) // Minimum 10 games together
-      .sort((a, b) => b.rating - a.rating)
-      .slice(0, limit);
+  getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all'): TurboPairing[] {
+    const stats = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope).pairings : this.turboStats.pairings;
+    return [...stats].filter(pair => pair.wins + pair.losses >= minGames).sort((a, b) => b.rating - a.rating).slice(0, limit);
   }
 
-  getPlayerStats(discordId: string): TurboPlayerStats | undefined {
-    return this.turboStats.playerStats.find(p => p.discordId === discordId);
+  getPlayerStats(discordId: string, scope: TurboStatsScope = 'all'): TurboPlayerStats | undefined {
+    const stats = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope).playerStats : this.turboStats.playerStats;
+    return stats.find(player => player.discordId === discordId);
   }
 
-  processTurboMatch(matchData: any, registeredPlayers: Array<{ discordId: string; steamId: string }>): boolean {
-    // Check if it's a turbo game
-    if (matchData.game_mode !== TURBO_GAME_MODE) {
-      return false;
-    }
+  getPairingsForPlayer(discordId: string, scope: TurboStatsScope = 'all') {
+    const stats = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope).pairings : this.turboStats.pairings;
+    return stats.filter(pair => pair.player1 === discordId || pair.player2 === discordId);
+  }
 
-    const playersInMatch = registeredPlayers.filter(player =>
-      matchData.players.some((p: any) =>
-        p.account_id && p.account_id.toString() === player.steamId
-      )
-    );
+  processTurboMatch(matchData: any, registeredPlayers: RegisteredPlayer[], source: Exclude<TurboMatchSource, 'both'> = 'live', deferRebuild = false): boolean {
+    const normalized = this.normalizeMatch(matchData, registeredPlayers, source);
+    if (!normalized) return false;
+    const result = this.mergeLedgerMatch(normalized);
+    if (!result.changed) return false;
 
-    if (playersInMatch.length === 0) {
-      return false;
-    }
-
-    // Update individual player stats
-    playersInMatch.forEach(player => {
-      const playerInMatch = matchData.players.find((p: any) =>
-        p.account_id && p.account_id.toString() === player.steamId
-      );
-
-      if (playerInMatch) {
-        const isRadiant = playerInMatch.player_slot < 128;
-        const won = (isRadiant && matchData.radiant_win) || (!isRadiant && !matchData.radiant_win);
-        this.updatePlayerStats(player.discordId, player.steamId, won);
+    if (!deferRebuild) {
+      if (result.inserted) {
+        this.addMatchToAggregates(normalized);
+        this.saveTurboStats();
+      } else if (this.turboStats.statsBuiltFromLedger) {
+        this.rebuildAggregatesFromLedger();
+      } else {
+        // Preserve pre-ledger legacy totals. A later backfill will rebuild this
+        // expanded match correctly from the deduplicated ledger.
+        this.saveTurboStats();
       }
-    });
-
-    // Update pairing stats for players who played together
-    if (playersInMatch.length > 1) {
-      const radiantPlayers = playersInMatch.filter(player => {
-        const playerInMatch = matchData.players.find((p: any) =>
-          p.account_id && p.account_id.toString() === player.steamId
-        );
-        return playerInMatch && playerInMatch.player_slot < 128;
-      });
-
-      const direPlayers = playersInMatch.filter(player => {
-        const playerInMatch = matchData.players.find((p: any) =>
-          p.account_id && p.account_id.toString() === player.steamId
-        );
-        return playerInMatch && playerInMatch.player_slot >= 128;
-      });
-
-      // Update stats for players on the same team
-      this.updateTeamPairings(radiantPlayers, matchData.radiant_win);
-      this.updateTeamPairings(direPlayers, !matchData.radiant_win);
     }
-
     return true;
   }
 
-  private updateTeamPairings(teamPlayers: Array<{ discordId: string; steamId: string }>, won: boolean) {
-    for (let i = 0; i < teamPlayers.length; i++) {
-      for (let j = i + 1; j < teamPlayers.length; j++) {
-        this.updatePairingStats(teamPlayers[i].discordId, teamPlayers[j].discordId, won);
-      }
+  recommendParties(candidateIds: string[], scope: TurboStatsScope = 'all', limit = 3): TurboPartyRecommendation[] {
+    const uniqueIds = [...new Set(candidateIds)];
+    if (uniqueIds.length < 5) return [];
+    const { playerStats, pairings } = this.shouldDeriveFromLedger(scope) ? this.deriveStats(scope) : { playerStats: this.turboStats.playerStats, pairings: this.turboStats.pairings };
+    const playerMap = new Map(playerStats.map(player => [player.discordId, player]));
+    const pairMap = new Map(pairings.map(pair => [[pair.player1, pair.player2].sort().join(':'), pair]));
+    const matches = this.matchesForScope(scope);
+    const exactLineups = new Map<string, { games: number; wins: number }>();
+    for (const match of matches) for (const team of ['radiant', 'dire'] as const) {
+      const ids = match.players.filter(player => player.team === team).map(player => player.discordId);
+      if (ids.length !== 5) continue;
+      const key = ids.sort().join(':');
+      const result = exactLineups.get(key) || { games: 0, wins: 0 };
+      result.games++;
+      if ((team === 'radiant') === match.radiantWon) result.wins++;
+      exactLineups.set(key, result);
     }
+    const recommendations: TurboPartyRecommendation[] = [];
+
+    const evaluate = (ids: string[]) => {
+      const individualRates = ids.map(id => {
+        const stats = playerMap.get(id);
+        return ((stats?.wins || 0) + 5) / ((stats ? stats.wins + stats.losses : 0) + 10);
+      });
+      const base = individualRates.reduce((sum, rate) => sum + rate, 0) / 5;
+      const observedPairs: TurboPairing[] = [];
+      let residualTotal = 0;
+      let averagePairGames = 0;
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const pair = pairMap.get([ids[i], ids[j]].sort().join(':'));
+        const games = pair ? pair.wins + pair.losses : 0;
+        const pairRate = ((pair?.wins || 0) + 5) / (games + 10);
+        residualTotal += pairRate - (individualRates[i] + individualRates[j]) / 2;
+        averagePairGames += games;
+        if (pair && games >= 2) observedPairs.push(pair);
+      }
+      averagePairGames /= 10;
+      let predicted = Math.max(0.35, Math.min(0.70, base + 0.75 * (residualTotal / 10)));
+      const exact = exactLineups.get([...ids].sort().join(':'));
+      const exactLineupGames = exact?.games || 0;
+      const exactLineupWins = exact?.wins || 0;
+      if (exactLineupGames) {
+        const lineupPosterior = (exactLineupWins + 5) / (exactLineupGames + 10);
+        const weight = exactLineupGames / (exactLineupGames + 20);
+        predicted = predicted * (1 - weight) + lineupPosterior * weight;
+      }
+      const effectiveN = averagePairGames + exactLineupGames * 2;
+      const margin = 1.96 * Math.sqrt(predicted * (1 - predicted) / (effectiveN + 10));
+      const sortedPairs = [...observedPairs].sort((a, b) => b.rating - a.rating);
+      recommendations.push({
+        playerIds: ids,
+        predictedWinRate: predicted,
+        lowWinRate: Math.max(0, predicted - margin),
+        highWinRate: Math.min(1, predicted + margin),
+        score: (predicted - margin * 0.35) * 100,
+        coveredPairs: observedPairs.length,
+        totalPairs: 10,
+        averagePairGames,
+        exactLineupGames,
+        exactLineupWins,
+        strongestPair: sortedPairs[0],
+        weakestPair: sortedPairs[sortedPairs.length - 1]
+      });
+    };
+
+    const choose = (start: number, picked: string[]) => {
+      if (picked.length === 5) return evaluate(picked);
+      for (let i = start; i <= uniqueIds.length - (5 - picked.length); i++) choose(i + 1, [...picked, uniqueIds[i]]);
+    };
+    choose(0, []);
+    return recommendations.filter(rec => rec.coveredPairs >= 6).sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   getAllStats(): TurboStatsData {

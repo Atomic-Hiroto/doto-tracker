@@ -22,9 +22,10 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       ['calibrateall', 'calibrate-all', 'calibrate_all', 'recalibrateall', 'recalibrate-all', 'recalibrate_all', 'recalc-all', 'recalc_all', 'caliball'].includes(rawSubcommand ?? '')
       || ((rawSubcommand === 'calibrate' || rawSubcommand === 'recalc' || rawSubcommand === 'recalibrate') && rawParts[2]?.toLowerCase() === 'all')
     );
+  const isOwnerTurboBackfill = message.author.id === ProcessConstants.BOT_OWNER_ID && rawCmd === Commands.TURBO_BACKFILL;
 
   // Allow help and channel admin commands in any channel so users don't get a silent no-op.
-  const isChannelAdmin = rawCmd === Commands.HELP || rawCmd === Commands.SET_CHANNEL || rawCmd === Commands.UNSET_CHANNEL || isOwnerBulkTurboRank;
+  const isChannelAdmin = rawCmd === Commands.HELP || rawCmd === Commands.SET_CHANNEL || rawCmd === Commands.UNSET_CHANNEL || isOwnerBulkTurboRank || isOwnerTurboBackfill;
 
   // Block all activity in non-allowed channels (except channel admin commands)
   if (!isChannelAdmin && !channelDataService.isAllowed(message.channel.id)) return;
@@ -116,10 +117,16 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_PAIRINGS:
       // +turbopairs = global board; +turbopairs @user / me = personal duos
       if (message.mentions.users.size > 0 || ['me', 'my', 'mine'].includes(rawSubcommand ?? '')) {
-        await commandHandlers.myTurboPairings(message, turboStatsService);
+        await commandHandlers.myTurboPairings(message, turboStatsService, args);
       } else {
-        await commandHandlers.turboPairings(message, turboStatsService);
+        await commandHandlers.turboPairings(message, turboStatsService, args);
       }
+      break;
+    case Commands.TURBO_BACKFILL:
+      await commandHandlers.turboBackfill(message, args, userDataService, turboStatsService);
+      break;
+    case Commands.TURBO_PARTY:
+      await commandHandlers.turboParty(message, args, userDataService, turboStatsService);
       break;
     case Commands.TURBO_RANK:
       await commandHandlers.turboRank(message, args, userDataService);
