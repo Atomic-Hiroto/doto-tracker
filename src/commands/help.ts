@@ -55,6 +55,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbopairs <days> [@user]` — all-source rolling window, e.g. `+turbopairs 60` (includes backfill)',
       '`+turbopairs alltime|history|tracked` — alternate duo evidence views',
       '`+turboparty best [days|alltime] [tracked|history]` — optimal party (60 days by default)',
+      '`+turboparty @user [...]` — best parties that include those players (mention 1–4)',
       '`+turbobackfill [days] [per-player]` — owner-only deduplicated Stratz history sync',
       '`+turbometa [patch] [rank]` — best turbo heroes per position (STRATZ, Wilson-ranked)',
     ],
