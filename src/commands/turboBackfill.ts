@@ -14,7 +14,9 @@ export async function turboBackfill(message: Message, args: string[], users: Use
 
   const days = Math.max(7, Math.min(1825, Number.parseInt(args[0] || '365', 10) || 365));
   const maxPerPlayer = Math.max(50, Math.min(1000, Number.parseInt(args[1] || '200', 10) || 200));
-  const roster = users.getAllUsers().map(user => ({ discordId: user.discordId, steamId: user.steamId }));
+  const allUsers = users.getAllUsers();
+  const roster = allUsers.map(user => ({ discordId: user.discordId, steamId: user.steamId }));
+  const historyAnchors = allUsers.filter(user => user.historyAccessible !== false);
   if (!roster.length) return message.reply('There are no registered players to sync.');
 
   const progress = await message.reply(`🧾 Syncing up to **${maxPerPlayer}** Turbo matches per player from the last **${days} days** for **${roster.length}** registered players…`);
@@ -24,8 +26,8 @@ export async function turboBackfill(message: Message, args: string[], users: Use
   const seenResponses = new Set<string>();
 
   try {
-    for (let i = 0; i < roster.length; i++) {
-      const player = roster[i];
+    for (let i = 0; i < historyAnchors.length; i++) {
+      const player = historyAnchors[i];
       for (let skip = 0; skip < maxPerPlayer; skip += 100) {
         const take = Math.min(100, maxPerPlayer - skip);
         const matches = await fetchPlayerTurboMatches(Number(player.steamId), take, skip, since, null);
@@ -39,10 +41,10 @@ export async function turboBackfill(message: Message, args: string[], users: Use
         if (matches.length < take) break;
         await delay(500);
       }
-      if (i === roster.length - 1 || i % 2 === 1) {
-        await progress.edit(`🧾 Historical Turbo sync: **${i + 1}/${roster.length}** players · ${fetchedRows} rows fetched · ${changedMatches} new/expanded matches`).catch(() => {});
+      if (i === historyAnchors.length - 1 || i % 2 === 1) {
+        await progress.edit(`🧾 Historical Turbo sync: **${i + 1}/${historyAnchors.length}** public-history players · ${fetchedRows} rows fetched · ${changedMatches} new/expanded matches`).catch(() => {});
       }
-      if (i < roster.length - 1) await delay(700);
+      if (i < historyAnchors.length - 1) await delay(700);
     }
 
     stats.markBackfillComplete();

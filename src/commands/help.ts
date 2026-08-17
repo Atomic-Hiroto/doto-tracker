@@ -9,6 +9,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
     lines: [
       '`+register <steam_id>` — link your Steam ID',
       '`+register @user <steam_id>` — link another user (owner/server manager)',
+      '`+register @user <steam_id> roster-only` — private-history identity for pair/party recognition',
       '`+unregister` — unlink your Steam ID',
       '`+profile [@user]` — detailed player profile',
       '`+rs` / `+recent [@user] [n] [filters]` — recent matches image table',
