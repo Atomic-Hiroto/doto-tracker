@@ -68,12 +68,28 @@ export async function turboParty(message: Message, args: string[], users: UserDa
       };
       fields.push({
         name: `${i === 0 ? '🏆' : `${i + 1}.`} ${names.join(' · ')}`,
-        value: `Projected WR: **${(rec.predictedWinRate * 100).toFixed(1)}%** (${(rec.lowWinRate * 100).toFixed(1)}–${(rec.highWinRate * 100).toFixed(1)}%)\n` +
+        value: `Rank score **${rec.score.toFixed(1)}** — the projection minus a penalty for how thin its evidence is\n` +
+          `Projected WR: ${(rec.predictedWinRate * 100).toFixed(1)}% (${(rec.lowWinRate * 100).toFixed(1)}–${(rec.highWinRate * 100).toFixed(1)}%)\n` +
           `Evidence: ${rec.coveredPairs}/10 duo links · ${rec.averagePairGames.toFixed(1)} avg games/link · exact lineup ${rec.exactLineupWins}/${rec.exactLineupGames}\n` +
           `Strongest duo: ${await pairName(rec.strongestPair)}\nWeakest observed duo: ${await pairName(rec.weakestPair)}`,
         inline: false
       });
     }
+
+    // The ranking is only meaningful if the leader actually separates from the field. It usually
+    // does not at five-player granularity, so state that in the embed rather than implying a gap.
+    const leader = recommendations[0];
+    const share = leader.evaluatedLineups ? leader.indistinguishableLineups / leader.evaluatedLineups : 0;
+    fields.push({
+      name: 'How much to trust this',
+      value: `${leader.evaluatedLineups} lineups had enough evidence to rank. `
+        + `${leader.indistinguishableLineups} of them have a projection inside the leader's `
+        + `${(leader.lowWinRate * 100).toFixed(1)}–${(leader.highWinRate * 100).toFixed(1)}% interval.`
+        + (share >= 0.5
+          ? ' At that spread the order is a tiebreak on confidence, not a real gap — treat these as equivalent and pick on vibes.'
+          : ''),
+      inline: false
+    });
 
     const embed = new EmbedBuilder()
       .setColor('#8b5cf6')
