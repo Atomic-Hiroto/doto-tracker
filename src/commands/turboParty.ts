@@ -25,10 +25,15 @@ export async function turboParty(message: Message, args: string[], users: UserDa
   try {
     const scope = parseScope(args);
     const window = parseWindow(args);
-    let candidateIds = [...message.mentions.users.keys()];
-    if (candidateIds.length > 0 && candidateIds.length < 5) {
-      return message.reply('Mention at least 5 registered players to define a candidate pool, or use `+turboparty best` for everyone (60 days by default).');
-    }
+    const nameOf = async (id: string) => {
+      try { return (await message.client.users.fetch(id)).username; } catch { return `<@${id}>`; }
+    };
+
+    // One to four mentions reads as "build a party around these players" — those get locked into
+    // every lineup considered. Five or more reads as "pick the best five out of exactly this pool".
+    const mentioned = [...message.mentions.users.keys()];
+    const required = mentioned.length > 0 && mentioned.length < 5 ? mentioned : [];
+    let candidateIds = required.length ? [] : mentioned;
     if (!candidateIds.length) {
       candidateIds = users.getAllUsers()
         .map(user => ({ id: user.discordId, games: (() => { const s = stats.getPlayerStats(user.discordId, scope, window.sinceTimestamp); return s ? s.wins + s.losses : 0; })() }))
@@ -36,6 +41,8 @@ export async function turboParty(message: Message, args: string[], users: UserDa
         .sort((a, b) => b.games - a.games)
         .slice(0, 20)
         .map(player => player.id);
+      // A locked-in player belongs in the pool even if they are too thin to reach the top 20.
+      for (const id of required) if (!candidateIds.includes(id)) candidateIds.push(id);
     }
     if (candidateIds.length < 5) {
       const next = scope === 'tracked'
@@ -44,26 +51,25 @@ export async function turboParty(message: Message, args: string[], users: UserDa
       return message.reply(`Only ${candidateIds.length} registered players have ${scope} evidence. ${next}`);
     }
 
-    const recommendations = stats.recommendParties(candidateIds, scope, 3, window.sinceTimestamp);
+    const requiredNames = await Promise.all(required.map(nameOf));
+    const recommendations = stats.recommendParties(candidateIds, scope, 3, window.sinceTimestamp, required);
     if (!recommendations.length) {
       const next = scope === 'tracked'
         ? 'Use `+turboparty best` while new live matches accumulate.'
         : 'Run `+turbobackfill`, then try again.';
-      return message.reply(`There is not enough connected evidence yet (at least 7 of 10 duo links need 5+ games). ${next}`);
+      const who = required.length
+        ? ` No lineup containing ${requiredNames.join(' and ')} clears that bar — they need more games with the rest of the pool.`
+        : '';
+      return message.reply(`There is not enough connected evidence yet (at least 7 of 10 duo links need 5+ games).${who} ${next}`);
     }
 
     const fields = [];
     for (let i = 0; i < recommendations.length; i++) {
       const rec = recommendations[i];
-      const names = await Promise.all(rec.playerIds.map(async id => {
-        try { return (await message.client.users.fetch(id)).username; } catch { return `<@${id}>`; }
-      }));
+      const names = await Promise.all(rec.playerIds.map(nameOf));
       const pairName = async (pair: typeof rec.strongestPair) => {
         if (!pair) return 'n/a';
-        const ids = [pair.player1, pair.player2];
-        const resolved = await Promise.all(ids.map(async id => {
-          try { return (await message.client.users.fetch(id)).username; } catch { return `<@${id}>`; }
-        }));
+        const resolved = await Promise.all([pair.player1, pair.player2].map(nameOf));
         return `${resolved.join(' + ')} (${pair.wins}-${pair.losses})`;
       };
       fields.push({
@@ -93,8 +99,12 @@ export async function turboParty(message: Message, args: string[], users: UserDa
 
     const embed = new EmbedBuilder()
       .setColor('#8b5cf6')
-      .setTitle('🧩 Optimal Turbo Party')
-      .setDescription(`Best five-player combinations from **${candidateIds.length}** candidates · **${window.label}** · scope: **${scope}**`)
+      .setTitle(required.length ? `🧩 Optimal Turbo Party — ${requiredNames.join(' + ')}` : '🧩 Optimal Turbo Party')
+      .setDescription(
+        (required.length
+          ? `Best five-player combinations **containing ${requiredNames.join(' and ')}**, drawn from **${candidateIds.length}** candidates`
+          : `Best five-player combinations from **${candidateIds.length}** candidates`)
+        + ` · **${window.label}** · scope: **${scope}**`)
       .addFields(fields)
       .setFooter({ text: 'Projection: neutral 10–10 priors + duo synergy + exact-lineup evidence. Association, not a causal guarantee.' })
       .setTimestamp();

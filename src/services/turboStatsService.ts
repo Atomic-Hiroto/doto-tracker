@@ -46,6 +46,7 @@ export class TurboStatsService {
         };
         for (const p of this.turboStats.playerStats) p.rating = this.calculateRating(p.wins, p.losses);
         for (const p of this.turboStats.pairings) p.rating = this.calculatePairRating(p.wins, p.losses);
+        for (const p of this.turboStats.legacyTrackedPairings || []) p.rating = this.calculatePairRating(p.wins, p.losses);
         this.saveTurboStats();
         logger.info(`Turbo stats loaded (${this.turboStats.matches?.length || 0} ledger matches)`);
       }
@@ -197,8 +198,11 @@ export class TurboStatsService {
       }
     }
     this.turboStats.legacyTrackedPairings = this.turboStats.pairings;
+    // Same statistic as every other duo view. This used to be calculateRating — a Wilson lower
+    // bound plus an activity bonus — while the embed labelled it a Bayesian projected win rate,
+    // so an identical 35-26 record rendered as 46.1% here and 55.6% in the ledger view.
     for (const pairing of this.turboStats.legacyTrackedPairings) {
-      pairing.rating = this.calculateRating(pairing.wins, pairing.losses);
+      pairing.rating = this.calculatePairRating(pairing.wins, pairing.losses);
     }
     this.turboStats.pairings = aggregatePairings;
   }
@@ -314,9 +318,17 @@ export class TurboStatsService {
     return true;
   }
 
-  recommendParties(candidateIds: string[], scope: TurboStatsScope = 'all', limit = 3, sinceTimestamp?: number): TurboPartyRecommendation[] {
+  /**
+   * Best five-player lineups from a candidate pool. Anyone in `requiredIds` is locked into every
+   * lineup considered, which is what answers "what is the best party *for me*" — the unconstrained
+   * top three routinely exclude a given player entirely.
+   */
+  recommendParties(candidateIds: string[], scope: TurboStatsScope = 'all', limit = 3, sinceTimestamp?: number, requiredIds: string[] = []): TurboPartyRecommendation[] {
     const uniqueIds = [...new Set(candidateIds)];
     if (uniqueIds.length < 5) return [];
+    const required = [...new Set(requiredIds)].filter(id => uniqueIds.includes(id));
+    if (required.length > 5) return [];
+    const optional = uniqueIds.filter(id => !required.includes(id));
     const { playerStats, pairings } = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp) : { playerStats: this.turboStats.playerStats, pairings: this.turboStats.pairings };
     const playerMap = new Map(playerStats.map(player => [player.discordId, player]));
     const pairMap = new Map(pairings.map(pair => [[pair.player1, pair.player2].sort().join(':'), pair]));
@@ -381,11 +393,13 @@ export class TurboStatsService {
       });
     };
 
+    // Seeding the recursion with the required players is both the constraint and the speed-up:
+    // only the remaining slots are ever enumerated.
     const choose = (start: number, picked: string[]) => {
       if (picked.length === 5) return evaluate(picked);
-      for (let i = start; i <= uniqueIds.length - (5 - picked.length); i++) choose(i + 1, [...picked, uniqueIds[i]]);
+      for (let i = start; i <= optional.length - (5 - picked.length); i++) choose(i + 1, [...picked, optional[i]]);
     };
-    choose(0, []);
+    choose(0, [...required]);
 
     const ranked = recommendations.filter(rec => rec.coveredPairs >= 7).sort((a, b) => b.score - a.score);
     const best = ranked[0];
