@@ -39,9 +39,9 @@ function parseOptions(args: string[]) {
 type Window = { sinceTimestamp?: number; label: string };
 
 /**
- * `+turbopairs hard` — the same question, but a win against stronger enemies is worth more.
- * Difficulty comes from the rank service's per-match observations, which cover roughly 42% of
- * recent matches, so this board reports how much of each duo's record it could actually weigh.
+ * `+turbopairs hard` — the duo board annotated with the strength of the opposition, plus the
+ * evidence for why nothing is adjusted. The point is that the reader can check the reasoning
+ * rather than trust a single opaque number.
  */
 async function rankAdjustedBoard(
   message: Message,
@@ -51,47 +51,64 @@ async function rankAdjustedBoard(
   minGames: number
 ) {
   const difficulty = turboRankService.getEnemyStrengthByMatch();
-  const rows = turboStatsService.getRankAdjustedPairings(difficulty, 10, minGames, 20, scope, window.sinceTimestamp);
-  if (!rows.length) {
+  const { profiles, quintiles, scoredGames } = turboStatsService.getDuoDifficultyProfiles(
+    difficulty, 10, minGames, 20, scope, window.sinceTimestamp
+  );
+  if (!profiles.length) {
     return message.reply(
       `No turbo duo has ${minGames}+ games together with at least 20 of them rank-scored in the ${window.label} yet. `
-      + 'Lobby strength comes from `+turborank calibrate`, so more calibrated players means more coverage.'
+      + 'Enemy ranks come from `+turborank calibrate`, so more calibrated players means more coverage.'
     );
   }
 
   const embed = new EmbedBuilder()
     .setColor('#f59e0b')
-    .setTitle('🤝 Best Turbo Duos — difficulty adjusted')
-    .setDescription(
-      `Wins weighted by how strong the enemies were · **${window.label}** · min ${minGames} games\n`
-      + '⚠️ Provisional: enemy strength is the mean *visible* enemy medal, typically 3 of 5. '
-      + 'At current coverage the adjustment averages 0.8pp and does not replicate across split halves, '
-      + 'so treat this ordering as indicative rather than a ranking.'
-    )
-    .setFooter({ text: 'Matchmaking averages a party, so lobby strength varies far less for duos than for solo players.' })
+    .setTitle('🤝 Turbo Duos — who you actually beat')
+    .setDescription(`Ranked by win rate · **${window.label}** · min ${minGames} games, 20+ with known enemy ranks`)
     .setTimestamp();
 
-  const entries: Array<{ name: string; value: string }> = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
+  if (quintiles.length === 5) {
+    const labels = ['Weakest  ', '         ', '  Middle ', '         ', 'Strongest'];
+    const table = quintiles
+      .map((q, i) => `${labels[i]}  ${Math.round(q.meanEnemyMMR).toString().padStart(4)} MMR  →  ${q.winRate.toFixed(1)}% won`)
+      .join('\n');
+    const spread = Math.max(...quintiles.map(q => q.winRate)) - Math.min(...quintiles.map(q => q.winRate));
+    embed.addFields({
+      name: '❓ Do stronger enemies actually cost you games?',
+      value: '```\n' + table + '\n```'
+        + `Across **${scoredGames}** scored games there is no pattern — the best and worst quintiles differ by `
+        + `${spread.toFixed(1)}pp with no trend, because matchmaking puts you against your own level. `
+        + 'So nothing here is weighted or adjusted: the order below is plain win rate, and enemy strength is context.',
+      inline: false
+    });
+  }
+
+  for (let i = 0; i < profiles.length; i++) {
+    const row = profiles[i];
     try {
       const [user1, user2] = await Promise.all([
         message.client.users.fetch(row.player1),
         message.client.users.fetch(row.player2)
       ]);
-      const delta = row.adjustedWinRate - row.rawWinRate;
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      entries.push({
+      const harder = row.harderHalfWinRate === null ? 'n/a' : `${row.harderHalfWinRate.toFixed(0)}% (${row.harderHalfGames}g)`;
+      const easier = row.easierHalfWinRate === null ? 'n/a' : `${row.easierHalfWinRate.toFixed(0)}% (${row.easierHalfGames}g)`;
+      embed.addFields({
         name: `${medal} ${user1.username} + ${user2.username}`,
-        value: `**${row.adjustedWinRate.toFixed(1)}%** adjusted · ${row.rawWinRate.toFixed(1)}% unweighted (${delta >= 0 ? '+' : ''}${delta.toFixed(1)}pp)\n`
-          + `Typical enemies ${mmrToMedal(Math.round(row.meanEnemyMMR)).medal} · scored on ${row.rankedGames} of ${row.games} games (${row.overallWinRate.toFixed(1)}% overall)`
+        value: `**${row.winRate.toFixed(1)}%** · ${row.wins}W–${row.losses}L in ${row.games} games\n`
+          + `Median enemy **${Math.round(row.medianEnemyMMR)} MMR** (${mmrToMedal(Math.round(row.medianEnemyMMR)).medal}) · `
+          + `vs their stronger half ${harder} · vs their weaker half ${easier}\n`
+          + `*enemy ranks known for ${row.scoredGames} of ${row.games} games*`,
+        inline: false
       });
     } catch (error) {
       logger.warn(`Could not fetch users for pairing ${row.player1} + ${row.player2}:`, error);
     }
   }
-  if (!entries.length) return message.reply('Could not display pairing leaderboard due to user fetch errors.');
-  embed.addFields(entries);
+  if (embed.data.fields && embed.data.fields.length <= 1) {
+    return message.reply('Could not display pairing leaderboard due to user fetch errors.');
+  }
+  embed.setFooter({ text: 'Stronger/weaker halves are split at each duo\'s own median enemy MMR, so they are self-relative.' });
   return message.reply({ embeds: [embed] });
 }
 
