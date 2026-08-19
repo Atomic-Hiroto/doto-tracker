@@ -45,8 +45,14 @@ export class TurboStatsService {
           legacyTrackedPairings: loaded.legacyTrackedPairings
         };
         for (const p of this.turboStats.playerStats) p.rating = this.calculateRating(p.wins, p.losses);
-        for (const p of this.turboStats.pairings) p.rating = this.calculatePairRating(p.wins, p.losses);
-        for (const p of this.turboStats.legacyTrackedPairings || []) p.rating = this.calculatePairRating(p.wins, p.losses);
+        for (const p of this.turboStats.pairings) {
+          p.rating = this.calculatePairRating(p.wins, p.losses);
+          p.confidenceFloor = this.calculatePairFloor(p.wins, p.losses);
+        }
+        for (const p of this.turboStats.legacyTrackedPairings || []) {
+          p.rating = this.calculatePairRating(p.wins, p.losses);
+          p.confidenceFloor = this.calculatePairFloor(p.wins, p.losses);
+        }
         this.saveTurboStats();
         logger.info(`Turbo stats loaded (${this.turboStats.matches?.length || 0} ledger matches)`);
       }
@@ -83,6 +89,21 @@ export class TurboStatsService {
   private calculatePairRating(wins: number, losses: number): number {
     const projected = (wins + 10) / (wins + losses + 20);
     return Math.round(projected * 10000) / 100;
+  }
+
+  /**
+   * 5th-percentile lower bound of the same Beta(wins+10, losses+10) posterior that
+   * calculatePairRating reports the mean of. The mean alone is a bad sort key: the prior is
+   * only worth 20 games, so a 15-8 duo projects above a 59-44 duo purely on noise. Ranking on
+   * the floor keeps the displayed number honest while ordering duos by how much of their win
+   * rate is actually evidenced.
+   */
+  private calculatePairFloor(wins: number, losses: number): number {
+    const a = wins + 10;
+    const b = losses + 10;
+    const mean = a / (a + b);
+    const variance = (a * b) / ((a + b) * (a + b) * (a + b + 1));
+    return Math.round((mean - 1.645 * Math.sqrt(variance)) * 10000) / 100;
   }
 
   private sourceMatchesScope(source: TurboMatchSource, scope: TurboStatsScope) {
@@ -212,6 +233,7 @@ export class TurboStatsService {
     // so an identical 35-26 record rendered as 46.1% here and 55.6% in the ledger view.
     for (const pairing of this.turboStats.legacyTrackedPairings) {
       pairing.rating = this.calculatePairRating(pairing.wins, pairing.losses);
+      pairing.confidenceFloor = this.calculatePairFloor(pairing.wins, pairing.losses);
     }
     this.turboStats.pairings = aggregatePairings;
   }
@@ -240,6 +262,7 @@ export class TurboStatsService {
     if (source !== 'live') stats.historicalGames = (stats.historicalGames || 0) + 1;
     if (a.partyId !== null && a.partyId === b.partyId) stats.verifiedPartyGames = (stats.verifiedPartyGames || 0) + 1;
     stats.rating = this.calculatePairRating(stats.wins, stats.losses);
+    stats.confidenceFloor = this.calculatePairFloor(stats.wins, stats.losses);
     stats.lastUpdated = Math.max(stats.lastUpdated, updatedAt);
   }
 
@@ -284,12 +307,20 @@ export class TurboStatsService {
     return [...stats].filter(player => player.wins + player.losses >= 10).sort((a, b) => b.rating - a.rating).slice(0, limit);
   }
 
-  getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPairing[] {
-    const legacyTracked = scope === 'tracked' && sinceTimestamp === undefined && this.turboStats.legacyTrackedPairings;
+  /** Duos are ordered by evidenced win rate, not by the headline projection. */
+  pairSortKey(pair: TurboPairing): number {
+    return pair.confidenceFloor ?? this.calculatePairFloor(pair.wins, pair.losses);
+  }
+
+  getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number, useLegacy = false): TurboPairing[] {
+    // The legacy snapshot is opt-in now. It has no match-id dedupe, so against the ledger its
+    // counts run anywhere from 0.27x to 1.99x of the truth; it stays reachable only so the
+    // pre-backfill numbers people remember are still inspectable.
+    const legacyTracked = useLegacy && this.turboStats.legacyTrackedPairings;
     const stats = legacyTracked
       ? this.turboStats.legacyTrackedPairings!
       : this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
-    return [...stats].filter(pair => pair.wins + pair.losses >= minGames).sort((a, b) => b.rating - a.rating).slice(0, limit);
+    return [...stats].filter(pair => pair.wins + pair.losses >= minGames).sort((a, b) => this.pairSortKey(b) - this.pairSortKey(a)).slice(0, limit);
   }
 
   getPlayerStats(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPlayerStats | undefined {
@@ -297,8 +328,8 @@ export class TurboStatsService {
     return stats.find(player => player.discordId === discordId);
   }
 
-  getPairingsForPlayer(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number) {
-    const legacyTracked = scope === 'tracked' && sinceTimestamp === undefined && this.turboStats.legacyTrackedPairings;
+  getPairingsForPlayer(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number, useLegacy = false) {
+    const legacyTracked = useLegacy && this.turboStats.legacyTrackedPairings;
     const stats = legacyTracked
       ? this.turboStats.legacyTrackedPairings!
       : this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;

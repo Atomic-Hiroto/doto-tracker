@@ -16,6 +16,8 @@ export interface TurboPairing {
   wins: number;
   losses: number;
   rating: number;
+  /** 5th-percentile lower bound of the Beta posterior behind `rating`; the sort key. */
+  confidenceFloor?: number;
   lastUpdated: number;
   liveGames?: number;
   historicalGames?: number;
