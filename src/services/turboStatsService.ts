@@ -343,18 +343,19 @@ export class TurboStatsService {
   }
 
   /**
-   * Duos annotated with the strength of the opposition they beat.
+   * Duos annotated with the strength of the opposition they faced.
    *
-   * This deliberately does not reweight anything. Across 502 scored crew games the win rate by
-   * enemy-strength quintile runs 50/41/58/49/51% with a pooled slope of +1.1pp per 1000 MMR -
-   * enemy strength spans 306-5420 MMR and predicts nothing, because matchmaking puts you against
-   * your own level. An earlier version weighted wins by enemy MMR and produced an order nobody
-   * could justify: a duo facing weaker enemies and winning less of its harder games ranked above
-   * one doing the opposite, because a couple of outlier-difficulty wins dominated the weights.
+   * Nothing here is weighted. Across 502 scored crew games the win rate by enemy-strength
+   * quintile runs 50/41/58/49/51% with a pooled slope of +1.1pp per 1000 MMR: enemy strength
+   * spans 306-5420 MMR and predicts nothing, because matchmaking puts you against your own
+   * level. An earlier version weighted wins by enemy MMR and produced an order that could not
+   * be defended - the duo facing the strongest enemies, and winning more of its harder games,
+   * ranked second. So the order is plain win rate and enemy strength is reported alongside it.
    *
-   * So the order here is plain win rate, the same as the main board, and difficulty is reported
-   * as context: what a duo actually faced, and how they did against the stronger and weaker
-   * halves of their own schedule.
+   * The low readings are partly a visibility artefact: the weakest-looking quintile has only
+   * 2.80 of 5 enemy ranks visible against 3.64 in the fourth, so an unranked or hidden strong
+   * player reads as a weak lobby. Controlling for it does not change the answer - restricted to
+   * lobbies with 4-5 enemies visible (n=231) the slope is still +0.96pp per 1000 MMR.
    */
   getDuoDifficultyProfiles(
     difficultyByMatch: Map<string, number>,
@@ -362,29 +363,27 @@ export class TurboStatsService {
     minGames = 30,
     minScoredGames = 20,
     scope: TurboStatsScope = 'all',
-    sinceTimestamp?: number
+    sinceTimestamp?: number,
+    targetId?: string
   ) {
     const matches = this.matchesForScope(scope, sinceTimestamp);
 
-    type Row = { player1: string; player2: string; games: number; wins: number; scored: Array<{ won: boolean; difficulty: number }> };
+    type Row = { player1: string; player2: string; games: number; wins: number; difficulties: number[] };
     const rows = new Map<string, Row>();
-    const population: Array<{ won: boolean; difficulty: number }> = [];
 
     for (const match of matches) {
       const difficulty = difficultyByMatch.get(String(match.matchId));
       for (const team of ['radiant', 'dire'] as const) {
         const players = match.players.filter(player => player.team === team);
-        if (!players.length) continue;
         const won = team === 'radiant' ? match.radiantWon : !match.radiantWon;
-        if (difficulty !== undefined) population.push({ won, difficulty });
         for (let i = 0; i < players.length; i++) for (let j = i + 1; j < players.length; j++) {
           if (players[i].discordId === players[j].discordId) continue;
           const [player1, player2] = [players[i].discordId, players[j].discordId].sort();
           const key = `${player1}:${player2}`;
-          const row = rows.get(key) || { player1, player2, games: 0, wins: 0, scored: [] };
+          const row = rows.get(key) || { player1, player2, games: 0, wins: 0, difficulties: [] };
           row.games++;
           if (won) row.wins++;
-          if (difficulty !== undefined) row.scored.push({ won, difficulty });
+          if (difficulty !== undefined) row.difficulties.push(difficulty);
           rows.set(key, row);
         }
       }
@@ -396,45 +395,21 @@ export class TurboStatsService {
       return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
     };
 
-    const profiles = [...rows.values()]
-      .filter(row => row.games >= minGames && row.scored.length >= minScoredGames)
-      .map(row => {
-        const cut = median(row.scored.map(entry => entry.difficulty));
-        const harder = row.scored.filter(entry => entry.difficulty >= cut);
-        const easier = row.scored.filter(entry => entry.difficulty < cut);
-        const rate = (set: Array<{ won: boolean }>) => set.length ? (set.filter(entry => entry.won).length / set.length) * 100 : null;
-        return {
-          player1: row.player1,
-          player2: row.player2,
-          games: row.games,
-          wins: row.wins,
-          losses: row.games - row.wins,
-          winRate: (row.wins / row.games) * 100,
-          scoredGames: row.scored.length,
-          medianEnemyMMR: cut,
-          meanEnemyMMR: row.scored.reduce((sum, entry) => sum + entry.difficulty, 0) / row.scored.length,
-          harderHalfWinRate: rate(harder),
-          harderHalfGames: harder.length,
-          easierHalfWinRate: rate(easier),
-          easierHalfGames: easier.length
-        };
-      })
+    return [...rows.values()]
+      .filter(row => !targetId || row.player1 === targetId || row.player2 === targetId)
+      .filter(row => row.games >= minGames && row.difficulties.length >= minScoredGames)
+      .map(row => ({
+        player1: row.player1,
+        player2: row.player2,
+        games: row.games,
+        wins: row.wins,
+        losses: row.games - row.wins,
+        winRate: (row.wins / row.games) * 100,
+        scoredGames: row.difficulties.length,
+        medianEnemyMMR: median(row.difficulties)
+      }))
       .sort((a, b) => b.winRate - a.winRate || b.games - a.games)
       .slice(0, limit);
-
-    // Quintiles of the whole scored pool - the evidence for not adjusting, shown to the reader.
-    const sorted = [...population].sort((a, b) => a.difficulty - b.difficulty);
-    const size = Math.floor(sorted.length / 5);
-    const quintiles = size === 0 ? [] : [0, 1, 2, 3, 4].map(index => {
-      const chunk = index < 4 ? sorted.slice(index * size, (index + 1) * size) : sorted.slice(4 * size);
-      return {
-        meanEnemyMMR: chunk.reduce((sum, entry) => sum + entry.difficulty, 0) / chunk.length,
-        winRate: (chunk.filter(entry => entry.won).length / chunk.length) * 100,
-        games: chunk.length
-      };
-    });
-
-    return { profiles, quintiles, scoredGames: population.length };
   }
 
   getPlayerStats(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPlayerStats | undefined {
