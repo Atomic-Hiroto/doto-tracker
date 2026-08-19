@@ -467,6 +467,20 @@ export class TurboRankService {
     }
   }
 
+  /**
+   * Fold a fresh calibration pass into what a player already has, newest reading of a match
+   * winning. Calibration used to assign straight over `observations`, so recalibrating someone
+   * with 155 stored matches against a 100-match fetch silently dropped 55 of them - a rerun
+   * could lower coverage instead of raising it. Merging makes repeated runs cumulative up to
+   * MAX_OBSERVATIONS, which is what the save-time prune already assumed.
+   */
+  private mergeObservations(existing: TurboRankObservation[], incoming: TurboRankObservation[]): TurboRankObservation[] {
+    const byMatch = new Map<string, TurboRankObservation>();
+    for (const observation of existing) byMatch.set(String(observation.matchId), observation);
+    for (const observation of incoming) byMatch.set(String(observation.matchId), observation);
+    return [...byMatch.values()].sort((a, b) => b.timestamp - a.timestamp).slice(0, MAX_OBSERVATIONS);
+  }
+
   private getOrCreatePlayer(discordId: string, steamId: string): TurboRankPlayerData {
     let player = this.data.players.find(p => p.steamId === steamId);
     if (!player) {
@@ -845,8 +859,8 @@ export class TurboRankService {
         return this.calibratePlayerOpenDota(discordId, steamId, 100, onProgress, profile.seasonRank);
       }
 
-      player.observations = observations;
-      player.estimate = this.computeEstimate(observations, profile.seasonRank);
+      player.observations = this.mergeObservations(player.observations || [], observations);
+      player.estimate = this.computeEstimate(player.observations, profile.seasonRank);
       if (player.estimate) player.estimate.oldGamesFallback = usedOldGames;
       this.data.lastCalibrated = Date.now();
       this.save();
@@ -899,8 +913,8 @@ export class TurboRankService {
       // Stratz didn't supply a season rank.
       const ownTier = rankedTier ?? matchList.find((m: any) => m.rank_tier)?.rank_tier ?? null;
 
-      player.observations = observations;
-      player.estimate = this.computeEstimate(observations, ownTier);
+      player.observations = this.mergeObservations(player.observations || [], observations);
+      player.estimate = this.computeEstimate(player.observations, ownTier);
       this.data.lastCalibrated = Date.now();
       this.save();
       if (player.estimate) logCalibrationSnapshot(player, player.estimate);
