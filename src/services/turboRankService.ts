@@ -1044,6 +1044,28 @@ export class TurboRankService {
     this.save();
   }
 
+  /**
+   * matchId -> average enemy MMR, across every player's observations. This is the only place
+   * lobby strength is actually recorded; the ledger's averageRank field is still empty because
+   * nothing has backfilled it. Observations of the same match from different players agree on
+   * the lobby but not on who the enemies were, so each is averaged rather than overwritten.
+   */
+  getEnemyStrengthByMatch(): Map<string, number> {
+    const sums = new Map<string, { total: number; count: number }>();
+    for (const player of this.data.players) {
+      for (const observation of player.observations || []) {
+        const enemyMMR = observation.enemyMMR;
+        if (!Number.isFinite(enemyMMR) || !enemyMMR) continue;
+        const key = String(observation.matchId);
+        const entry = sums.get(key) || { total: 0, count: 0 };
+        entry.total += enemyMMR;
+        entry.count++;
+        sums.set(key, entry);
+      }
+    }
+    return new Map([...sums].map(([key, entry]) => [key, entry.total / entry.count]));
+  }
+
   getObservations(discordId: string): TurboRankObservation[] {
     const player = this.data.players.find(p => p.discordId === discordId);
     return player?.observations ?? [];
