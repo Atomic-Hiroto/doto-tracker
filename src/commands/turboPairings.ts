@@ -2,6 +2,7 @@ import { EmbedBuilder, Message } from 'discord.js';
 import { TurboStatsScope } from '../models/TurboStats';
 import { logger } from '../services/loggerService';
 import { TurboStatsService } from '../services/turboStatsService';
+import { turboRankService, mmrToMedal } from '../services/turboRankService';
 
 function parseScope(args: string[]): TurboStatsScope {
   const words = args.map(arg => arg.toLowerCase());
@@ -35,34 +36,33 @@ function parseOptions(args: string[]) {
   return { scope, window, minGames: useLegacy ? 10 : 30, useLegacy, adjusted };
 }
 
-const MEDALS = ['Uncalibrated', 'Herald', 'Guardian', 'Crusader', 'Archon', 'Legend', 'Ancient', 'Divine', 'Immortal'];
-
-function medalName(tier: number) {
-  const medal = Math.floor(tier / 10);
-  const star = tier % 10;
-  const name = MEDALS[medal] || 'Unknown';
-  return medal >= 8 || star === 0 ? name : `${name} ${star}`;
-}
-
 type Window = { sinceTimestamp?: number; label: string };
 
 /**
- * `+turbopairs hard` — the same question, but a win in a Divine lobby is worth more than a win
- * in a Crusader one. Needs `averageRank` on the ledger, which only a backfill populates.
+ * `+turbopairs hard` — the same question, but a win against stronger enemies is worth more.
+ * Difficulty comes from the rank service's per-match observations, which cover roughly 42% of
+ * recent matches, so this board reports how much of each duo's record it could actually weigh.
  */
-async function rankAdjustedBoard(message: Message, turboStatsService: TurboStatsService, scope: TurboStatsScope, window: Window, minGames: number) {
-  const rows = turboStatsService.getRankAdjustedPairings(10, minGames, scope, window.sinceTimestamp);
+async function rankAdjustedBoard(
+  message: Message,
+  turboStatsService: TurboStatsService,
+  scope: TurboStatsScope,
+  window: Window,
+  minGames: number
+) {
+  const difficulty = turboRankService.getEnemyStrengthByMatch();
+  const rows = turboStatsService.getRankAdjustedPairings(difficulty, 10, minGames, 20, scope, window.sinceTimestamp);
   if (!rows.length) {
     return message.reply(
-      `No turbo duo has ${minGames}+ games with a known lobby rank in the ${window.label} yet. `
-      + 'Lobby rank is only recorded from the next `+turbobackfill` onward — ask the bot owner to run one.'
+      `No turbo duo has ${minGames}+ games together with at least 20 of them rank-scored in the ${window.label} yet. `
+      + 'Lobby strength comes from `+turborank calibrate`, so more calibrated players means more coverage.'
     );
   }
 
   const embed = new EmbedBuilder()
     .setColor('#f59e0b')
     .setTitle('🤝 Best Turbo Duos — difficulty adjusted')
-    .setDescription(`Wins weighted by how strong the lobby was · **${window.label}** · min ${minGames} games`)
+    .setDescription(`Wins weighted by how strong the enemies were · **${window.label}** · min ${minGames} games`)
     .setFooter({ text: 'Matchmaking averages a party, so lobby strength varies far less for duos than for solo players — expect small shifts.' })
     .setTimestamp();
 
@@ -78,8 +78,8 @@ async function rankAdjustedBoard(message: Message, turboStatsService: TurboStats
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
       entries.push({
         name: `${medal} ${user1.username} + ${user2.username}`,
-        value: `**${row.adjustedWinRate.toFixed(1)}%** adjusted (${row.rawWinRate.toFixed(1)}% raw, ${delta >= 0 ? '+' : ''}${delta.toFixed(1)}pp)\n`
-          + `${row.wins}W–${row.losses}L in ${row.wins + row.losses} games · typical lobby ${medalName(Math.round(row.meanRank))}`
+        value: `**${row.adjustedWinRate.toFixed(1)}%** adjusted · ${row.rawWinRate.toFixed(1)}% unweighted (${delta >= 0 ? '+' : ''}${delta.toFixed(1)}pp)\n`
+          + `Typical enemies ${mmrToMedal(Math.round(row.meanEnemyMMR)).medal} · scored on ${row.rankedGames} of ${row.games} games (${row.overallWinRate.toFixed(1)}% overall)`
       });
     } catch (error) {
       logger.warn(`Could not fetch users for pairing ${row.player1} + ${row.player2}:`, error);

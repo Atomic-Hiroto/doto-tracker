@@ -343,49 +343,72 @@ export class TurboStatsService {
   }
 
   /**
-   * Same board, but a win counts for more when the lobby was tougher. The weight is the match's
-   * average rank over the population average, so it needs no tuning constant - a duo that only
-   * ever wins in weak lobbies cannot outrank one winning in strong ones.
+   * Same board, but a win counts for more when the enemies were stronger. The weight is the
+   * match's average enemy MMR over the population average, so there is no tuning constant.
    *
-   * Matchmaking averages a party's MMR, which compresses this hard: measured across the crew,
-   * individual lobby strength spans ~3900 MMR but duo lobby strength spans ~680. Expect small
-   * reorderings, and read a large swing as thin rank coverage rather than a real effect.
+   * Difficulty comes from the rank service's observations, not the ledger - `averageRank` on a
+   * TurboTrackedMatch is still unpopulated. Coverage is partial (about 42% of the last 60 days),
+   * so win rates here are computed over the covered subset only and `rankedGames` reports how
+   * much of a duo's record that actually was.
+   *
+   * Matchmaking averages a party's MMR, which compresses this hard: across the crew, individual
+   * lobby strength spans ~3900 MMR but duo lobby strength spans ~680. Expect small reorderings,
+   * and read a large swing as thin coverage rather than a real effect.
    */
-  getRankAdjustedPairings(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number) {
-    const matches = this.matchesForScope(scope, sinceTimestamp).filter(match => match.averageRank !== null && match.averageRank !== undefined);
-    if (!matches.length) return [];
-    const meanRank = matches.reduce((sum, match) => sum + (match.averageRank as number), 0) / matches.length;
+  getRankAdjustedPairings(
+    difficultyByMatch: Map<string, number>,
+    limit = 10,
+    minGames = 30,
+    minRankedGames = 20,
+    scope: TurboStatsScope = 'all',
+    sinceTimestamp?: number
+  ) {
+    const matches = this.matchesForScope(scope, sinceTimestamp);
+    const covered = matches.filter(match => difficultyByMatch.has(String(match.matchId)));
+    if (!covered.length) return [];
+    const meanDifficulty = covered.reduce((sum, match) => sum + (difficultyByMatch.get(String(match.matchId)) as number), 0) / covered.length;
 
-    type Row = { player1: string; player2: string; wins: number; losses: number; weightedWins: number; weightTotal: number; rankSum: number; ranked: number };
+    type Row = { player1: string; player2: string; games: number; overallWins: number; wins: number; losses: number; weightedWins: number; weightTotal: number; difficultySum: number; rankedGames: number };
     const rows = new Map<string, Row>();
+    const rowFor = (a: string, b: string) => {
+      const [player1, player2] = [a, b].sort();
+      const key = `${player1}:${player2}`;
+      const existing = rows.get(key);
+      if (existing) return existing;
+      const created: Row = { player1, player2, games: 0, overallWins: 0, wins: 0, losses: 0, weightedWins: 0, weightTotal: 0, difficultySum: 0, rankedGames: 0 };
+      rows.set(key, created);
+      return created;
+    };
+
     for (const match of matches) {
-      const rank = match.averageRank as number;
-      const weight = rank / meanRank;
+      const difficulty = difficultyByMatch.get(String(match.matchId));
       for (const team of ['radiant', 'dire'] as const) {
         const players = match.players.filter(player => player.team === team);
         const won = team === 'radiant' ? match.radiantWon : !match.radiantWon;
         for (let i = 0; i < players.length; i++) for (let j = i + 1; j < players.length; j++) {
           if (players[i].discordId === players[j].discordId) continue;
-          const [player1, player2] = [players[i].discordId, players[j].discordId].sort();
-          const key = `${player1}:${player2}`;
-          const row = rows.get(key) || { player1, player2, wins: 0, losses: 0, weightedWins: 0, weightTotal: 0, rankSum: 0, ranked: 0 };
+          const row = rowFor(players[i].discordId, players[j].discordId);
+          row.games++;
+          if (won) row.overallWins++;
+          if (difficulty === undefined) continue;
+          const weight = difficulty / meanDifficulty;
           won ? row.wins++ : row.losses++;
           if (won) row.weightedWins += weight;
           row.weightTotal += weight;
-          row.rankSum += rank;
-          row.ranked++;
-          rows.set(key, row);
+          row.difficultySum += difficulty;
+          row.rankedGames++;
         }
       }
     }
 
     return [...rows.values()]
-      .filter(row => row.wins + row.losses >= minGames)
+      .filter(row => row.games >= minGames && row.rankedGames >= minRankedGames)
       .map(row => ({
         ...row,
         adjustedWinRate: (row.weightedWins / row.weightTotal) * 100,
-        rawWinRate: (row.wins / (row.wins + row.losses)) * 100,
-        meanRank: row.rankSum / row.ranked
+        rawWinRate: (row.wins / row.rankedGames) * 100,
+        overallWinRate: (row.overallWins / row.games) * 100,
+        meanEnemyMMR: row.difficultySum / row.rankedGames
       }))
       .sort((a, b) => b.adjustedWinRate - a.adjustedWinRate)
       .slice(0, limit);
