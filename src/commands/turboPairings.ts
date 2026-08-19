@@ -25,7 +25,7 @@ function parseWindow(args: string[]) {
 
 function parseOptions(args: string[]) {
   // `legacy` is the only way to reach the pre-backfill snapshot. It used to be the no-argument
-  // default, which meant the headline duo board was the one dataset that cannot self-correct:
+  // default, which meant the headline teammate board was the one dataset that cannot self-correct:
   // it counts no match ids, so its totals sit between 0.27x and 1.99x of the deduplicated ledger.
   const useLegacy = args.some(arg => arg.toLowerCase() === 'legacy');
   const adjusted = args.some(arg => ['hard', 'adjusted', 'difficulty'].includes(arg.toLowerCase()));
@@ -39,7 +39,7 @@ function parseOptions(args: string[]) {
 type Window = { sinceTimestamp?: number; label: string };
 
 /**
- * `+turbopairs hard [@user]` — the duo board with the opposition each pair faced. The order is
+ * `+turbopairs hard [@user]` — the teammate board with the opposition each pair faced. The order is
  * plain win rate: enemy strength was measured against 502 scored crew games and predicts
  * nothing, so weighting by it only ever produced orders that could not be explained.
  */
@@ -50,7 +50,7 @@ async function rankAdjustedBoard(
   window: Window,
   targetId?: string
 ) {
-  // A single player's duos are a much smaller pool, so the bar comes down with it.
+  // A single player's teammates are a much smaller pool, so the bar comes down with it.
   const minGames = targetId ? 10 : 30;
   const minScored = targetId ? 8 : 20;
   const difficulty = turboRankService.getEnemyStrengthByMatch();
@@ -62,14 +62,14 @@ async function rankAdjustedBoard(
   if (!rows.length) {
     const who = target ? ` with **${target.username}**` : '';
     return message.reply(
-      `No turbo duo${who} has ${minGames}+ games together with at least ${minScored} of them rank-scored in the ${window.label} yet. `
+      `No pair of teammates${who} has ${minGames}+ games together with at least ${minScored} of them rank-scored in the ${window.label} yet. `
       + 'Enemy ranks come from `+turborank calibrate`, so more calibrated players means more coverage.'
     );
   }
 
   const embed = new EmbedBuilder()
     .setColor('#f59e0b')
-    .setTitle(target ? `🤝 Turbo Duos vs Rank — ${target.username}` : '🤝 Turbo Duos vs Rank')
+    .setTitle(target ? `🤝 Turbo Teammates vs Rank — ${target.username}` : '🤝 Turbo Teammates vs Rank')
     .setDescription(`**Ranked by win rate**, highest first · ${window.label} · min ${minGames} games together`)
     .setFooter({ text: 'Enemy rank is shown for context, not used in the ranking — in this crew\'s games it does not affect who wins.' })
     .setTimestamp();
@@ -113,17 +113,17 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
         : scope === 'tracked'
           ? ' The live ledger only holds matches polled since the new system went in — try `+turbopairs 60` for the full picture.'
           : '';
-      return message.reply(`No turbo duo has ${minGames}+ ${scope} games together in the ${window.label} yet.${hint}`);
+      return message.reply(`No pair of teammates has ${minGames}+ ${scope} games together in the ${window.label} yet.${hint}`);
     }
 
     const embed = new EmbedBuilder()
       .setColor('#ff6b6b')
-      .setTitle('🤝 Best Turbo Duos')
+      .setTitle('🤝 Best Turbo Teammates')
       .setDescription(
-        `Best win rate together · **${window.label}** · min ${minGames} games`
+        `Win rate when you're on the same team · **${window.label}** · min ${minGames} games`
         + (useLegacy ? '\n⚠️ Legacy snapshot: no match-id dedupe, so these counts are unreliable. Prefer `+turbopairs 60`.' : '')
       )
-      .setFooter({ text: 'Straight win rate. `+turbopairs hard` weights wins by how strong the lobby was.' })
+      .setFooter({ text: 'Any game on the same team counts, solo queue or full stack. `+turbopairs hard` adds the ranks you played against.' })
       .setTimestamp();
 
     const entries: Array<{ name: string; value: string }> = [];
@@ -169,17 +169,17 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
         : scope === 'tracked'
           ? ' The live ledger only holds matches polled since the new system went in — try `+turbopairs 60` for the full picture.'
           : '';
-      return message.reply(`No duo has 5+ ${scope} games with **${target.username}** in the ${window.label} yet.${hint}`);
+      return message.reply(`Nobody has 5+ ${scope} games on the same team as **${target.username}** in the ${window.label} yet.${hint}`);
     }
 
     const embed = new EmbedBuilder()
       .setColor('#4ecdc4')
-      .setTitle(`🤝 Turbo Duos — ${target.username}`)
+      .setTitle(`🤝 Turbo Teammates — ${target.username}`)
       .setDescription(
-        `Best win rate alongside each partner · **${window.label}** · min 5 games`
+        `Win rate when you're on the same team · **${window.label}** · min 5 games`
         + (useLegacy ? '\n⚠️ Legacy snapshot: no match-id dedupe, so these counts are unreliable.' : '')
       )
-      .setFooter({ text: 'Straight win rate, minimum 5 games together.' })
+      .setFooter({ text: 'Any game on the same team counts, solo queue or full stack.' })
       .setTimestamp();
     const entries: Array<{ name: string; value: string }> = [];
     for (let i = 0; i < pairings.length; i++) {
@@ -193,7 +193,7 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
           value: `**${(pairing.wins / games * 100).toFixed(1)}%** win rate · ${pairing.wins}W–${pairing.losses}L in ${games} games`
         });
       } catch (error) {
-        logger.warn('Could not fetch turbo duo partner:', error);
+        logger.warn('Could not fetch turbo teammate:', error);
       }
     }
     if (!entries.length) return message.reply('Could not display pairing stats due to user fetch errors.');

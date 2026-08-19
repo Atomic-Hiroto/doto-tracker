@@ -118,12 +118,12 @@ export async function compare(
             const games = pairing.wins + pairing.losses;
             const wr = ((pairing.wins / games) * 100).toFixed(1);
             embed.addFields({
-                name: '🔗 As a Duo (turbo)',
+                name: '🔗 On the same team (turbo)',
                 value: `**${games}** games together · **${wr}%** win rate (${pairing.wins}W/${pairing.losses}L)`,
                 inline: false,
             });
         } else {
-            embed.addFields({ name: '🔗 As a Duo (turbo)', value: "Haven't played tracked turbo games together yet.", inline: false });
+            embed.addFields({ name: '🔗 On the same team (turbo)', value: "Haven't played tracked turbo games together yet.", inline: false });
         }
 
         // Honest verdict: only the shared turbo ladder is directly comparable.
