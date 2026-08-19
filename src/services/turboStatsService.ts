@@ -414,7 +414,9 @@ export class TurboStatsService {
       }
       const effectiveN = averagePairGames + exactLineupGames * 2;
       const margin = 1.96 * Math.sqrt(predicted * (1 - predicted) / (effectiveN + 10));
-      const sortedPairs = [...observedPairs].sort((a, b) => b.rating - a.rating);
+      // Same ordering the duo board uses: strongest means best-evidenced, not the highest
+      // projection, or a 15-8 pair gets named the anchor of a lineup over a 59-44 one.
+      const sortedPairs = [...observedPairs].sort((a, b) => this.pairSortKey(b) - this.pairSortKey(a));
       recommendations.push({
         playerIds: ids,
         predictedWinRate: predicted,
