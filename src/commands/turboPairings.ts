@@ -39,76 +39,64 @@ function parseOptions(args: string[]) {
 type Window = { sinceTimestamp?: number; label: string };
 
 /**
- * `+turbopairs hard` — the duo board annotated with the strength of the opposition, plus the
- * evidence for why nothing is adjusted. The point is that the reader can check the reasoning
- * rather than trust a single opaque number.
+ * `+turbopairs hard [@user]` — the duo board with the opposition each pair faced. The order is
+ * plain win rate: enemy strength was measured against 502 scored crew games and predicts
+ * nothing, so weighting by it only ever produced orders that could not be explained.
  */
 async function rankAdjustedBoard(
   message: Message,
   turboStatsService: TurboStatsService,
   scope: TurboStatsScope,
   window: Window,
-  minGames: number
+  targetId?: string
 ) {
+  // A single player's duos are a much smaller pool, so the bar comes down with it.
+  const minGames = targetId ? 10 : 30;
+  const minScored = targetId ? 8 : 20;
   const difficulty = turboRankService.getEnemyStrengthByMatch();
-  const { profiles, quintiles, scoredGames } = turboStatsService.getDuoDifficultyProfiles(
-    difficulty, 10, minGames, 20, scope, window.sinceTimestamp
+  const rows = turboStatsService.getDuoDifficultyProfiles(
+    difficulty, 10, minGames, minScored, scope, window.sinceTimestamp, targetId
   );
-  if (!profiles.length) {
+
+  const target = targetId ? await message.client.users.fetch(targetId).catch(() => null) : null;
+  if (!rows.length) {
+    const who = target ? ` with **${target.username}**` : '';
     return message.reply(
-      `No turbo duo has ${minGames}+ games together with at least 20 of them rank-scored in the ${window.label} yet. `
+      `No turbo duo${who} has ${minGames}+ games together with at least ${minScored} of them rank-scored in the ${window.label} yet. `
       + 'Enemy ranks come from `+turborank calibrate`, so more calibrated players means more coverage.'
     );
   }
 
   const embed = new EmbedBuilder()
     .setColor('#f59e0b')
-    .setTitle('🤝 Turbo Duos — who you actually beat')
-    .setDescription(`Ranked by win rate · **${window.label}** · min ${minGames} games, 20+ with known enemy ranks`)
+    .setTitle(target ? `🤝 Turbo Duos vs Rank — ${target.username}` : '🤝 Turbo Duos vs Rank')
+    .setDescription(`**Ranked by win rate**, highest first · ${window.label} · min ${minGames} games together`)
+    .setFooter({ text: 'Enemy rank is shown for context, not used in the ranking — in this crew\'s games it does not affect who wins.' })
     .setTimestamp();
 
-  if (quintiles.length === 5) {
-    const labels = ['Weakest  ', '         ', '  Middle ', '         ', 'Strongest'];
-    const table = quintiles
-      .map((q, i) => `${labels[i]}  ${Math.round(q.meanEnemyMMR).toString().padStart(4)} MMR  →  ${q.winRate.toFixed(1)}% won`)
-      .join('\n');
-    const spread = Math.max(...quintiles.map(q => q.winRate)) - Math.min(...quintiles.map(q => q.winRate));
-    embed.addFields({
-      name: '❓ Do stronger enemies actually cost you games?',
-      value: '```\n' + table + '\n```'
-        + `Across **${scoredGames}** scored games there is no pattern — the best and worst quintiles differ by `
-        + `${spread.toFixed(1)}pp with no trend, because matchmaking puts you against your own level. `
-        + 'So nothing here is weighted or adjusted: the order below is plain win rate, and enemy strength is context.',
-      inline: false
-    });
-  }
-
-  for (let i = 0; i < profiles.length; i++) {
-    const row = profiles[i];
+  const entries: Array<{ name: string; value: string }> = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
     try {
-      const [user1, user2] = await Promise.all([
-        message.client.users.fetch(row.player1),
-        message.client.users.fetch(row.player2)
-      ]);
+      const label = target
+        ? (await message.client.users.fetch(row.player1 === targetId ? row.player2 : row.player1)).username
+        : (await Promise.all([
+            message.client.users.fetch(row.player1),
+            message.client.users.fetch(row.player2)
+          ])).map(user => user.username).join(' + ');
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      const harder = row.harderHalfWinRate === null ? 'n/a' : `${row.harderHalfWinRate.toFixed(0)}% (${row.harderHalfGames}g)`;
-      const easier = row.easierHalfWinRate === null ? 'n/a' : `${row.easierHalfWinRate.toFixed(0)}% (${row.easierHalfGames}g)`;
-      embed.addFields({
-        name: `${medal} ${user1.username} + ${user2.username}`,
-        value: `**${row.winRate.toFixed(1)}%** · ${row.wins}W–${row.losses}L in ${row.games} games\n`
-          + `Median enemy **${Math.round(row.medianEnemyMMR)} MMR** (${mmrToMedal(Math.round(row.medianEnemyMMR)).medal}) · `
-          + `vs their stronger half ${harder} · vs their weaker half ${easier}\n`
-          + `*enemy ranks known for ${row.scoredGames} of ${row.games} games*`,
-        inline: false
+      const mmr = Math.round(row.medianEnemyMMR);
+      entries.push({
+        name: `${medal} ${label}`,
+        value: `**${row.winRate.toFixed(1)}%** win rate · ${row.wins}W–${row.losses}L in ${row.games} games\n`
+          + `Usually up against **${mmrToMedal(mmr).medal}** (${mmr} MMR)`
       });
     } catch (error) {
       logger.warn(`Could not fetch users for pairing ${row.player1} + ${row.player2}:`, error);
     }
   }
-  if (embed.data.fields && embed.data.fields.length <= 1) {
-    return message.reply('Could not display pairing leaderboard due to user fetch errors.');
-  }
-  embed.setFooter({ text: 'Stronger/weaker halves are split at each duo\'s own median enemy MMR, so they are self-relative.' });
+  if (!entries.length) return message.reply('Could not display pairing leaderboard due to user fetch errors.');
+  embed.addFields(entries);
   return message.reply({ embeds: [embed] });
 }
 
@@ -116,7 +104,7 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
   try {
     const { scope, window, minGames, useLegacy, adjusted } = parseOptions(args);
 
-    if (adjusted) return rankAdjustedBoard(message, turboStatsService, scope, window, minGames);
+    if (adjusted) return rankAdjustedBoard(message, turboStatsService, scope, window);
 
     const pairings = turboStatsService.getPairingLeaderboard(10, minGames, scope, window.sinceTimestamp, useLegacy);
     if (pairings.length === 0) {
@@ -168,7 +156,9 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
 export async function myTurboPairings(message: Message, turboStatsService: TurboStatsService, args: string[] = []) {
   try {
     const target = message.mentions.users.first() ?? message.author;
-    const { scope, window, useLegacy } = parseOptions(args);
+    const { scope, window, useLegacy, adjusted } = parseOptions(args);
+
+    if (adjusted) return rankAdjustedBoard(message, turboStatsService, scope, window, target.id);
     const pairings = turboStatsService.getPairingsForPlayer(target.id, scope, window.sinceTimestamp, useLegacy)
       .filter(pair => pair.wins + pair.losses >= 5)
       .sort((a, b) => (b.wins / (b.wins + b.losses)) - (a.wins / (a.wins + a.losses)) || (b.wins + b.losses) - (a.wins + a.losses))

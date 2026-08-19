@@ -53,7 +53,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+topheroes` / `+topheros [@user]` — best turbo heroes (60d by default)',
       '`+turbopairs [@user]` — duo leaderboard, last 60 days (global, or a player\'s)',
       '`+turbopairs <days> [@user]` — a different rolling window, e.g. `+turbopairs 120`',
-      '`+turbopairs hard [days]` — same board plus the enemy ranks each duo faced',
+      '`+turbopairs hard [@user] [days]` — same board plus the enemy ranks each duo faced',
       '`+turbopairs alltime|history|legacy` — alternate duo evidence views',
       '`+turboparty best [days|alltime] [tracked|history]` — optimal party (60 days by default)',
       '`+turboparty @user [...]` — best parties that include those players (mention 1–4)',
