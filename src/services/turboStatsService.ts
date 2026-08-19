@@ -312,15 +312,83 @@ export class TurboStatsService {
     return pair.confidenceFloor ?? this.calculatePairFloor(pair.wins, pair.losses);
   }
 
-  getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number, useLegacy = false): TurboPairing[] {
+  /** Resolves a duo view to its pairing set: the legacy snapshot, a windowed derivation, or the stored aggregate. */
+  private statsForView(scope: TurboStatsScope, sinceTimestamp?: number, useLegacy = false) {
     // The legacy snapshot is opt-in now. It has no match-id dedupe, so against the ledger its
     // counts run anywhere from 0.27x to 1.99x of the truth; it stays reachable only so the
     // pre-backfill numbers people remember are still inspectable.
-    const legacyTracked = useLegacy && this.turboStats.legacyTrackedPairings;
-    const stats = legacyTracked
-      ? this.turboStats.legacyTrackedPairings!
-      : this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
-    return [...stats].filter(pair => pair.wins + pair.losses >= minGames).sort((a, b) => this.pairSortKey(b) - this.pairSortKey(a)).slice(0, limit);
+    if (useLegacy && this.turboStats.legacyTrackedPairings) {
+      return { pairings: this.turboStats.legacyTrackedPairings, playerStats: null as TurboPlayerStats[] | null };
+    }
+    if (this.shouldDeriveFromLedger(scope, sinceTimestamp)) {
+      const derived = this.deriveStats(scope, sinceTimestamp);
+      return { pairings: derived.pairings, playerStats: derived.playerStats as TurboPlayerStats[] | null };
+    }
+    return { pairings: this.turboStats.pairings, playerStats: this.turboStats.playerStats as TurboPlayerStats[] | null };
+  }
+
+  /**
+   * Straight win rate, highest first, so the order always matches the number on screen. Small
+   * samples are held off the board by minGames rather than by shrinking the statistic - the
+   * previous attempt ranked on a confidence floor, which put a 65% duo below a 53% one with no
+   * visible reason for it.
+   */
+  getPairingLeaderboard(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number, useLegacy = false): TurboPairing[] {
+    const { pairings } = this.statsForView(scope, sinceTimestamp, useLegacy);
+    const winRate = (pair: TurboPairing) => pair.wins / (pair.wins + pair.losses);
+    return [...pairings]
+      .filter(pair => pair.wins + pair.losses >= minGames)
+      .sort((a, b) => winRate(b) - winRate(a) || (b.wins + b.losses) - (a.wins + a.losses))
+      .slice(0, limit);
+  }
+
+  /**
+   * Same board, but a win counts for more when the lobby was tougher. The weight is the match's
+   * average rank over the population average, so it needs no tuning constant - a duo that only
+   * ever wins in weak lobbies cannot outrank one winning in strong ones.
+   *
+   * Matchmaking averages a party's MMR, which compresses this hard: measured across the crew,
+   * individual lobby strength spans ~3900 MMR but duo lobby strength spans ~680. Expect small
+   * reorderings, and read a large swing as thin rank coverage rather than a real effect.
+   */
+  getRankAdjustedPairings(limit = 10, minGames = 10, scope: TurboStatsScope = 'all', sinceTimestamp?: number) {
+    const matches = this.matchesForScope(scope, sinceTimestamp).filter(match => match.averageRank !== null && match.averageRank !== undefined);
+    if (!matches.length) return [];
+    const meanRank = matches.reduce((sum, match) => sum + (match.averageRank as number), 0) / matches.length;
+
+    type Row = { player1: string; player2: string; wins: number; losses: number; weightedWins: number; weightTotal: number; rankSum: number; ranked: number };
+    const rows = new Map<string, Row>();
+    for (const match of matches) {
+      const rank = match.averageRank as number;
+      const weight = rank / meanRank;
+      for (const team of ['radiant', 'dire'] as const) {
+        const players = match.players.filter(player => player.team === team);
+        const won = team === 'radiant' ? match.radiantWon : !match.radiantWon;
+        for (let i = 0; i < players.length; i++) for (let j = i + 1; j < players.length; j++) {
+          if (players[i].discordId === players[j].discordId) continue;
+          const [player1, player2] = [players[i].discordId, players[j].discordId].sort();
+          const key = `${player1}:${player2}`;
+          const row = rows.get(key) || { player1, player2, wins: 0, losses: 0, weightedWins: 0, weightTotal: 0, rankSum: 0, ranked: 0 };
+          won ? row.wins++ : row.losses++;
+          if (won) row.weightedWins += weight;
+          row.weightTotal += weight;
+          row.rankSum += rank;
+          row.ranked++;
+          rows.set(key, row);
+        }
+      }
+    }
+
+    return [...rows.values()]
+      .filter(row => row.wins + row.losses >= minGames)
+      .map(row => ({
+        ...row,
+        adjustedWinRate: (row.weightedWins / row.weightTotal) * 100,
+        rawWinRate: (row.wins / (row.wins + row.losses)) * 100,
+        meanRank: row.rankSum / row.ranked
+      }))
+      .sort((a, b) => b.adjustedWinRate - a.adjustedWinRate)
+      .slice(0, limit);
   }
 
   getPlayerStats(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPlayerStats | undefined {
@@ -329,11 +397,8 @@ export class TurboStatsService {
   }
 
   getPairingsForPlayer(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number, useLegacy = false) {
-    const legacyTracked = useLegacy && this.turboStats.legacyTrackedPairings;
-    const stats = legacyTracked
-      ? this.turboStats.legacyTrackedPairings!
-      : this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).pairings : this.turboStats.pairings;
-    return stats.filter(pair => pair.player1 === discordId || pair.player2 === discordId);
+    return this.statsForView(scope, sinceTimestamp, useLegacy).pairings
+      .filter(pair => pair.player1 === discordId || pair.player2 === discordId);
   }
 
   processTurboMatch(matchData: any, registeredPlayers: RegisteredPlayer[], source: Exclude<TurboMatchSource, 'both'> = 'live', deferRebuild = false): boolean {

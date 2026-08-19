@@ -119,7 +119,7 @@ export async function compare(
             const wr = ((pairing.wins / games) * 100).toFixed(1);
             embed.addFields({
                 name: '🔗 As a Duo (turbo)',
-                value: `**${games}** games together · **${wr}%** WR (${pairing.wins}W/${pairing.losses}L) · ${turboStatsService.pairSortKey(pairing).toFixed(1)}% floor, ${pairing.rating.toFixed(1)}% projected`,
+                value: `**${games}** games together · **${wr}%** win rate (${pairing.wins}W/${pairing.losses}L)`,
                 inline: false,
             });
         } else {
