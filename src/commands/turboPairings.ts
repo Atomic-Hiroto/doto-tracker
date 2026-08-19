@@ -62,8 +62,13 @@ async function rankAdjustedBoard(
   const embed = new EmbedBuilder()
     .setColor('#f59e0b')
     .setTitle('🤝 Best Turbo Duos — difficulty adjusted')
-    .setDescription(`Wins weighted by how strong the enemies were · **${window.label}** · min ${minGames} games`)
-    .setFooter({ text: 'Matchmaking averages a party, so lobby strength varies far less for duos than for solo players — expect small shifts.' })
+    .setDescription(
+      `Wins weighted by how strong the enemies were · **${window.label}** · min ${minGames} games\n`
+      + '⚠️ Provisional: enemy strength is the mean *visible* enemy medal, typically 3 of 5. '
+      + 'At current coverage the adjustment averages 0.8pp and does not replicate across split halves, '
+      + 'so treat this ordering as indicative rather than a ranking.'
+    )
+    .setFooter({ text: 'Matchmaking averages a party, so lobby strength varies far less for duos than for solo players.' })
     .setTimestamp();
 
   const entries: Array<{ name: string; value: string }> = [];
