@@ -295,7 +295,7 @@ export async function turboSquad(message: Message, args: string[], userDataServi
       const user = await message.client.users.fetch(otherId).catch(() => null);
       const reg = userDataService.getUserByDiscordId(otherId);
       const estimate = reg ? turboRankService.getEstimateBySteamId(reg.steamId) : null;
-      return `**${user?.username ?? otherId}** — ${games} games, ${fmtPct(pair.wins, games)} WR, score ${pair.rating}` +
+      return `**${user?.username ?? otherId}** — ${games} games, ${fmtPct(pair.wins, games)} WR, ${turboStatsService.pairSortKey(pair).toFixed(1)}% floor` +
         (estimate ? `, ${estimate.medal}` : '');
     }));
 
