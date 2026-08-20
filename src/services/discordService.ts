@@ -154,6 +154,10 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_DURATION:
       await commandHandlers.durationStudy(message, args, userDataService);
       break;
+    case Commands.TI:
+      await commandHandlers.ti(message, args);
+      break;
+
     case Commands.TOP_LLMS:
       await commandHandlers.topLlms(message, args);
       break;

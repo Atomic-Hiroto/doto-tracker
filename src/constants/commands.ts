@@ -66,6 +66,8 @@ export enum Commands {
     PERCENT = "%",
     PERCENT_ALIAS = "percent",
     ROLES = "roles",
+    // The International auto-poster
+    TI = "ti",
     // Admin
     SET_CHANNEL = "setchannel",
     UNSET_CHANNEL = "unsetchannel",

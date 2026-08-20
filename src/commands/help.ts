@@ -93,6 +93,17 @@ const SECTIONS: { name: string; lines: string[] }[] = [
     ],
   },
   {
+    name: '🏟️ The International',
+    lines: [
+      '`+ti` — main-stage status: live game, latest results, open series',
+      '`+ti results [n]` — recent main-stage games',
+      '`+ti fantasy [name|team] [n]` — fantasy leaderboard for the main stage',
+      '`+ti teams` — main-stage game record per team',
+      '`+ti scoring` — the fantasy point table and where it drifts',
+      'Results post themselves in #doto-tracker as each game ends.',
+    ],
+  },
+  {
     name: '🔎 Match Filters',
     lines: [
       'Works with `+rs`, `+recent`, `+matches`, `+analyze`, `+coach`, `+trend`, `+inventory`, `+roles`, `+%`, `+percent`.',
