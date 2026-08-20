@@ -97,7 +97,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
     lines: [
       '`+ti` — main-stage status: live game, latest results, open series',
       '`+ti results [n]` — recent main-stage games',
-      '`+ti fantasy [name|team] [n]` — fantasy leaderboard for the main stage',
+      '`+ti fantasy [core|mid|sup] [name|team] [n]` — fantasy board, ranked within each card slot',
       '`+ti teams` — main-stage game record per team',
       '`+ti scoring` — the fantasy point table and where it drifts',
       'Results post themselves in #doto-tracker as each game ends.',
