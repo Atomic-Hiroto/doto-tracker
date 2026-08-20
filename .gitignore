@@ -4,6 +4,7 @@ users.json
 coaching.sqlite*
 dist/
 usersts.json
+tiState.json
 
 # Local debug dumps/logs
 match_dump_debug.json

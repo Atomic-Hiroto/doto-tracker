@@ -371,7 +371,7 @@ export async function renderMatchScoreboard(
 
     // Column anchors
     const cols: Record<'hero' | 'name' | 'kda' | 'gpm' | 'nw' | 'lh' | 'dmg' | 'tower' | 'heal' | 'stun' | 'items', number> = detailed
-        ? { hero: 16, name: 78, kda: 320, gpm: 405, nw: 490, lh: 490, dmg: 585, tower: 675, heal: 760, stun: 845, items: 930 }
+        ? { hero: 16, name: 78, kda: 316, gpm: 412, nw: 494, lh: 494, dmg: 588, tower: 676, heal: 762, stun: 846, items: 930 }
         : { hero: 16, name: 78, kda: 318, gpm: 452, nw: 540, lh: 632, dmg: 0, tower: 0, heal: 0, stun: 0, items: 706 };
     const ITEM_W = 30;
     const ITEM_H = 23;
@@ -477,7 +477,12 @@ export async function renderMatchScoreboard(
             // K/D/A
             ctx.font = '14px sans-serif';
             ctx.fillStyle = '#c4c4d8';
-            ctx.fillText(`${p.kills} / ${p.deaths} / ${p.assists}`, cols.kda, midY + 4);
+            // Pro games run to double-digit assists, which overflowed the spaced
+            // form into the GPM column, so the detailed layout packs it tighter.
+            ctx.fillText(
+                detailed ? `${p.kills}/${p.deaths}/${p.assists}` : `${p.kills} / ${p.deaths} / ${p.assists}`,
+                cols.kda, midY + 4,
+            );
 
             // GPM / XPM
             ctx.fillStyle = '#f59e0b';
@@ -602,7 +607,7 @@ export async function renderScoreboardFromMatch(
     match: any,
     focusSteamIds: string[] = [],
     rankDisplay?: MatchRankDisplay | null,
-    opts: { detailed?: boolean } = {},
+    opts: { detailed?: boolean; radiantName?: string; direName?: string } = {},
 ): Promise<Buffer> {
     const focus = new Set(focusSteamIds.map(String));
     const ranks = rankDisplay === undefined ? await resolveMatchRankDisplay(match) : rankDisplay;
@@ -612,7 +617,9 @@ export async function renderScoreboardFromMatch(
         return {
             heroName: hero,
             heroImageUrl: APIConstants.IMAGE_URL(hero),
-            personaName: p.personaname || 'Anonymous',
+            // OpenDota sets `name` only for registered pros; it is the handle people
+            // actually know them by, so it wins over the steam persona.
+            personaName: p.name || p.personaname || 'Anonymous',
             rankLabel: rank?.label,
             rankTier: rank?.rankTier,
             level: Number(p.level || 0),
@@ -635,12 +642,16 @@ export async function renderScoreboardFromMatch(
     };
     const radiantPlayers = (match.players || []).filter((p: any) => p.player_slot < 128);
     const direPlayers = (match.players || []).filter((p: any) => p.player_slot >= 128);
+    // Pro matches have real org names; pass them through so a TI scoreboard reads
+    // "Team Spirit" rather than "Radiant".
     const radiant: ScoreboardTeam = {
-        name: 'Radiant', won: !!match.radiant_win, score: match.radiant_score ?? 0,
+        name: opts.radiantName || match.radiant_team?.name || 'Radiant',
+        won: !!match.radiant_win, score: match.radiant_score ?? 0,
         players: await Promise.all(radiantPlayers.map(toPlayer)),
     };
     const dire: ScoreboardTeam = {
-        name: 'Dire', won: !match.radiant_win, score: match.dire_score ?? 0,
+        name: opts.direName || match.dire_team?.name || 'Dire',
+        won: !match.radiant_win, score: match.dire_score ?? 0,
         players: await Promise.all(direPlayers.map(toPlayer)),
     };
     const mode = SCOREBOARD_GAME_MODES[Number(match.game_mode)] || `Mode ${match.game_mode ?? '?'}`;

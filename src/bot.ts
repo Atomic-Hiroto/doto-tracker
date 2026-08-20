@@ -8,6 +8,7 @@ import { logger } from './services/loggerService';
 import { dotaDataService } from './services/dotaDataService';
 import { registerInteractionHandler, registerSlashCommands } from './services/interactionService';
 import { closeDotabuffBrowser } from './services/dotabuffScraper';
+import { startTiPoller, stopTiPoller } from './services/tiService';
 
 export async function initializeBot(client: Client) {
   const userDataService = new UserDataService();
@@ -20,6 +21,7 @@ export async function initializeBot(client: Client) {
     logger.info(`Logged in as ${client.user!.tag}!`);
     registerSlashCommands(client).catch((error) => logger.warn('Failed to register slash commands:', error));
     setTimeout(() => checkNewMatches(client, userDataService, turboStatsService), ProcessConstants.CHECK_INTERVAL);
+    startTiPoller(client);
   });
 
   client.on('messageCreate', async (message) => {
@@ -33,6 +35,7 @@ export async function initializeBot(client: Client) {
   async function shutdown(signal: string) {
     logger.info(`Received ${signal} — shutting down gracefully...`);
     userDataService.saveUserData();
+    stopTiPoller();
     await closeDotabuffBrowser().catch(() => null);
     client.destroy();
     process.exit(0);

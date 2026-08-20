@@ -42,5 +42,7 @@ export { item, ability, hero, aghs, talents } from './reference';
 export { graph } from './matchGraph';
 export { matches } from './matchesPicker';
 export { skillbuild, matchInventory, percent, roles } from './matchUtility';
+// The International
+export { ti } from './ti';
 // Admin
 export { setChannel, unsetChannel } from './setChannel';
