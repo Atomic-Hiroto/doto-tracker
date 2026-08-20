@@ -26,6 +26,11 @@ export const TI_POLL_IDLE_MS = parseInt(process.env.TI_POLL_IDLE_MS || '600000',
 export const TI_ACTIVE_GRACE_MS = parseInt(process.env.TI_ACTIVE_GRACE_MS || '2400000', 10);
 /** Floor between full `/leagues/{id}/matches` sweeps — the safety net for anything `/live` missed. */
 export const TI_SWEEP_MIN_INTERVAL_MS = parseInt(process.env.TI_SWEEP_MIN_INTERVAL_MS || '600000', 10);
+/**
+ * How long to keep asking OpenDota for a match whose live entry has frozen.
+ * Covers ingest lag and long tech pauses; past this the periodic sweep takes over.
+ */
+export const TI_FINISH_GIVEUP_MS = parseInt(process.env.TI_FINISH_GIVEUP_MS || '1800000', 10);
 /** A game posted before OpenDota parsed the replay gets edited later; this is how often we retry. */
 export const TI_REPARSE_INTERVAL_MS = parseInt(process.env.TI_REPARSE_INTERVAL_MS || '420000', 10);
 /** Give up waiting for a parse after this long — some replays never land. */

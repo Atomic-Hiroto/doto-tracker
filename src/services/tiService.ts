@@ -3,7 +3,7 @@ import path from 'path';
 import { AttachmentBuilder, Client, EmbedBuilder, Guild, TextBasedChannel, TextChannel } from 'discord.js';
 import { ChannelConstants } from '../constants';
 import {
-  TI_ACTIVE_GRACE_MS, TI_LEAGUE_ID, TI_LEAGUE_LABEL, TI_LIVE_TICKER, TI_MAIN_STAGE_START,
+  TI_ACTIVE_GRACE_MS, TI_FINISH_GIVEUP_MS, TI_LEAGUE_ID, TI_LEAGUE_LABEL, TI_LIVE_TICKER, TI_MAIN_STAGE_START,
   TI_POLL_ACTIVE_MS, TI_POLL_IDLE_MS, TI_REPARSE_INTERVAL_MS, TI_REPARSE_MAX_AGE_MS,
   TI_STATE_FILE, TI_SWEEP_MIN_INTERVAL_MS,
 } from '../constants/ti';
@@ -60,7 +60,9 @@ interface TiState {
   games: Record<string, TiGameRecord>;
   /** Series id -> the ids of the live-ticker messages already cleaned up, plus the wrap-up post. */
   seriesWrapped: Record<string, string>;
-  live: Record<string, { messageId: string; channelId: string }>;
+  live: Record<string, { messageId: string; channelId: string; gameTime: number; frozenSince: number }>;
+  /** Match ids believed to have just ended, mapped to when we first thought so. */
+  pendingFinish: Record<string, number>;
   lastSweep: number;
   lastReparse: number;
   lastActivity: number;
@@ -71,7 +73,7 @@ const STATE_PATH = path.resolve(process.cwd(), TI_STATE_FILE);
 function emptyState(): TiState {
   return {
     enabled: true, leagueId: TI_LEAGUE_ID, games: {}, seriesWrapped: {},
-    live: {}, lastSweep: 0, lastReparse: 0, lastActivity: 0,
+    live: {}, pendingFinish: {}, lastSweep: 0, lastReparse: 0, lastActivity: 0,
   };
 }
 
@@ -458,13 +460,27 @@ export async function postGame(
 
   let match: any;
   try {
-    match = (await opendotaClient.get(`/matches/${matchId}`)).data;
-  } catch (error) {
-    logger.error(`TI: could not fetch match ${matchId}:`, error);
+    // `refresh` skips the 10-minute match cache. Both callers are polling for a
+    // state change — the match appearing at all, or its replay parse landing —
+    // so a cached copy is exactly the wrong answer.
+    match = (await opendotaClient.get(`/matches/${matchId}`, { refresh: true } as any)).data;
+  } catch (error: any) {
+    // A 404 just means OpenDota has not ingested the match yet; the chase loop
+    // will ask again next tick.
+    if (error?.response?.status === 404) logger.debug(`TI: match ${matchId} not on OpenDota yet`);
+    else logger.error(`TI: could not fetch match ${matchId}:`, error);
     return null;
   }
   if (!match || Number(match.leagueid) !== TI_LEAGUE_ID) {
     logger.warn(`TI: match ${matchId} is not in league ${TI_LEAGUE_ID}, skipping`);
+    return null;
+  }
+  // The hot path asks for a match the moment its live entry freezes, which can be
+  // a minute or two before OpenDota has ingested the result. A half-written match
+  // has no duration and no winner; posting one would put a bogus scoreboard in
+  // chat that never gets corrected.
+  if (!Number(match.duration) || typeof match.radiant_win !== 'boolean' || !match.players?.length) {
+    logger.debug(`TI: match ${matchId} is not complete on OpenDota yet`);
     return null;
   }
 
@@ -492,7 +508,11 @@ export async function postGame(
 
   state.lastActivity = Date.now();
   saveState();
-  logger.info(`TI: posted game ${matchId} (${game.radiantName} vs ${game.direName})`);
+  const lateBySec = Math.round(Date.now() / 1000) - (game.startTime + game.duration);
+  logger.info(
+    `TI: posted game ${matchId} (${game.radiantName} vs ${game.direName}) `
+    + `${lateBySec}s after the game ended`,
+  );
   return game;
 }
 
@@ -500,7 +520,7 @@ export async function postGame(
 async function refreshGame(client: Client, game: TiGameRecord): Promise<boolean> {
   let match: any;
   try {
-    match = (await opendotaClient.get(`/matches/${game.matchId}`)).data;
+    match = (await opendotaClient.get(`/matches/${game.matchId}`, { refresh: true } as any)).data;
   } catch (error) {
     logger.warn(`TI: reparse fetch failed for ${game.matchId}:`, error);
     return false;
@@ -583,7 +603,10 @@ async function updateLiveTicker(channel: PostTarget, liveGames: any[]) {
         }
       }
       const sent = await channel.send({ embeds: [embed] });
-      state.live[matchId] = { messageId: sent.id, channelId: sent.channelId };
+      state.live[matchId] = {
+        messageId: sent.id, channelId: sent.channelId,
+        gameTime: Number(live.game_time || 0), frozenSince: 0,
+      };
       saveState();
     } catch (error) {
       logger.warn(`TI: live ticker update failed for ${matchId}:`, error);
@@ -668,33 +691,87 @@ async function tick(client: Client) {
     return schedule(client, TI_POLL_IDLE_MS);
   }
 
+  // On a cold start `/live` still lists games that finished hours ago, so
+  // reconcile against the league first — otherwise the very first tick posts a
+  // "LIVE" ticker for a game that is already over.
+  if (state.lastSweep === 0) await sweepLeague(channel);
+
   let liveGames: any[] = [];
   try {
-    const live = (await opendotaClient.get<any[]>('/live')).data || [];
+    // Must bypass the shared 60s cache: a cached repeat would carry an identical
+    // game_time and read as a frozen — i.e. finished — game.
+    const live = (await opendotaClient.get<any[]>('/live', { refresh: true } as any)).data || [];
     liveGames = live.filter(entry => Number(entry.league_id) === TI_LEAGUE_ID);
   } catch (error) {
     logger.warn('TI: /live poll failed:', error);
   }
 
+  // OpenDota does not remove a game from `/live` when it ends — the entry simply
+  // stops advancing, sometimes for hours. Waiting for it to disappear meant the
+  // result only landed on the next periodic sweep, up to 15 minutes late. A
+  // frozen `game_time` is the actual end-of-game signal, and it costs nothing.
   const liveIds = new Set(liveGames.map(entry => String(entry.match_id)));
-  const vanished = Object.keys(state.live).filter(matchId => !liveIds.has(matchId));
-
-  if (liveGames.length) state.lastActivity = Date.now();
-  if (TI_LIVE_TICKER && liveGames.length) await updateLiveTicker(channel, liveGames);
-
-  // A game leaving `/live`, or the sweep floor elapsing, is what triggers the
-  // (more expensive) league listing.
-  if (vanished.length || Date.now() - state.lastSweep >= TI_SWEEP_MIN_INTERVAL_MS) {
-    await sweepLeague(channel);
-    // Anything still holding a ticker after the sweep never produced a match we
-    // could post — drop the embed rather than leaving a frozen "LIVE" in chat.
-    for (const matchId of vanished) await clearLiveTicker(client, matchId);
+  const moving: any[] = [];
+  for (const live of liveGames) {
+    const matchId = String(live.match_id);
+    if (state.games[matchId]) continue;
+    const gameTime = Number(live.game_time || 0);
+    const tracked = state.live[matchId];
+    if (tracked && gameTime > 0 && tracked.gameTime === gameTime) {
+      if (!state.pendingFinish[matchId]) {
+        state.pendingFinish[matchId] = Date.now();
+        logger.info(`TI: live entry for ${matchId} froze at ${gameTime}s — looking for the result`);
+      }
+      continue;
+    }
+    // A tech pause also freezes the clock; when it resumes the game leaves the
+    // pending set again and the ticker picks straight back up.
+    if (tracked) { tracked.gameTime = gameTime; tracked.frozenSince = 0; }
+    delete state.pendingFinish[matchId];
+    moving.push(live);
   }
+
+  // Belt and braces: an entry that does vanish is finished too.
+  for (const matchId of Object.keys(state.live)) {
+    if (!liveIds.has(matchId) && !state.games[matchId] && !state.pendingFinish[matchId]) {
+      state.pendingFinish[matchId] = Date.now();
+    }
+  }
+
+  if (moving.length) state.lastActivity = Date.now();
+  if (TI_LIVE_TICKER && moving.length) await updateLiveTicker(channel, moving);
+
+  // Hot path: ask for the finished match by id rather than re-listing the whole
+  // league. Same one call, but it lands as soon as OpenDota has ingested the
+  // match instead of waiting for the league index to catch up.
+  for (const [matchId, since] of Object.entries({ ...state.pendingFinish })) {
+    if (state.games[matchId]) {
+      delete state.pendingFinish[matchId];
+      await clearLiveTicker(client, matchId);
+      continue;
+    }
+    const game = await postGame(channel, Number(matchId));
+    if (game) {
+      delete state.pendingFinish[matchId];
+      state.lastActivity = Date.now();
+      await clearLiveTicker(client, matchId);
+      await wrapSeriesIfDone(channel, game);
+    } else if (Date.now() - since > TI_FINISH_GIVEUP_MS) {
+      logger.warn(`TI: gave up waiting for ${matchId} to appear; the periodic sweep will retry`);
+      delete state.pendingFinish[matchId];
+      await clearLiveTicker(client, matchId);
+    }
+  }
+
+  // The league listing is now only a backstop for anything `/live` never showed
+  // us at all — a game that started and finished between two polls, say.
+  if (Date.now() - state.lastSweep >= TI_SWEEP_MIN_INTERVAL_MS) await sweepLeague(channel);
 
   await reparsePass(client);
   saveState();
 
-  const active = liveGames.length > 0 || Date.now() - state.lastActivity < TI_ACTIVE_GRACE_MS;
+  const chasing = Object.keys(state.pendingFinish).length > 0;
+  const active = moving.length > 0 || chasing || Date.now() - state.lastActivity < TI_ACTIVE_GRACE_MS;
   schedule(client, active ? TI_POLL_ACTIVE_MS : TI_POLL_IDLE_MS);
 }
 
