@@ -2,9 +2,10 @@ import { EmbedBuilder, Message } from 'discord.js';
 import { ProcessConstants } from '../constants';
 import { TI_FANTASY_POINTS, TI_LEAGUE_LABEL, TI_MAIN_STAGE_START } from '../constants/ti';
 import { logger } from '../services/loggerService';
+import { ROLE_ORDER, sortRoles, TiRole } from '../services/tiRoles';
 import {
-  buildSeriesGroups, formatDuration, getTiState, mainStageGames, postGame,
-  seriesLabel, setTiEnabled, sweepLeague, TiFantasyRow, TiGameRecord, PostTarget,
+  buildSeriesGroups, displayWidth, formatDuration, getTiState, mainStageGames, padDisplay,
+  postGame, seriesLabel, setTiEnabled, sweepLeague, TiFantasyRow, TiGameRecord, PostTarget,
 } from '../services/tiService';
 
 const fmt = (points: number) => Math.round(points).toLocaleString('en-US');
@@ -17,6 +18,7 @@ function target(message: Message): PostTarget | null {
 interface AggregateRow {
   name: string;
   team: string;
+  role: TiRole;
   total: number;
   games: number;
   best: number;
@@ -31,13 +33,14 @@ function aggregate(games: TiGameRecord[]): AggregateRow[] {
       const entry = byPlayer.get(key);
       if (!entry) {
         byPlayer.set(key, {
-          name: row.name, team: row.team, total: row.points,
+          name: row.name, team: row.team, role: row.role, total: row.points,
           games: 1, best: row.points, bestHero: row.heroName,
         });
         continue;
       }
       entry.total += row.points;
       entry.games++;
+      if (row.role) entry.role = row.role;
       // Teams do get replaced mid-event; the most recent one is the useful label.
       entry.team = row.team;
       if (row.points > entry.best) { entry.best = row.points; entry.bestHero = row.heroName; }
@@ -125,34 +128,60 @@ async function results(message: Message, args: string[]) {
   });
 }
 
+const ROLE_ALIASES: Record<string, TiRole> = {
+  core: 'Core', carry: 'Core', pos1: 'Core',
+  mid: 'Mid', pos2: 'Mid',
+  off: 'Off', offlane: 'Off', pos3: 'Off',
+  sup: 'Sup', supp: 'Sup', support: 'Sup', pos4: 'Sup', pos5: 'Sup',
+};
+
 async function fantasy(message: Message, args: string[]) {
   const games = mainStageGames();
   if (!games.length) return message.reply('No main-stage games recorded yet, so there is nothing to score.');
 
-  const filter = args.filter(arg => !/^\d+$/.test(arg)).join(' ').toLowerCase();
-  const count = Math.max(3, Math.min(25, Number.parseInt(args.find(arg => /^\d+$/.test(arg)) || '', 10) || 15));
+  const words = args.filter(arg => !/^\d+$/.test(arg)).map(arg => arg.toLowerCase());
+  const roleWord = words.find(word => ROLE_ALIASES[word]);
+  const role = roleWord ? ROLE_ALIASES[roleWord] : null;
+  const filter = words.filter(word => word !== roleWord).join(' ');
+  const count = Math.max(3, Math.min(30, Number.parseInt(args.find(arg => /^\d+$/.test(arg)) || '', 10) || 8));
 
   let rows = aggregate(games);
   if (filter) {
     rows = rows.filter(row => row.name.toLowerCase().includes(filter) || row.team.toLowerCase().includes(filter));
     if (!rows.length) return message.reply(`Nobody matching **${filter}** has played a main-stage game yet.`);
   }
-  rows = rows.slice(0, count);
+  if (role) {
+    rows = rows.filter(row => row.role === role);
+    if (!rows.length) return message.reply(`No **${role}** players on the board yet.`);
+  }
 
-  const nameWidth = Math.max(...rows.map(row => row.name.length), 6);
-  const teamWidth = Math.max(...rows.map(row => row.team.length), 4);
-  const board = rows.map((row, index) =>
-    `${String(index + 1).padStart(2)}. ${fmt(row.total).padStart(8)}  ${row.name.padEnd(nameWidth)}  `
-    + `${row.team.padEnd(teamWidth)}  ${row.games}g  avg ${fmt(row.total / row.games).padStart(6)}`);
+  const nameWidth = Math.max(...rows.map(row => displayWidth(row.name)), 6);
+  const teamWidth = Math.max(...rows.map(row => displayWidth(row.team)), 4);
+  const render = (group: AggregateRow[]) => '```\n' + group.map((row, index) =>
+    `${String(index + 1).padStart(2)}. ${fmt(row.total).padStart(8)}  ${padDisplay(row.name, nameWidth)}  `
+    + `${padDisplay(row.team, teamWidth)}  ${row.games}g  avg ${fmt(row.total / row.games).padStart(6)}`).join('\n') + '\n```';
 
-  return message.reply({
-    embeds: [new EmbedBuilder()
-      .setColor(0x4ecdc4)
-      .setTitle(`⭐ Main-stage fantasy${filter ? ` — ${filter}` : ''}`)
-      .setDescription('```\n' + board.join('\n') + '\n```')
-      .setFooter({ text: `Across ${games.length} games · estimate, see +ti scoring` })
-      .setTimestamp()],
-  });
+  const embed = new EmbedBuilder()
+    .setColor(0x4ecdc4)
+    .setTitle(`⭐ Main-stage fantasy${role ? ` — ${role}` : ''}${filter ? ` — ${filter}` : ''}`)
+    .setFooter({ text: `Across ${games.length} games · OpenDota estimate, see +ti scoring` })
+    .setTimestamp();
+
+  // One board per card slot. A support's total is not comparable with a core's,
+  // because two of the stats supports earn are invisible to OpenDota.
+  if (role || filter) {
+    embed.setDescription(render(rows.slice(0, count)));
+  } else {
+    const slots = [...new Set(rows.map(row => row.role))].sort(sortRoles);
+    for (const slot of slots.filter(entry => ROLE_ORDER.includes(entry))) {
+      embed.addFields({
+        name: slot === 'Core' ? '🗡️ Core' : slot === 'Mid' ? '🔮 Mid' : slot === 'Off' ? '🛡️ Offlane' : '🩹 Support',
+        value: render(rows.filter(row => row.role === slot).slice(0, count)),
+      });
+    }
+    if (!embed.data.fields?.length) embed.setDescription(render(rows.slice(0, count)));
+  }
+  return message.reply({ embeds: [embed] });
 }
 
 async function teams(message: Message) {
@@ -186,8 +215,8 @@ function scoring(message: Message) {
       .setColor(0x4ecdc4)
       .setTitle('📐 How these fantasy points are worked out')
       .setDescription(
-        'The TI 2026 table, applied per game. A series card counts a player\'s **two best games**, '
-        + 'so a 3–0 is worth the same as a 2–0.',
+        'The TI 2026 table, applied per game from OpenDota\'s parsed replay. A series card counts a '
+        + 'player\'s **two best games**, so a 3–0 is worth the same as a 2–0.',
       )
       .addFields(
         {
@@ -212,11 +241,18 @@ function scoring(message: Message) {
             + '```',
         },
         {
-          name: '⚠️ Where it drifts from your real card',
-          value: 'These come from OpenDota\'s parsed replay, which does not track **watchers taken** '
-            + `(${p.watcher} each) or **madstones** (${p.madstone} each) at all, and only sees a lotus once it `
-            + 'becomes a Famango — so it undercounts. Expect to sit a few percent under the official number, '
-            + 'never over.',
+          name: '⚠️ Three stats are missing, and they are not missing evenly',
+          value: `**Watchers** (${p.watcher} each) appear nowhere in OpenDota's match data — nor in Stratz's. `
+            + `**Madstones** (${p.madstone}) are not counted either, only bundle uses. **Lotuses** (${p.lotus}) `
+            + 'are inferred from Famangos in the purchase log, which undercounts them.\n\n'
+            + 'Two of those three are support work, so **supports lose more than cores do** — the shortfall '
+            + 'is plausibly 10–20% for a core and can exceed a third for a support. That is enough to reorder '
+            + 'a mixed board, which is why every listing here ranks **within a card slot** and never across them.',
+        },
+        {
+          name: '✅ What it is good for',
+          value: 'Comparing players in the **same slot**, and tracking form across the event. '
+            + 'Treat it as a strong estimate of a real card, not the card itself.',
         },
       )],
   });

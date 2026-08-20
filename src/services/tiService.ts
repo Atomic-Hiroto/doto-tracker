@@ -11,6 +11,7 @@ import { opendotaClient } from './apiClient';
 import { renderScoreboardFromMatch } from './chartService';
 import { dotaDataService } from './dotaDataService';
 import { logger } from './loggerService';
+import { ensureRoles, roleFor, sortRoles, TiRole, ROLE_ORDER } from './tiRoles';
 import { scoreFantasy, seriesTotal, topContributors } from './tiFantasy';
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,8 @@ export interface TiFantasyRow {
   accountId: number;
   name: string;
   team: string;
+  /** Valve's card slot. Fantasy scores are only comparable inside one of these. */
+  role: TiRole;
   heroId: number;
   heroName: string;
   isRadiant: boolean;
@@ -143,6 +146,21 @@ export function formatDuration(seconds: number): string {
 
 const fmtPoints = (points: number) => points.toLocaleString('en-US');
 
+// TI rosters are full of CJK handles, and those glyphs occupy two monospace
+// cells. Padding by `.length` leaves every column after them ragged.
+const WIDE_GLYPH = /[\u1100-\u115F\u2E80-\uA4CF\uA960-\uA97F\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/;
+
+export function displayWidth(text: string): number {
+  let width = 0;
+  for (const char of text) width += WIDE_GLYPH.test(char) ? 2 : 1;
+  return width;
+}
+
+export function padDisplay(text: string, width: number, align: 'left' | 'right' = 'left'): string {
+  const pad = ' '.repeat(Math.max(0, width - displayWidth(text)));
+  return align === 'left' ? text + pad : pad + text;
+}
+
 /** Every main-stage game we have already recorded, oldest first. */
 export function mainStageGames(): TiGameRecord[] {
   return Object.values(loadState().games).sort((a, b) => a.startTime - b.startTime);
@@ -237,6 +255,7 @@ async function buildRecord(match: any, gameNumber: number): Promise<TiGameRecord
   const radiantName = match.radiant_team?.name || match.radiant_name || 'Radiant';
   const direName = match.dire_team?.name || match.dire_name || 'Dire';
 
+  await ensureRoles();
   const fantasy: TiFantasyRow[] = await Promise.all((match.players || []).map(async (player: any) => {
     const score = scoreFantasy(player, parsed);
     const isRadiant = player.player_slot < 128;
@@ -244,6 +263,7 @@ async function buildRecord(match: any, gameNumber: number): Promise<TiGameRecord
       accountId: Number(player.account_id || 0),
       name: player.name || player.personaname || 'Unknown',
       team: isRadiant ? radiantName : direName,
+      role: roleFor(player.account_id),
       heroId: Number(player.hero_id || 0),
       heroName: await dotaDataService.getHeroName(player.hero_id),
       isRadiant,
@@ -286,13 +306,19 @@ async function buildRecord(match: any, gameNumber: number): Promise<TiGameRecord
  * blocks line up with each other when they sit in the same embed.
  */
 function fantasyBlock(rows: TiFantasyRow[], all: TiFantasyRow[]): string {
-  const nameWidth = Math.max(...all.map(row => row.name.length), 6);
-  const heroWidth = Math.max(...all.map(row => row.heroName.length), 4);
-  const lines = [...rows].sort((a, b) => b.points - a.points).map(row =>
-    `${fmtPoints(row.points).padStart(7)}  ${row.name.padEnd(nameWidth)}  `
-    + `${row.heroName.padEnd(heroWidth)}  ${`${row.kills}/${row.deaths}/${row.assists}`.padStart(8)}`
-    + `  ${(row.netWorth / 1000).toFixed(1).padStart(5)}k`);
-  const header = `${'PTS'.padStart(7)}  ${'PLAYER'.padEnd(nameWidth)}  ${'HERO'.padEnd(heroWidth)}  ${'K/D/A'.padStart(8)}  ${'NET'.padStart(6)}`;
+  const nameWidth = Math.max(...all.map(row => displayWidth(row.name)), 6);
+  const heroWidth = Math.max(...all.map(row => displayWidth(row.heroName)), 4);
+  // Ordered by card slot rather than by score: a support's total is not
+  // comparable with a core's, so ranking them against each other would invite
+  // exactly the wrong reading.
+  const lines = [...rows]
+    .sort((a, b) => sortRoles(a.role, b.role) || b.points - a.points)
+    .map(row =>
+      `${(row.role || '—').padEnd(4)} ${fmtPoints(row.points).padStart(7)}  ${padDisplay(row.name, nameWidth)}  `
+      + `${padDisplay(row.heroName, heroWidth)}  ${`${row.kills}/${row.deaths}/${row.assists}`.padStart(8)}`
+      + `  ${(row.netWorth / 1000).toFixed(1).padStart(5)}k`);
+  const header = `${'SLOT'.padEnd(4)} ${'PTS'.padStart(7)}  ${padDisplay('PLAYER', nameWidth)}  `
+    + `${padDisplay('HERO', heroWidth)}  ${'K/D/A'.padStart(8)}  ${'NET'.padStart(6)}`;
   return '```\n' + header + '\n' + lines.join('\n') + '\n```';
 }
 
@@ -313,7 +339,11 @@ export function buildGameEmbed(game: TiGameRecord, hasImage: boolean): EmbedBuil
       + (series.decided ? '  🏁 **series over**' : '')
     : null;
 
-  const mvp = [...game.fantasy].sort((a, b) => b.points - a.points)[0];
+  const bestByRole = ROLE_ORDER
+    .map(role => [...game.fantasy].filter(row => row.role === role).sort((a, b) => b.points - a.points)[0])
+    .filter(Boolean);
+  const untagged = [...game.fantasy].filter(row => !row.role).sort((a, b) => b.points - a.points)[0];
+  const standouts = bestByRole.length ? bestByRole : (untagged ? [untagged] : []);
 
   const embed = new EmbedBuilder()
     .setColor(0xffb020)
@@ -329,11 +359,12 @@ export function buildGameEmbed(game: TiGameRecord, hasImage: boolean): EmbedBuil
 
   if (hasImage) embed.setImage('attachment://ti-scoreboard.png');
 
-  if (mvp) {
+  if (standouts.length) {
     embed.addFields({
-      name: '⭐ Fantasy MVP',
-      value: `**${mvp.name}** (${mvp.team}) on **${mvp.heroName}** — **${fmtPoints(mvp.points)}** pts`
-        + (mvp.drivers ? `\ncarried by ${mvp.drivers}` : ''),
+      name: '⭐ Best of each card slot',
+      value: standouts.map(row =>
+        `${row.role ? `**${row.role}** · ` : ''}**${row.name}** (${row.team}) on ${row.heroName}`
+        + ` — **${fmtPoints(row.points)}** pts${row.drivers ? ` · ${row.drivers}` : ''}`).join('\n'),
     });
   }
 
@@ -343,6 +374,12 @@ export function buildGameEmbed(game: TiGameRecord, hasImage: boolean): EmbedBuil
     { name: `🟢 ${winner} — fantasy`, value: fantasyBlock(winners, game.fantasy) },
     { name: `🔴 ${loser} — fantasy`, value: fantasyBlock(losers, game.fantasy) },
   );
+
+  embed.addFields({
+    name: '\u200b',
+    value: '-# Fantasy is computed from OpenDota, which cannot see watchers, lotuses or '
+      + 'madstones. Supports lose the most to that, so slots are ranked separately. `+ti scoring`',
+  });
 
   if (!game.parsed) {
     embed.addFields({
@@ -375,9 +412,10 @@ function buildSeriesEmbed(series: TiSeries): EmbedBuilder {
     .map(entry => ({ ...entry.row, points: seriesTotal(entry.scores), games: entry.scores.length }))
     .sort((a, b) => b.points - a.points);
 
-  const nameWidth = Math.max(...totals.map(row => row.name.length), 4);
-  const board = totals.slice(0, 10).map((row, index) =>
-    `${String(index + 1).padStart(2)}. ${fmtPoints(row.points).padStart(7)}  ${row.name.padEnd(nameWidth)}  ${row.team}`);
+  const nameWidth = Math.max(...totals.map(row => displayWidth(row.name)), 4);
+  totals.sort((a, b) => sortRoles(a.role, b.role) || b.points - a.points);
+  const board = totals.slice(0, 10).map(row =>
+    `${(row.role || '—').padEnd(4)} ${fmtPoints(row.points).padStart(7)}  ${padDisplay(row.name, nameWidth)}  ${row.team}`);
 
   return new EmbedBuilder()
     .setColor(0x4ecdc4)
@@ -393,7 +431,7 @@ function buildSeriesEmbed(series: TiSeries): EmbedBuilder {
       }).join('\n'),
     )
     .addFields({
-      name: '⭐ Series fantasy (best 2 games, TI scoring)',
+      name: '⭐ Series fantasy by card slot (best 2 games, TI scoring)',
       value: '```\n' + board.join('\n') + '\n```',
     })
     .setFooter({ text: `${TI_LEAGUE_LABEL} · Main Stage` })
