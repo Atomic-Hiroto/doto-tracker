@@ -1,5 +1,5 @@
 import { opendotaClient } from './apiClient';
-import { fetchStratzMatch } from './stratzClient';
+import { fetchStratzMatchDetailed, SourceStatus, StratzMatchResult } from './stratzClient';
 import { mmrToMedal, rankTierToMMR, rankTierToMedal } from './turboRankService';
 
 const PROFILE_RANK_CACHE_MS = 6 * 60 * 60 * 1000;
@@ -29,6 +29,10 @@ export interface MatchRankDisplay {
   lobbyRankLabel?: string;
   visibleRankCount: number;
   playersBySteamId: Map<string, RankDisplayEntry>;
+  /** How many players the match has at all, so callers can say "6/10 ranks". */
+  totalPlayers: number;
+  /** Which providers actually answered, so callers can explain a thin board. */
+  providers: { stratz: SourceStatus; opendota: SourceStatus };
 }
 
 const profileRankCache = new Map<string, CachedProfileRank>();
@@ -85,14 +89,24 @@ function averageRankLabel(ranks: RankDisplayEntry[]): string | undefined {
   return mmrToMedal(avg).medal;
 }
 
-async function fetchOpenDotaProfileRank(steamId: string): Promise<RankCandidate | null> {
+/**
+ * @returns `reachable: false` only when the request itself failed. A player who
+ *          simply has no medal on OpenDota is a reachable null, and must not be
+ *          reported to the user as an outage.
+ */
+async function fetchOpenDotaProfileRank(
+  steamId: string,
+): Promise<{ rank: RankCandidate | null; reachable: boolean }> {
   const cached = profileRankCache.get(steamId);
-  if (cached && cached.expiresAt > Date.now()) return cached.rank;
+  if (cached && cached.expiresAt > Date.now()) return { rank: cached.rank, reachable: true };
 
   try {
     const response = await opendotaClient.get<{ rank_tier?: number; leaderboard_rank?: number | null }>(
       `/players/${steamId}`,
-      { timeout: 12000 },
+      // Ten of these fire per scoreboard. Retrying each one three times turns a
+      // provider outage into a two-minute stall, and a missing medal is a far
+      // cheaper failure than a command that never answers.
+      { timeout: 12000, 'axios-retry': { retries: 0 } } as any,
     );
     const rankTier = normalizeRankTier(response.data?.rank_tier);
     const rank = rankTier
@@ -103,19 +117,35 @@ async function fetchOpenDotaProfileRank(steamId: string): Promise<RankCandidate 
       }
       : null;
     profileRankCache.set(steamId, { expiresAt: Date.now() + PROFILE_RANK_CACHE_MS, rank });
-    return rank;
+    return { rank, reachable: true };
   } catch {
     profileRankCache.set(steamId, { expiresAt: Date.now() + 10 * 60 * 1000, rank: null });
-    return null;
+    return { rank: null, reachable: false };
   }
 }
 
-export async function resolveMatchRankDisplay(match: any): Promise<MatchRankDisplay | null> {
+/**
+ * Merges medals from both providers, taking the highest each one is willing to
+ * show. Neither is authoritative: OpenDota only knows a rank if the player has
+ * ever opened their profile there, STRATZ only if it has ingested the match. A
+ * player visible to one and not the other is the normal case, not an error, so
+ * this never fails on a provider being absent — it records which one was and
+ * lets the caller say so.
+ *
+ * @param stratzResult  A STRATZ fetch the caller already made. Pass it to avoid
+ *                      a second round trip; omit it to have one made here.
+ */
+export async function resolveMatchRankDisplay(
+  match: any,
+  stratzResult?: StratzMatchResult,
+): Promise<MatchRankDisplay | null> {
   const matchId = Number(match?.match_id);
   const players: any[] = Array.isArray(match?.players) ? match.players : [];
   if (!matchId || players.length === 0) return null;
 
-  const stratzMatch = await fetchStratzMatch(matchId).catch(() => null);
+  const stratz = stratzResult
+    ?? await fetchStratzMatchDetailed(matchId).catch((): StratzMatchResult => ({ match: null, status: 'error' }));
+  const stratzMatch = stratz.match;
   const stratzPlayers = new Map<string, RankCandidate>();
   for (const player of stratzMatch?.players ?? []) {
     const steamId = player.steamAccountId != null ? String(player.steamAccountId) : null;
@@ -134,6 +164,7 @@ export async function resolveMatchRankDisplay(match: any): Promise<MatchRankDisp
     .map(String);
   const uniqueSteamIds = [...new Set(steamIds)];
   const openDotaRanks = new Map<string, RankCandidate>();
+  let openDotaReachable = false;
 
   await Promise.all(uniqueSteamIds.map(async (steamId) => {
     const matchPlayer = players.find((player) => String(player.account_id || '') === steamId);
@@ -145,8 +176,9 @@ export async function resolveMatchRankDisplay(match: any): Promise<MatchRankDisp
         source: 'opendota',
       }
       : null;
-    const profileRank = await fetchOpenDotaProfileRank(steamId);
-    const best = chooseHigherRank(matchRank, profileRank);
+    const profile = await fetchOpenDotaProfileRank(steamId);
+    if (profile.reachable) openDotaReachable = true;
+    const best = chooseHigherRank(matchRank, profile.rank);
     if (best) openDotaRanks.set(steamId, best);
   }));
 
@@ -170,10 +202,13 @@ export async function resolveMatchRankDisplay(match: any): Promise<MatchRankDisp
   );
   const lobbyRankLabel = formatRankLabel(stratzAverageRank) ?? averageRankLabel(entries);
 
-  if (!lobbyRankLabel && entries.length === 0) return null;
+  const openDotaStatus: SourceStatus = openDotaReachable || uniqueSteamIds.length === 0 ? 'ok' : 'error';
+
   return {
     lobbyRankLabel: lobbyRankLabel ?? undefined,
     visibleRankCount: entries.length,
     playersBySteamId,
+    totalPlayers: players.length,
+    providers: { stratz: stratz.status, opendota: openDotaStatus },
   };
 }

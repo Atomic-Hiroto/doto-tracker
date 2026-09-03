@@ -152,14 +152,31 @@ query ($matchId: Long!) {
 import { StratzMatch } from '../models/StratzMatchData';
 
 /**
+ * Why a provider came back empty. Callers that merge several providers need to
+ * tell "this match isn't ingested yet" apart from "the API is down", because
+ * only the first one is worth telling the user about.
+ */
+export type SourceStatus = 'ok' | 'missing' | 'error' | 'disabled';
+
+export interface StratzMatchResult {
+  match: StratzMatch | null;
+  status: SourceStatus;
+}
+
+/**
  * Fetches a full match's details from the Stratz GraphQL API.
- * 
+ *
  * @param matchId  The ID of the match to fetch
  */
 export async function fetchStratzMatch(matchId: number): Promise<StratzMatch | null> {
+  return (await fetchStratzMatchDetailed(matchId)).match;
+}
+
+/** As {@link fetchStratzMatch}, but says why it failed instead of only that it did. */
+export async function fetchStratzMatchDetailed(matchId: number): Promise<StratzMatchResult> {
   if (!STRATZ_API_KEY) {
     logger.warn('STRATZ_API_KEY not set — cannot fetch Stratz match data');
-    return null;
+    return { match: null, status: 'disabled' };
   }
 
   try {
@@ -189,7 +206,7 @@ export async function fetchStratzMatch(matchId: number): Promise<StratzMatch | n
 
     if (!match) {
       logger.warn(`Stratz API returned no match data for ${matchId}`);
-      return null;
+      return { match: null, status: 'missing' };
     }
 
     // Map fields for backward compatibility if needed
@@ -198,10 +215,10 @@ export async function fetchStratzMatch(matchId: number): Promise<StratzMatch | n
     match.duration = match.durationSeconds || 0;
     match.start_time = match.startDateTime || 0;
 
-    return match;
+    return { match, status: 'ok' };
   } catch (error: any) {
     logger.error(`Stratz fetch match error for ${matchId}:`, error?.response?.data ?? error?.message ?? error);
-    return null;
+    return { match: null, status: 'error' };
   }
 }
 
@@ -341,6 +358,120 @@ export async function fetchPlayerTopTurboHero(steamAccountId: number, sample = 4
     logger.error(`Stratz top-turbo-hero error for ${steamAccountId}:`, error?.response?.data ?? error?.message ?? error);
     return null;
   }
+}
+
+// ── Recent-match fallback ────────────────────────────────────────────────────
+
+/**
+ * STRATZ names game modes; OpenDota numbers them. Everything downstream speaks
+ * OpenDota, so translate on the way out. Unknown modes fall through as 0.
+ */
+export const STRATZ_GAME_MODE_IDS: Record<string, number> = {
+  ALL_PICK: 22,
+  ALL_PICK_RANKED: 22,
+  CAPTAINS_MODE: 2,
+  RANDOM_DRAFT: 3,
+  SINGLE_DRAFT: 4,
+  ALL_RANDOM: 5,
+  REVERSE_CAPTAINS_MODE: 8,
+  CAPTAINS_DRAFT: 16,
+  TURBO: 23,
+  MUTATION: 24,
+  ABILITY_DRAFT: 18,
+  ALL_RANDOM_DEATH_MATCH: 20,
+};
+
+const PLAYER_RECENT_MATCHES_QUERY = `
+query ($steamAccountId: Long!, $take: Int!) {
+  player(steamAccountId: $steamAccountId) {
+    matches(request: { take: $take, orderBy: DESC }) {
+      id
+      startDateTime
+      durationSeconds
+      gameMode
+      didRadiantWin
+      averageRank
+      players {
+        steamAccountId
+        heroId
+        playerSlot
+        isRadiant
+        kills
+        deaths
+        assists
+        goldPerMinute
+        experiencePerMinute
+        numLastHits
+        numDenies
+        networth
+      }
+    }
+  }
+}
+`;
+
+/**
+ * A player's recent matches, shaped like OpenDota's /players/{id}/recentMatches
+ * so the same renderers can consume either provider. Used when OpenDota is the
+ * one that's down — STRATZ can't reproduce the +rs filter DSL, so this is only
+ * a fallback for the plain "last N matches" path.
+ */
+export async function fetchStratzPlayerRecentMatches(
+  steamAccountId: number,
+  take = 10,
+): Promise<any[]> {
+  if (!STRATZ_API_KEY) return [];
+  try {
+    const response = await axios.post(
+      STRATZ_GQL,
+      { query: PLAYER_RECENT_MATCHES_QUERY, variables: { steamAccountId, take } },
+      { headers: STRATZ_HEADERS, timeout: 30000 },
+    );
+    const matches = response.data?.data?.player?.matches ?? [];
+    const rows: any[] = [];
+    for (const match of matches) {
+      const me = (match.players ?? []).find(
+        (p: any) => String(p.steamAccountId) === String(steamAccountId),
+      );
+      if (!me) continue;
+      rows.push({
+        match_id: match.id,
+        start_time: match.startDateTime,
+        duration: match.durationSeconds ?? 0,
+        game_mode: STRATZ_GAME_MODE_IDS[String(match.gameMode)] ?? 0,
+        radiant_win: !!match.didRadiantWin,
+        average_rank: match.averageRank ?? 0,
+        hero_id: me.heroId,
+        player_slot: stratzPlayerSlot(me),
+        kills: me.kills ?? 0,
+        deaths: me.deaths ?? 0,
+        assists: me.assists ?? 0,
+        gold_per_min: me.goldPerMinute ?? 0,
+        xp_per_min: me.experiencePerMinute ?? 0,
+        last_hits: me.numLastHits ?? 0,
+        denies: me.numDenies ?? 0,
+        net_worth: me.networth ?? 0,
+      });
+    }
+    return rows;
+  } catch (error: any) {
+    logger.error(
+      `Stratz recent-matches error for ${steamAccountId}:`,
+      error?.response?.data ?? error?.message ?? error,
+    );
+    return [];
+  }
+}
+
+/**
+ * OpenDota encodes the team in the slot (0-4 radiant, 128-132 dire). STRATZ
+ * usually does too, but it also carries an explicit isRadiant, so trust that
+ * and normalise rather than assuming the slot is already offset.
+ */
+export function stratzPlayerSlot(player: any): number {
+  const slot = Number(player?.playerSlot ?? 0);
+  const base = slot >= 128 ? slot - 128 : slot;
+  return player?.isRadiant === false ? base + 128 : base;
 }
 
 export interface TurboHeroMatchItems {
