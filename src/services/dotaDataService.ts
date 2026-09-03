@@ -29,6 +29,12 @@ interface AbilityData {
 
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const EMPTY_RETRY_INTERVAL_MS = 60 * 1000; // a failed load is worth retrying soon
+
+// Nothing logs into Discord until these three have resolved, and the default
+// client rides a 60s timeout through three retries per endpoint — so a provider
+// outage used to keep the whole bot offline for eight minutes at boot. The load
+// retries on demand now, so waiting out the full ladder here buys nothing.
+const CONSTANTS_FETCH: any = { timeout: 20_000, 'axios-retry': { retries: 1 } };
 const HERO_ALIASES: Record<string, string> = {
     am: 'antimage',
     aa: 'ancientapparition',
@@ -91,7 +97,7 @@ class DotaDataService {
 
     private async fetchHeroes(): Promise<void> {
         try {
-            const response = await opendotaClient.get<HeroData[]>('/heroes');
+            const response = await opendotaClient.get<HeroData[]>('/heroes', CONSTANTS_FETCH);
             this.heroes.clear();
             for (const hero of response.data) {
                 this.heroes.set(hero.id, hero);
@@ -103,7 +109,7 @@ class DotaDataService {
 
     private async fetchItems(): Promise<void> {
         try {
-            const response = await opendotaClient.get<Record<string, ItemData>>('/constants/items');
+            const response = await opendotaClient.get<Record<string, ItemData>>('/constants/items', CONSTANTS_FETCH);
             this.items.clear();
             for (const [internalName, item] of Object.entries(response.data)) {
                 if (item.id !== undefined) {
@@ -119,8 +125,8 @@ class DotaDataService {
     private async fetchAbilities(): Promise<void> {
         try {
             const [abilitiesResponse, abilityIdsResponse] = await Promise.all([
-                opendotaClient.get<Record<string, any>>('/constants/abilities'),
-                opendotaClient.get<Record<string, string>>('/constants/ability_ids'),
+                opendotaClient.get<Record<string, any>>('/constants/abilities', CONSTANTS_FETCH),
+                opendotaClient.get<Record<string, string>>('/constants/ability_ids', CONSTANTS_FETCH),
             ]);
             const abilities = abilitiesResponse.data || {};
             const abilityIds = abilityIdsResponse.data || {};
