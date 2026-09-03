@@ -18,3 +18,4 @@ rich_prompt_totality_dump*.txt
 
 # local experiment scripts / rendered previews
 scratch/
+dotaConstants.json
