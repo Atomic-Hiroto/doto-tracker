@@ -1,5 +1,7 @@
 import { opendotaClient } from './apiClient';
 import { logger } from './loggerService';
+import axios from 'axios';
+import fs from 'fs';
 
 interface HeroData {
     id: number;
@@ -41,6 +43,38 @@ const CONSTANTS_FETCH: any = { timeout: 20_000, 'axios-retry': { retries: 1 } };
 // timeout can't be trusted to bound this. The login waits on a wall clock
 // instead; a fetch that lands late still populates the cache on its way out.
 const BOOT_LOAD_DEADLINE_MS = 25_000;
+
+// These tables have exactly one upstream, and when it is down every hero in the
+// bot renders as "Unknown Hero" with no portrait and no items. So: keep the last
+// good copy on disk, and know a second host that serves the same data. The
+// mirror is the build output OpenDota itself publishes, so the shapes match —
+// except that heroes.json is keyed by id where /heroes returns an array.
+const CONSTANTS_MIRROR = 'https://raw.githubusercontent.com/odota/dotaconstants/master/build';
+const CONSTANTS_CACHE_FILE = process.env.DOTA_CONSTANTS_CACHE || 'dotaConstants.json';
+
+interface ConstantsCacheFile {
+    savedAt: number;
+    heroes: HeroData[];
+    items: ItemData[];
+    abilities: AbilityData[];
+}
+
+/** Pulls one constants table, preferring OpenDota and falling back to the mirror. */
+async function fetchConstants<T>(openDotaPath: string, mirrorFile: string): Promise<T | null> {
+    try {
+        const response = await opendotaClient.get<T>(openDotaPath, CONSTANTS_FETCH);
+        if (response.data) return response.data;
+    } catch (error: any) {
+        logger.warn(`Constants: OpenDota ${openDotaPath} failed (${error?.response?.status ?? error?.code ?? 'no response'}), trying the mirror`);
+    }
+    try {
+        const response = await axios.get<T>(`${CONSTANTS_MIRROR}/${mirrorFile}`, { timeout: 20_000 });
+        return response.data ?? null;
+    } catch (error: any) {
+        logger.error(`Constants: mirror ${mirrorFile} failed too:`, error?.message ?? error);
+        return null;
+    }
+}
 const HERO_ALIASES: Record<string, string> = {
     am: 'antimage',
     aa: 'ancientapparition',
@@ -93,55 +127,100 @@ class DotaDataService {
 
     async initialize(): Promise<void> {
         logger.info('Initializing DotaDataService — loading hero, item and ability data...');
-        const load = Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
+
+        // A cached copy makes the bot usable the moment it logs in, and keeps it
+        // usable through an upstream outage. Hero and item tables only change on
+        // a patch, so serving yesterday's copy costs nothing worth having.
+        if (this.loadFromDisk()) {
+            logger.info(`DotaDataService: ${this.heroes.size} heroes restored from ${CONSTANTS_CACHE_FILE}; refreshing in the background.`);
+            this.initialized = true;
+            void this.reload().catch(() => undefined);
+            return;
+        }
+
         let timer: NodeJS.Timeout | undefined;
         await Promise.race([
-            load,
+            this.reload(),
             new Promise<void>((resolve) => { timer = setTimeout(resolve, BOOT_LOAD_DEADLINE_MS); }),
         ]);
         if (timer) clearTimeout(timer);
-        this.lastRefresh = Date.now();
         this.initialized = this.heroes.size > 0;
         const line = `DotaDataService ready: ${this.heroes.size} heroes, ${this.items.size} items, ${this.abilities.size} abilities loaded.`;
         if (this.initialized) logger.info(line);
-        else logger.error(`${line} The provider was unreachable at boot — retrying on demand.`);
+        else logger.error(`${line} Every source was unreachable at boot — retrying on demand.`);
+    }
+
+    /** Fetches all three tables and, if anything came back, saves them for next boot. */
+    private async reload(): Promise<void> {
+        await Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
+        this.lastRefresh = Date.now();
+        if (this.heroes.size > 0) {
+            this.initialized = true;
+            this.saveToDisk();
+        }
+    }
+
+    private loadFromDisk(): boolean {
+        try {
+            if (!fs.existsSync(CONSTANTS_CACHE_FILE)) return false;
+            const cache: ConstantsCacheFile = JSON.parse(fs.readFileSync(CONSTANTS_CACHE_FILE, 'utf-8'));
+            if (!cache?.heroes?.length) return false;
+            for (const hero of cache.heroes) this.heroes.set(hero.id, hero);
+            for (const item of cache.items || []) this.items.set(item.id, item);
+            for (const ability of cache.abilities || []) this.abilities.set(ability.id, ability);
+            return true;
+        } catch (error) {
+            logger.warn(`DotaDataService: could not read ${CONSTANTS_CACHE_FILE}:`, error);
+            return false;
+        }
+    }
+
+    private saveToDisk(): void {
+        try {
+            const cache: ConstantsCacheFile = {
+                savedAt: Date.now(),
+                heroes: [...this.heroes.values()],
+                items: [...this.items.values()],
+                abilities: [...this.abilities.values()],
+            };
+            fs.writeFileSync(CONSTANTS_CACHE_FILE, JSON.stringify(cache));
+        } catch (error) {
+            logger.warn(`DotaDataService: could not write ${CONSTANTS_CACHE_FILE}:`, error);
+        }
     }
 
     private async fetchHeroes(): Promise<void> {
-        try {
-            const response = await opendotaClient.get<HeroData[]>('/heroes', CONSTANTS_FETCH);
-            this.heroes.clear();
-            for (const hero of response.data) {
-                this.heroes.set(hero.id, hero);
-            }
-        } catch (error) {
-            logger.error('Failed to fetch hero data:', error);
+        const data = await fetchConstants<HeroData[] | Record<string, HeroData>>('/heroes', 'heroes.json');
+        if (!data) return;
+        const heroes = Array.isArray(data) ? data : Object.values(data);
+        if (heroes.length === 0) return;
+        this.heroes.clear();
+        for (const hero of heroes) {
+            if (hero?.id != null) this.heroes.set(hero.id, hero);
         }
     }
 
     private async fetchItems(): Promise<void> {
-        try {
-            const response = await opendotaClient.get<Record<string, ItemData>>('/constants/items', CONSTANTS_FETCH);
-            this.items.clear();
-            for (const [internalName, item] of Object.entries(response.data)) {
-                if (item.id !== undefined) {
-                    item.internalName = internalName;
-                    this.items.set(item.id, item);
-                }
+        const data = await fetchConstants<Record<string, ItemData>>('/constants/items', 'items.json');
+        if (!data) return;
+        const entries = Object.entries(data);
+        if (entries.length === 0) return;
+        this.items.clear();
+        for (const [internalName, item] of entries) {
+            if (item?.id !== undefined) {
+                item.internalName = internalName;
+                this.items.set(item.id, item);
             }
-        } catch (error) {
-            logger.error('Failed to fetch item data:', error);
         }
     }
 
     private async fetchAbilities(): Promise<void> {
         try {
-            const [abilitiesResponse, abilityIdsResponse] = await Promise.all([
-                opendotaClient.get<Record<string, any>>('/constants/abilities', CONSTANTS_FETCH),
-                opendotaClient.get<Record<string, string>>('/constants/ability_ids', CONSTANTS_FETCH),
+            const [abilities, abilityIds] = await Promise.all([
+                fetchConstants<Record<string, any>>('/constants/abilities', 'abilities.json'),
+                fetchConstants<Record<string, string>>('/constants/ability_ids', 'ability_ids.json'),
             ]);
-            const abilities = abilitiesResponse.data || {};
-            const abilityIds = abilityIdsResponse.data || {};
+            if (!abilities || !abilityIds) return;
             this.abilities.clear();
             for (const [idText, internalName] of Object.entries(abilityIds)) {
                 const id = Number(idText);
@@ -171,12 +250,7 @@ class DotaDataService {
                     ? 'DotaDataService: hero cache is empty — retrying the load...'
                     : 'DotaDataService: refreshing stale hero/item/ability cache...'
             );
-            this.refreshing = Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()])
-                .then(() => {
-                    this.lastRefresh = Date.now();
-                    this.initialized = this.heroes.size > 0;
-                })
-                .finally(() => { this.refreshing = null; });
+            this.refreshing = this.reload().finally(() => { this.refreshing = null; });
         }
         await this.refreshing;
     }
