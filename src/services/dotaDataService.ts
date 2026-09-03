@@ -35,6 +35,12 @@ const EMPTY_RETRY_INTERVAL_MS = 60 * 1000; // a failed load is worth retrying so
 // outage used to keep the whole bot offline for eight minutes at boot. The load
 // retries on demand now, so waiting out the full ladder here buys nothing.
 const CONSTANTS_FETCH: any = { timeout: 20_000, 'axios-retry': { retries: 1 } };
+
+// Measured against a Cloudflare 522: axios honoured the 20s timeout on the
+// first attempt and then let the retry run for 2m20s, so the HTTP layer's own
+// timeout can't be trusted to bound this. The login waits on a wall clock
+// instead; a fetch that lands late still populates the cache on its way out.
+const BOOT_LOAD_DEADLINE_MS = 25_000;
 const HERO_ALIASES: Record<string, string> = {
     am: 'antimage',
     aa: 'ancientapparition',
@@ -87,7 +93,13 @@ class DotaDataService {
 
     async initialize(): Promise<void> {
         logger.info('Initializing DotaDataService — loading hero, item and ability data...');
-        await Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
+        const load = Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
+        let timer: NodeJS.Timeout | undefined;
+        await Promise.race([
+            load,
+            new Promise<void>((resolve) => { timer = setTimeout(resolve, BOOT_LOAD_DEADLINE_MS); }),
+        ]);
+        if (timer) clearTimeout(timer);
         this.lastRefresh = Date.now();
         this.initialized = this.heroes.size > 0;
         const line = `DotaDataService ready: ${this.heroes.size} heroes, ${this.items.size} items, ${this.abilities.size} abilities loaded.`;
