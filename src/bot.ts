@@ -43,6 +43,17 @@ export async function initializeBot(client: Client) {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
+  // A rejected promise anywhere — a Discord send that lost its target message, a
+  // provider timing out inside a fire-and-forget task — used to exit the process
+  // and take every other user's command down with it. Log it and stay up; the
+  // command that caused it has already failed on its own terms.
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled promise rejection (bot staying up):', reason);
+  });
+  process.on('uncaughtException', (error) => {
+    logger.error('Uncaught exception (bot staying up):', error);
+  });
+
 
   return client;
 }

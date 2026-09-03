@@ -6,11 +6,13 @@ import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
 import { parseArgs, parseIntArg } from '../utils/argParser';
 import { formatDuration } from '../utils/formatters';
-import { safeTyping } from '../utils/channelHelpers';
+import { safeTyping, safeReply } from '../utils/channelHelpers';
 import { createMatchActionRow } from '../components/matchButtons';
 import { renderRecentMatchesTableWithIcons, renderScoreboardFromMatch, MatchRow } from '../services/chartService';
 import { applyResidualFilters, parseMatchFilter, queryString } from '../utils/matchFilter';
 import { formatRankLabel } from '../services/rankDisplayService';
+import { fetchCombinedMatch, sourceCredit, sourceNotice } from '../services/matchSourceService';
+import { fetchStratzPlayerRecentMatches } from '../services/stratzClient';
 
 const GAME_MODES: Record<number, string> = {
   0: 'Unknown', 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft',
@@ -31,7 +33,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
 
   const user = userDataService.getUserByDiscordId(discordId);
   if (!user) {
-    return message.reply(Replies.notRegistered(message.author.id, discordId, targetUser.username));
+    return safeReply(message, Replies.notRegistered(message.author.id, discordId, targetUser.username));
   }
 
   // Parse count arg — +rs 5 or default 1. Keep the remaining words for the filter DSL.
@@ -58,11 +60,30 @@ export async function recentStats(message: Message, args: string[], userDataServ
     const endpoint = filter.consumedAny
       ? `/players/${user.steamId}/matches${queryString({ ...filter.openDotaParams, limit: fetchCount, significant: 0 })}`
       : `/players/${user.steamId}/recentMatches?limit=${fetchCount}`;
-    const response = await opendotaClient.get<Array<any>>(endpoint);
-    let matches = applyResidualFilters(response.data || [], filter);
+    // Both providers can serve this, and neither is reliably up. OpenDota stays
+    // first because it is the only one that understands the filter DSL, but a
+    // plain "last N matches" falls through to STRATZ rather than failing.
+    let matches: any[] = [];
+    let listNotice: string | null = null;
+    try {
+      const response = await opendotaClient.get<Array<any>>(endpoint);
+      matches = applyResidualFilters(response.data || [], filter);
+    } catch (listError) {
+      logger.warn(`+rs: OpenDota match list failed for ${user.steamId}, falling back to STRATZ:`, listError);
+      if (filter.consumedAny) {
+        return safeReply(
+          message,
+          "OpenDota isn't responding right now, and the filters (`won`, `as invoker`, `this week`…) only work there. "
+          + 'A plain `+rs` or `+rs 5` still works — those can come from STRATZ.',
+        );
+      }
+      matches = await fetchStratzPlayerRecentMatches(Number(user.steamId), fetchCount);
+      if (matches.length === 0) throw listError;
+      listNotice = "⚠️ OpenDota didn't respond — this came from STRATZ instead.";
+    }
 
     if (matches.length === 0) {
-      return message.reply(filter.consumedAny ? 'No matches found with those filters.' : 'No recent matches found for this user.');
+      return safeReply(message, filter.consumedAny ? 'No matches found with those filters.' : 'No recent matches found for this user.');
     }
 
     matches = matches.slice(0, count);
@@ -75,13 +96,26 @@ export async function recentStats(message: Message, args: string[], userDataServ
       const didWin = (isRadiant && match.radiant_win) || (!isRadiant && !match.radiant_win);
       const files: AttachmentBuilder[] = [];
       let hasBoard = false;
+      let boardNotice: string | null = null;
+      let boardCredit: string | null = null;
 
       try {
-        const { data: detailedMatch } = await opendotaClient.get<any>(`/matches/${match.match_id}`);
-        if (detailedMatch?.players?.length) {
-          const board = await renderScoreboardFromMatch(detailedMatch, [user.steamId], undefined, { detailed: detailedView });
+        // Asks OpenDota and STRATZ at the same time and renders from whichever
+        // answered, merging the medals both are willing to show.
+        const combined = await fetchCombinedMatch(Number(match.match_id));
+        if (combined) {
+          const board = await renderScoreboardFromMatch(
+            combined.match,
+            [user.steamId],
+            combined.rankDisplay,
+            { detailed: detailedView },
+          );
           files.push(new AttachmentBuilder(board, { name: 'scoreboard.png' }));
           hasBoard = true;
+          boardNotice = sourceNotice(combined);
+          boardCredit = sourceCredit(combined);
+        } else {
+          boardNotice = "⚠️ Neither OpenDota nor STRATZ has this match yet — showing the summary only.";
         }
       } catch (boardError) {
         logger.warn(`Could not render +rs scoreboard for match ${match.match_id}:`, boardError);
@@ -90,7 +124,11 @@ export async function recentStats(message: Message, args: string[], userDataServ
       const embed = new EmbedBuilder()
         .setColor(didWin ? '#66bb6a' : '#ef5350')
         .setTitle(`Recent Match — ${targetUser.username}`)
-        .setDescription(`**${didWin ? '✅ Victory' : '❌ Defeat'}** as **${heroName}**`)
+        .setDescription(
+          [`**${didWin ? '✅ Victory' : '❌ Defeat'}** as **${heroName}**`, listNotice, boardNotice]
+            .filter(Boolean)
+            .join('\n'),
+        )
         .setURL(`https://www.opendota.com/matches/${match.match_id}`)
         .setTimestamp(new Date(match.start_time * 1000));
 
@@ -98,9 +136,12 @@ export async function recentStats(message: Message, args: string[], userDataServ
         embed
           .setImage('attachment://scoreboard.png')
           .setFooter({
-            text: detailedView
-              ? 'Detailed scorecard: G/X, net/LH/DN, hero/tower damage, healing, stun duration. Ranks shown when visible.'
-              : 'Ranks shown when visible from STRATZ/OpenDota. Use +rs detailed for damage/heal/stun columns.',
+            text: [
+              boardCredit ?? 'Ranks shown when visible',
+              detailedView
+                ? 'G/X, net/LH/DN, hero+tower damage, healing, stun'
+                : '+rs detailed adds damage/heal/stun columns',
+            ].join(' • '),
           });
       } else {
         embed
@@ -119,7 +160,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
       const components = !didWin
         ? [createMatchActionRow(match.match_id, { showCoach: true, coachSteamId: user.steamId })]
         : [createMatchActionRow(match.match_id)];
-      return message.reply({ embeds: [embed], files, components });
+      return safeReply(message, { embeds: [embed], files, components });
     }
 
     // Multiple matches — compact summary table
@@ -154,6 +195,7 @@ export async function recentStats(message: Message, args: string[], userDataServ
 
     const filterDesc = [
       filter.descriptionParts.length ? filter.descriptionParts.join(' • ') : '',
+      listNotice ? 'source: STRATZ (OpenDota unavailable)' : '',
     ].filter(Boolean).join(' | ');
 
     const tableImage = await renderRecentMatchesTableWithIcons(tableRows, {
@@ -168,12 +210,13 @@ export async function recentStats(message: Message, args: string[], userDataServ
       .setColor('#7c3aed')
       .setTitle(`📊 Last ${totalGames} Matches — ${targetUser.username}`)
       .setImage('attachment://recent.png')
+      .setDescription(listNotice ?? null)
       .setFooter({ text: `Try +rs 10 won as invoker this week • old flags still work` })
       .setTimestamp();
 
-    await message.reply({ embeds: [embed], files: [attachment] });
+    await safeReply(message, { embeds: [embed], files: [attachment] });
   } catch (error) {
     logger.error(`Error in recentStats for user ${discordId}:`, error);
-    await message.reply('An error occurred while fetching match history. Please try again later.');
+    await safeReply(message, 'An error occurred while fetching match history. Please try again later.');
   }
 }

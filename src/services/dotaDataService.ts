@@ -28,6 +28,7 @@ interface AbilityData {
 }
 
 const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const EMPTY_RETRY_INTERVAL_MS = 60 * 1000; // a failed load is worth retrying soon
 const HERO_ALIASES: Record<string, string> = {
     am: 'antimage',
     aa: 'ancientapparition',
@@ -76,13 +77,16 @@ class DotaDataService {
     private abilities: Map<number, AbilityData> = new Map();
     private lastRefresh: number = 0;
     private initialized = false;
+    private refreshing: Promise<void> | null = null;
 
     async initialize(): Promise<void> {
         logger.info('Initializing DotaDataService — loading hero, item and ability data...');
         await Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
         this.lastRefresh = Date.now();
-        this.initialized = true;
-        logger.info(`DotaDataService ready: ${this.heroes.size} heroes, ${this.items.size} items, ${this.abilities.size} abilities loaded.`);
+        this.initialized = this.heroes.size > 0;
+        const line = `DotaDataService ready: ${this.heroes.size} heroes, ${this.items.size} items, ${this.abilities.size} abilities loaded.`;
+        if (this.initialized) logger.info(line);
+        else logger.error(`${line} The provider was unreachable at boot — retrying on demand.`);
     }
 
     private async fetchHeroes(): Promise<void> {
@@ -136,11 +140,27 @@ class DotaDataService {
     }
 
     private async refreshIfStale(): Promise<void> {
-        if (Date.now() - this.lastRefresh > REFRESH_INTERVAL_MS) {
-            logger.info('DotaDataService: refreshing stale hero/item/ability cache...');
-            await Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()]);
-            this.lastRefresh = Date.now();
+        // An empty cache means the boot-time load ran during a provider outage.
+        // Waiting the full day to try again leaves every hero name in the bot
+        // reading "Unknown Hero", so an empty cache retries on a short backoff.
+        const interval = this.heroes.size === 0 ? EMPTY_RETRY_INTERVAL_MS : REFRESH_INTERVAL_MS;
+        if (Date.now() - this.lastRefresh <= interval) return;
+        // A scoreboard resolves ten hero names at once, so without this guard a
+        // single render would fire ten concurrent reloads of the same tables.
+        if (!this.refreshing) {
+            logger.info(
+                this.heroes.size === 0
+                    ? 'DotaDataService: hero cache is empty — retrying the load...'
+                    : 'DotaDataService: refreshing stale hero/item/ability cache...'
+            );
+            this.refreshing = Promise.all([this.fetchHeroes(), this.fetchItems(), this.fetchAbilities()])
+                .then(() => {
+                    this.lastRefresh = Date.now();
+                    this.initialized = this.heroes.size > 0;
+                })
+                .finally(() => { this.refreshing = null; });
         }
+        await this.refreshing;
     }
 
     async getHeroName(heroId: number): Promise<string> {
