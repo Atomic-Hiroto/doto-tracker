@@ -36,7 +36,7 @@ const EMPTY_RETRY_INTERVAL_MS = 60 * 1000; // a failed load is worth retrying so
 // client rides a 60s timeout through three retries per endpoint — so a provider
 // outage used to keep the whole bot offline for eight minutes at boot. The load
 // retries on demand now, so waiting out the full ladder here buys nothing.
-const CONSTANTS_FETCH: any = { timeout: 20_000, 'axios-retry': { retries: 1 } };
+const CONSTANTS_FETCH: any = { timeout: 10_000, 'axios-retry': { retries: 0 } };
 
 // Measured against a Cloudflare 522: axios honoured the 20s timeout on the
 // first attempt and then let the retry run for 2m20s, so the HTTP layer's own
@@ -59,19 +59,27 @@ interface ConstantsCacheFile {
     abilities: AbilityData[];
 }
 
-/** Pulls one constants table, preferring OpenDota and falling back to the mirror. */
+/**
+ * Pulls one constants table, mirror first.
+ *
+ * The mirror is served from a CDN in ~0.3s, it is the same build OpenDota
+ * serves, and it doesn't spend any of the 2000/day OpenDota budget — so trying
+ * OpenDota first only bought a slower boot. Order was the whole bug the first
+ * time: OpenDota's 20s timeout plus a retry outran the boot deadline, and the
+ * mirror never got a turn.
+ */
 async function fetchConstants<T>(openDotaPath: string, mirrorFile: string): Promise<T | null> {
     try {
-        const response = await opendotaClient.get<T>(openDotaPath, CONSTANTS_FETCH);
+        const response = await axios.get<T>(`${CONSTANTS_MIRROR}/${mirrorFile}`, { timeout: 10_000 });
         if (response.data) return response.data;
     } catch (error: any) {
-        logger.warn(`Constants: OpenDota ${openDotaPath} failed (${error?.response?.status ?? error?.code ?? 'no response'}), trying the mirror`);
+        logger.warn(`Constants: mirror ${mirrorFile} failed (${error?.message ?? error}), trying OpenDota`);
     }
     try {
-        const response = await axios.get<T>(`${CONSTANTS_MIRROR}/${mirrorFile}`, { timeout: 20_000 });
+        const response = await opendotaClient.get<T>(openDotaPath, CONSTANTS_FETCH);
         return response.data ?? null;
     } catch (error: any) {
-        logger.error(`Constants: mirror ${mirrorFile} failed too:`, error?.message ?? error);
+        logger.error(`Constants: OpenDota ${openDotaPath} failed too (${error?.response?.status ?? error?.code ?? 'no response'})`);
         return null;
     }
 }
