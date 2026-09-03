@@ -66,7 +66,12 @@ export async function recentStats(message: Message, args: string[], userDataServ
     let matches: any[] = [];
     let listNotice: string | null = null;
     try {
-      const response = await opendotaClient.get<Array<any>>(endpoint);
+      // The unfiltered path has STRATZ behind it, so it doesn't sit through
+      // OpenDota's retry ladder; the filtered path has no fallback and keeps it.
+      const response = await opendotaClient.get<Array<any>>(
+        endpoint,
+        filter.consumedAny ? undefined : ({ timeout: 12000, 'axios-retry': { retries: 0 } } as any),
+      );
       matches = applyResidualFilters(response.data || [], filter);
     } catch (listError) {
       logger.warn(`+rs: OpenDota match list failed for ${user.steamId}, falling back to STRATZ:`, listError);

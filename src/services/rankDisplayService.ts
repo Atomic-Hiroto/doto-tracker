@@ -134,10 +134,14 @@ async function fetchOpenDotaProfileRank(
  *
  * @param stratzResult  A STRATZ fetch the caller already made. Pass it to avoid
  *                      a second round trip; omit it to have one made here.
+ * @param opts.skipOpenDota  Set when OpenDota has already been shown to be
+ *                      unreachable, so the per-player lookups aren't retried
+ *                      ten more times just to fail again.
  */
 export async function resolveMatchRankDisplay(
   match: any,
   stratzResult?: StratzMatchResult,
+  opts: { skipOpenDota?: boolean } = {},
 ): Promise<MatchRankDisplay | null> {
   const matchId = Number(match?.match_id);
   const players: any[] = Array.isArray(match?.players) ? match.players : [];
@@ -176,7 +180,9 @@ export async function resolveMatchRankDisplay(
         source: 'opendota',
       }
       : null;
-    const profile = await fetchOpenDotaProfileRank(steamId);
+    const profile = opts.skipOpenDota
+      ? { rank: null, reachable: false }
+      : await fetchOpenDotaProfileRank(steamId);
     if (profile.reachable) openDotaReachable = true;
     const best = chooseHigherRank(matchRank, profile.rank);
     if (best) openDotaRanks.set(steamId, best);

@@ -33,9 +33,21 @@ const PROVIDER_LABEL: Record<MatchProvider, string> = {
   stratz: 'STRATZ',
 };
 
+/**
+ * A hard ceiling on the OpenDota leg. The default client retries a 5xx three
+ * times on a 60s timeout, which during a real outage means four minutes of
+ * silence — and silence is exactly the failure being fixed here. STRATZ is
+ * already running alongside this and answers in well under a second, so a
+ * doomed OpenDota call has nothing to buy by waiting.
+ */
+const OPENDOTA_MATCH_BUDGET_MS = 12_000;
+
 async function fetchOpenDotaMatch(matchId: number): Promise<{ match: any; status: SourceStatus }> {
   try {
-    const { data } = await opendotaClient.get<any>(`/matches/${matchId}`);
+    const { data } = await opendotaClient.get<any>(`/matches/${matchId}`, {
+      timeout: OPENDOTA_MATCH_BUDGET_MS,
+      'axios-retry': { retries: 0 },
+    } as any);
     if (!data?.players?.length) return { match: null, status: 'missing' };
     return { match: data, status: 'ok' };
   } catch (error: any) {
@@ -124,8 +136,12 @@ export async function fetchCombinedMatch(matchId: number): Promise<CombinedMatch
   if (!match) return null;
 
   // The STRATZ payload is already in hand, so the rank merge reuses it rather
-  // than paying for the same query twice.
-  const rankDisplay = await resolveMatchRankDisplay(match, stratz).catch(() => null);
+  // than paying for the same query twice. If OpenDota just failed to answer for
+  // the match, its ten per-player profile lookups will fail the same way, so
+  // don't spend the wait proving it.
+  const rankDisplay = await resolveMatchRankDisplay(match, stratz, {
+    skipOpenDota: openDota.status === 'error',
+  }).catch(() => null);
 
   return {
     match,
