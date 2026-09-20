@@ -24,7 +24,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+trend [@user] [kda|gpm|wr]` — performance trend graph',
       '`+heroes [@user]` — most-played heroes & win rates',
       '`+compare @p1 @p2` — head-to-head comparison',
-      '`+throw [@p1] [@p2] [normal] [days=90] [solo|party]` — team lost-lead rates; accepts Steam IDs/links, defaults to Turbo',
+      '`+throw [@p1] [@p2] [normal] [days=90] [solo|party] [details]` — who throws more? Accepts Steam IDs/links, defaults to Turbo',
       '`+achievements [@user] [all]` — Turbo trophy case or full unlock catalog',
     ],
   },

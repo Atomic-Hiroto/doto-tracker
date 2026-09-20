@@ -28,10 +28,10 @@ assert.equal(leadRate([], 10000).rate, null);
 assert.ok(leadRate(games.filter(g => g.won), 10000).high > 0, 'zero losses does not mean certainty');
 assert.equal(withoutSharedGames(games, [games[0]]).a.length, 5);
 assert.equal(withoutSharedGames(games, [], new Set([1])).a.length, 5, 'exclude overlap even if other player lacks usable gold');
-assert.deepEqual(parseThrowArgs([]), { days: 90, mode: 'turbo', queue: 'all', targets: [] });
+assert.deepEqual(parseThrowArgs([]), { days: 90, mode: 'turbo', queue: 'all', targets: [], details: false });
 assert.equal(parseThrowArgs(['normal', 'days=180', 'solo']).queue, 'solo');
 const sample = (n, losses) => Array.from({ length: n }, (_, id) => ({ id, won: id >= losses, lead: 10000, party: 'party' }));
-assert.match(comparisonText('epi', sample(39, 8), 'Atomic', sample(122, 16)), /epi edges it, but it's a close call/);
+assert.match(comparisonText('epi', sample(39, 8), 'Atomic', sample(122, 16)), /epi gets the provisional throw crown/);
 assert.match(comparisonText('A', sample(20, 4), 'B', sample(20, 4)), /A tie/);
 assert.match(comparisonText('A', sample(2, 2), 'B', sample(20, 4)), /Too early/);
 for (const args of [['days=0'], ['days=90junk'], ['normal', 'turbo'], ['solo', 'party'], ['a', 'b', 'c']]) {
@@ -49,13 +49,18 @@ const message = {
 };
 try {
   opendotaClient.get = async url => ({ data: url.includes('/matches?') ? rows : { profile: { personaname: 'Test' } } });
-  await throwReport(message, ['325514595', '165196360'], {});
+  await throwReport(message, ['325514595', '165196360', 'details'], {});
   const embed = edits[0].embeds[0].toJSON();
   assert.match(embed.fields[0].value, /6\/9/);
   assert.match(embed.fields[2].value, /9 games you both played/);
   assert.match(embed.description, /Too early/);
   assert.doesNotMatch(JSON.stringify(embed), /95% interval|percentage points|Wilson/);
   assert.ok(JSON.stringify(embed).length < 6000);
+  await throwReport(message, ['325514595', '165196360'], {});
+  const compact = edits.at(-1).embeds[0].toJSON();
+  assert.equal(compact.fields.length, 1);
+  assert.equal(compact.fields[0].name, 'Shared crime scene');
+  assert.doesNotMatch(JSON.stringify(compact), /Median|Selected games|Behind the verdict/);
   await throwReport(message, ['325514595', '325514595'], {});
   assert.match(replies.at(-1), /different players/);
   opendotaClient.get = async () => { throw new Error('provider unavailable'); };
