@@ -60,7 +60,19 @@ const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 function rateText(games: LeadGame[], threshold: number) {
   const stat = leadRate(games, threshold);
   return stat.rate == null ? 'no qualifying games'
-    : `**${stat.lost}/${stat.n} lost (${pct(stat.rate)})** | 95% interval ${pct(stat.low!)}-${pct(stat.high!)}`;
+    : `lost **${stat.lost} of ${stat.n}** (${pct(stat.rate)})`;
+}
+
+export function comparisonText(aName: string, a: LeadGame[], bName: string, b: LeadGame[]) {
+  const ar = leadRate(a, 10000), br = leadRate(b, 10000);
+  if (ar.n < 20 || br.n < 20) return '**Too early to hand out the throw crown.**\nThere aren\'t enough separate games with a 10k lead for both players yet.';
+  const gap = ar.rate! - br.rate!;
+  if (Math.abs(gap) < 0.0005) return '**A tie. Neither gets the throw crown.**\nBoth teams lose 10k-gold leads at the same rate in this sample.';
+  const higher = gap > 0 ? aName : bName;
+  const overlap = ar.low! <= br.high! && br.low! <= ar.high!;
+  return `**${higher} ${overlap ? 'edges it, but it\'s a close call' : 'has the higher throw rate in these games'}.**\n`
+    + `After going 10k gold ahead, **${aName}**'s teams still lost **${pct(ar.rate!)}** of those games, versus **${pct(br.rate!)}** for **${bName}**.\n`
+    + (overlap ? 'Enough for some banter, not enough for a confident verdict.' : 'That is a team record, not proof of who made the losing play.');
 }
 
 export async function throwReport(message: Message, args: string[], users: UserDataService) {
@@ -98,19 +110,20 @@ export async function throwReport(message: Message, args: string[], users: UserD
       const games = usable.filter(game => opts.queue === 'all' || game.party === opts.queue);
       return { ...data, name, usable, games };
     }));
-    const embed = new EmbedBuilder().setColor('#e05a47').setTitle('Team Throws - Lost Leads')
-      .setDescription(`${opts.mode === 'turbo' ? 'Turbo' : 'Normal All Pick + Ranked All Pick'} | last ${opts.days} days | ${opts.queue === 'all' ? 'all queues' : opts.queue}\nA throw is a defeat after your team reached the stated gold lead.`);
+    const scope = `${opts.mode === 'turbo' ? 'Turbo' : 'Normal All Pick + Ranked All Pick'} | last ${opts.days} days | ${opts.queue === 'all' ? 'all queues' : opts.queue}`;
+    const embed = new EmbedBuilder().setColor('#e05a47').setTitle(reports.length === 2 ? 'Who throws more?' : 'The Throw Report')
+      .setDescription(`${scope}\nHow often does your team build a gold lead, then lose anyway?`);
     for (const report of reports) {
       const losses = report.games.filter(game => !game.won && game.lead >= 5000).sort((a, b) => a.lead - b.lead);
       const mid = Math.floor(losses.length / 2);
       const median = losses.length ? (losses[mid].lead + losses[Math.floor((losses.length - 1) / 2)].lead) / 2 : null;
       const biggest = losses[losses.length - 1];
       embed.addFields({ name: report.name, value: [
-        `Gold data: **${report.usable.length}/${report.matches.length}** games | selected: **${report.games.length}**`,
-        `Usable queues: ${report.usable.filter(game => game.party === 'solo').length} solo / ${report.usable.filter(game => game.party === 'party').length} party / ${report.usable.filter(game => game.party === 'unknown').length} unknown`,
-        ...[5000, 10000, 15000].map(threshold => `**${threshold / 1000}k+ lead:** ${rateText(report.games, threshold)}`),
+        ...[5000, 10000, 15000].map(threshold => `From **${threshold / 1000}k gold ahead**: ${rateText(report.games, threshold)}`),
         median == null ? 'No observed losses from a 5k+ lead.' : `Median lost lead (5k+ defeats): **${Math.round(median).toLocaleString()} gold**`,
         biggest ? `Biggest: **${biggest.lead.toLocaleString()} gold** - [match ${biggest.id}](https://www.opendota.com/matches/${biggest.id})` : '',
+        `_${report.games.length} games used. Gold history available for ${report.usable.length}/${report.matches.length} games checked._`,
+        `_Selected games: ${report.games.filter(game => game.party === 'solo').length} solo, ${report.games.filter(game => game.party === 'party').length} party, ${report.games.filter(game => game.party === 'unknown').length} unknown._`,
         report.capped ? `History capped at ${MAX_PER_MODE} recent games per mode; window may be incomplete.` : '',
         report.usable.length === 0 ? 'No usable gold data; this is not evidence of zero throws.' : '',
       ].filter(Boolean).join('\n') });
@@ -120,20 +133,12 @@ export async function throwReport(message: Message, args: string[], users: UserD
       const bIds = new Set(b.matches.map(game => game.match_id));
       const shared = new Set(a.matches.filter(game => bIds.has(game.match_id)).map(game => game.match_id));
       const separate = withoutSharedGames(a.games, b.games, shared);
-      const ar = leadRate(separate.a, 10000), br = leadRate(separate.b, 10000);
-      let verdict = 'Not enough separate 10k-lead games to compare (at least 20 per player).';
-      if (ar.n >= 20 && br.n >= 20) {
-        const gap = (ar.rate! - br.rate!) * 100;
-        verdict = Math.abs(gap) < 0.05 ? 'Observed 10k-lead loss rates are tied.'
-          : `${gap > 0 ? a.name : b.name}'s teams lost 10k leads more often in this sample, by **${Math.abs(gap).toFixed(1)} percentage points**.`;
-        verdict += ' This is a descriptive difference, not proof of a player effect.';
-        if (ar.low! <= br.high! && br.low! <= ar.high!) verdict += ' The uncertainty intervals overlap; there is no clear separation on this check.';
-      }
-      embed.addFields({ name: 'Comparison - 10k leads, shared matches excluded', value:
-        `${shared.size} shared matches excluded (same team or opponents).\n${a.name}: ${rateText(separate.a, 10000)}\n${b.name}: ${rateText(separate.b, 10000)}\n${verdict}` });
+      embed.setDescription(`${comparisonText(a.name, separate.a, b.name, separate.b)}\n\n_${scope}_`);
+      embed.addFields({ name: 'Behind the verdict', value:
+        `${a.name}: ${rateText(separate.a, 10000)} games from 10k ahead.\n${b.name}: ${rateText(separate.b, 10000)}.\n`
+        + (shared.size ? `The verdict leaves out the ${shared.size} games you both played. The player reports above include them.` : 'You had no shared games in this window.') });
     }
-    embed.addFields({ name: 'How to read this', value: 'Rates count losses out of all usable wins AND losses that reached each lead. Thresholds overlap. Missing gold data is excluded, never counted as zero. These are team outcomes, not individual blame. Gold size does not account for when the lead happened. Replay coverage, teammates, skill, heroes and patch differences can affect comparisons. Wilson intervals assume independent games and do not remove these biases.' })
-      .setFooter({ text: 'OpenDota | No replay-parse jobs requested | solo / party filters exclude unknown queues' }).setTimestamp();
+    embed.setFooter({ text: 'OpenDota | Team throws, not personal blame. Different teammates and opponents matter. Missing gold history is skipped.' }).setTimestamp();
     await progress.edit({ content: null, embeds: [embed], allowedMentions: { parse: [] } });
   } catch (error) {
     logger.warn('Throw report failed:', error);
