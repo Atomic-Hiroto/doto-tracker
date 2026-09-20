@@ -5,7 +5,7 @@ import { leadGames, leadRate, LeadGame, ThrowMatch, withoutSharedGames } from '.
 import { normalizeSteamId } from '../utils/validators';
 import { logger } from '../services/loggerService';
 
-const USAGE = 'Usage: `+throw [@player or Steam ID or OpenDota link] [second player] [turbo|normal] [days=90] [solo|party]`';
+const USAGE = 'Usage: `+throw [@player or Steam ID or OpenDota link] [second player] [turbo|normal] [days=90] [solo|party] [details]`';
 const PAGE_SIZE = 500;
 const MAX_PER_MODE = 2000;
 interface Target { id: string; name: string }
@@ -14,13 +14,16 @@ export function parseThrowArgs(args: string[]) {
   let days = 90;
   let mode: 'turbo' | 'normal' = 'turbo';
   let queue: 'all' | 'solo' | 'party' = 'all';
+  let details = false;
   const targets: string[] = [];
   let seenMode = false;
   let seenQueue = false;
   let seenDays = false;
   for (const raw of args) {
     const arg = raw.toLowerCase();
-    if (arg === 'normal' || arg === 'turbo') {
+    if (arg === 'details') {
+      details = true;
+    } else if (arg === 'normal' || arg === 'turbo') {
       if (seenMode) throw new Error('Choose one mode.');
       mode = arg; seenMode = true;
     } else if (arg === 'solo' || arg === 'party') {
@@ -33,7 +36,7 @@ export function parseThrowArgs(args: string[]) {
     } else targets.push(raw);
   }
   if (targets.length > 2) throw new Error('Choose at most two players.');
-  return { days, mode, queue, targets };
+  return { days, mode, queue, targets, details };
 }
 
 async function fetchGames(id: string, days: number, mode: 'turbo' | 'normal', cutoff: number) {
@@ -70,9 +73,9 @@ export function comparisonText(aName: string, a: LeadGame[], bName: string, b: L
   if (Math.abs(gap) < 0.0005) return '**A tie. Neither gets the throw crown.**\nBoth teams lose 10k-gold leads at the same rate in this sample.';
   const higher = gap > 0 ? aName : bName;
   const overlap = ar.low! <= br.high! && br.low! <= ar.high!;
-  return `**${higher} ${overlap ? 'edges it, but it\'s a close call' : 'has the higher throw rate in these games'}.**\n`
-    + `After going 10k gold ahead, **${aName}**'s teams still lost **${pct(ar.rate!)}** of those games, versus **${pct(br.rate!)}** for **${bName}**.\n`
-    + (overlap ? 'Enough for some banter, not enough for a confident verdict.' : 'That is a team record, not proof of who made the losing play.');
+  return `**${higher} gets the ${overlap ? 'provisional ' : ''}throw crown.**\nA 10k lead is apparently just a suggestion.\n\n`
+    + `Games lost after going **10k gold ahead**:\n**${aName}: ${pct(ar.rate!)}** (${ar.lost}/${ar.n})\n**${bName}: ${pct(br.rate!)}** (${br.lost}/${br.n})`
+    + (overlap ? '\n\n_Close enough that a few games could flip the crown._' : '');
 }
 
 export async function throwReport(message: Message, args: string[], users: UserDataService) {
@@ -113,7 +116,7 @@ export async function throwReport(message: Message, args: string[], users: UserD
     const scope = `${opts.mode === 'turbo' ? 'Turbo' : 'Normal All Pick + Ranked All Pick'} | last ${opts.days} days | ${opts.queue === 'all' ? 'all queues' : opts.queue}`;
     const embed = new EmbedBuilder().setColor('#e05a47').setTitle(reports.length === 2 ? 'Who throws more?' : 'The Throw Report')
       .setDescription(`${scope}\nHow often does your team build a gold lead, then lose anyway?`);
-    for (const report of reports) {
+    for (const report of opts.details ? reports : []) {
       const losses = report.games.filter(game => !game.won && game.lead >= 5000).sort((a, b) => a.lead - b.lead);
       const mid = Math.floor(losses.length / 2);
       const median = losses.length ? (losses[mid].lead + losses[Math.floor((losses.length - 1) / 2)].lead) / 2 : null;
@@ -134,11 +137,28 @@ export async function throwReport(message: Message, args: string[], users: UserD
       const shared = new Set(a.matches.filter(game => bIds.has(game.match_id)).map(game => game.match_id));
       const separate = withoutSharedGames(a.games, b.games, shared);
       embed.setDescription(`${comparisonText(a.name, separate.a, b.name, separate.b)}\n\n_${scope}_`);
-      embed.addFields({ name: 'Behind the verdict', value:
+      if (opts.details) embed.addFields({ name: 'Behind the verdict', value:
         `${a.name}: ${rateText(separate.a, 10000)} games from 10k ahead.\n${b.name}: ${rateText(separate.b, 10000)}.\n`
         + (shared.size ? `The verdict leaves out the ${shared.size} games you both played. The player reports above include them.` : 'You had no shared games in this window.') });
+      if (!opts.details) {
+        const worst = reports.flatMap(report => report.games.filter(game => !game.won && game.lead >= 5000)
+          .map(game => ({ ...game, name: report.name }))).sort((x, y) => y.lead - x.lead)[0];
+        if (worst) {
+          const both = reports.every(report => report.games.some(game => game.id === worst.id && !game.won));
+          embed.addFields({ name: both ? 'Shared crime scene' : 'Biggest donation', value:
+            `${both ? 'You both' : `**${worst.name}**'s team`} lost from **${worst.lead.toLocaleString()} gold ahead**. ${both ? 'Nobody leaves this one innocent.' : 'The enemy team says thank you.'} [The receipts](https://www.opendota.com/matches/${worst.id})` });
+        }
+      }
+    } else if (!opts.details) {
+      const report = reports[0];
+      const stat = leadRate(report.games, 10000);
+      embed.setDescription(`**${report.name}**\n` + (stat.n === 0
+        ? 'No usable 10k-lead games. The jury has no evidence.'
+        : `A 10k lead turned into a loss **${stat.lost} out of ${stat.n} times (${pct(stat.rate!)})**.\n`
+          + (stat.n < 20 ? 'Thin evidence. The jury is still out.' : stat.lost === 0 ? 'No donations on this record. Keep it that way.' : 'The enemy team appreciates the generosity.')) + `\n\n_${scope}_`);
     }
-    embed.setFooter({ text: 'OpenDota | Team throws, not personal blame. Different teammates and opponents matter. Missing gold history is skipped.' }).setTimestamp();
+    const limited = reports.some(report => report.capped) ? ' | History capped' : '';
+    embed.setFooter({ text: `Team results, not individual blame. ${reports.length === 2 ? 'Verdict excludes shared games. ' : ''}Missing gold data skipped.${limited} | Add details for full stats` }).setTimestamp();
     await progress.edit({ content: null, embeds: [embed], allowedMentions: { parse: [] } });
   } catch (error) {
     logger.warn('Throw report failed:', error);
