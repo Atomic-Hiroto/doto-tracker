@@ -45,6 +45,7 @@ export enum Commands {
     TREND = "trend",
     HEROES = "heroes",
     COMPARE = "compare",
+    THROW = "throw",
     // Phase 4
     ANALYZE = "analyze",
     COACH = "coach",
