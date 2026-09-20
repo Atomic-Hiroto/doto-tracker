@@ -32,6 +32,7 @@ export { streak } from './streak';
 export { trend } from './trend';
 export { heroes } from './heroes';
 export { compare } from './compare';
+export { throwReport } from './throw';
 // Phase 4
 export { analyze, suggest, draft, meta } from './aiCommands';
 export { coach } from './coach';

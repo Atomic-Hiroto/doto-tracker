@@ -187,6 +187,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.COMPARE:
       await commandHandlers.compare(message, args, userDataService, turboStatsService);
       break;
+    case Commands.THROW:
+      await commandHandlers.throwReport(message, args, userDataService);
+      break;
 
     // --- Phase 4 ---
     case Commands.ANALYZE:

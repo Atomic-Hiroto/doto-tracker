@@ -965,7 +965,7 @@ export async function turboStudy(message: Message, args: string[], userDataServi
     // message, not per embed. The findings land first and stand alone; if the
     // diagnostics follow-up fails the report is still complete.
     await progress.edit({ content: null, embeds: [findings], files: [scatterAttachment, csvAttachment] });
-    if (message.channel.isSendable()) {
+    if ('send' in message.channel) {
       await message.channel.send({ embeds: [diagnostics], files: [residualAttachment] });
     }
   } catch (error) {
