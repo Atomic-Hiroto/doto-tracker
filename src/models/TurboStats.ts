@@ -41,6 +41,12 @@ export interface TurboTrackedMatch {
    * anything does. Captured now so it lands on the next backfill rather than needing another one.
    */
   averageRank?: number | null;
+  /**
+   * Average visible ranked medal of the team facing our players, as MMR, and how many of its five
+   * showed one. Null when we sat on both sides or nobody showed a medal. Stratz reports each
+   * player's current season medal, so on an old match this is who they are now, not who they were.
+   */
+  enemyRank?: { mmr: number; visible: number } | null;
   source: TurboMatchSource;
   players: TurboMatchParticipant[];
 }

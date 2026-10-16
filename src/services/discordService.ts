@@ -122,6 +122,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
         await commandHandlers.turboPairings(message, turboStatsService, args);
       }
       break;
+    case Commands.TURBO_PULL:
+      await commandHandlers.turboPull(message, turboStatsService, args);
+      break;
     case Commands.TURBO_BACKFILL:
       await commandHandlers.turboBackfill(message, args, userDataService, turboStatsService);
       break;
