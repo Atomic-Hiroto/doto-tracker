@@ -42,19 +42,23 @@ export async function turboBackfill(message: Message, args: string[], users: Use
         await delay(500);
       }
       if (i === historyAnchors.length - 1 || i % 2 === 1) {
-        await progress.edit(`🧾 Historical Turbo sync: **${i + 1}/${historyAnchors.length}** public-history players · ${fetchedRows} rows fetched · ${changedMatches} new/expanded matches`).catch(() => {});
+        await progress.edit(`🧾 Historical Turbo sync: **${i + 1}/${historyAnchors.length}** public-history players · ${fetchedRows} rows fetched · ${changedMatches} new/updated matches`).catch(() => {});
       }
       if (i < historyAnchors.length - 1) await delay(700);
     }
 
     stats.markBackfillComplete();
     const ledger = stats.getAllStats().matches || [];
+    const ranked = ledger.filter(match => (match.enemyRank?.visible ?? 0) >= 2).length;
     const embed = new EmbedBuilder()
       .setColor('#10b981')
       .setTitle('✅ Turbo History Sync Complete')
-      .setDescription(`The deduplicated ledger now contains **${ledger.length}** matches across **${roster.length}** registered players.`)
+      .setDescription(
+        `The deduplicated ledger now contains **${ledger.length}** matches across **${roster.length}** registered players. `
+        + `**${ranked}** of them have enemy medals for \`+turbopull\`.`
+      )
       .addFields(
-        { name: 'This run', value: `${fetchedRows} API rows fetched\n${changedMatches} matches added or expanded`, inline: true },
+        { name: 'This run', value: `${fetchedRows} API rows fetched\n${changedMatches} matches added or updated`, inline: true },
         { name: 'Try it', value: '`+turbopairs all`\n`+turbopairs history`\n`+turboparty best all`', inline: true }
       )
       .setFooter({ text: 'Safe to rerun: match IDs and registered participants are merged, not double-counted.' })

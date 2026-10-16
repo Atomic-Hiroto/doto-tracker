@@ -22,6 +22,7 @@ export enum Commands {
     TURBO_HERO_LB = "turboherolb",
     TURBO_STUDY_PLAYERS = "turbostudyplayers",
     TURBO_PAIRINGS = "turbopairs",
+    TURBO_PULL = "turbopull",
     TURBO_BACKFILL = "turbobackfill",
     TURBO_PARTY = "turboparty",
     TURBO_RANK = "turborank",

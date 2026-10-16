@@ -10,6 +10,7 @@ import {
   TurboTrackedMatch
 } from '../models/TurboStats';
 import { logger } from './loggerService';
+import { rankTierToMMR } from './turboRankService';
 
 const TURBO_STATS_FILE = 'turboStats.json';
 const TURBO_GAME_MODE = 23;
@@ -154,6 +155,20 @@ export class TurboStatsService {
 
     const matchId = String(matchData.match_id ?? matchData.id ?? '');
     if (!matchId || participants.length === 0) return null;
+    // Read the enemy medals off the same payload rather than leaving them to +turborank, which only
+    // samples solo games and so has almost none of the stacks +turbopull needs.
+    let enemyRank: TurboTrackedMatch['enemyRank'] = null;
+    const sides = new Set(participants.map(participant => participant.team));
+    if (sides.size === 1) {
+      const enemyIsRadiant = !sides.has('radiant');
+      const medals = rawPlayers
+        .filter((raw: any) => (typeof raw.isRadiant === 'boolean' ? raw.isRadiant : Number(raw.player_slot ?? raw.playerSlot) < 128) === enemyIsRadiant)
+        .map((raw: any) => rankTierToMMR(Number(raw.steamAccount?.seasonRank ?? raw.rank_tier ?? 0)))
+        .filter((mmr: number | null): mmr is number => mmr !== null);
+      if (medals.length) {
+        enemyRank = { mmr: Math.round(medals.reduce((sum: number, mmr: number) => sum + mmr, 0) / medals.length), visible: medals.length };
+      }
+    }
     const rawRank = matchData.averageRank ?? matchData.avg_rank_tier;
     const averageRank = rawRank === null || rawRank === undefined || !Number.isFinite(Number(rawRank))
       ? null
@@ -163,18 +178,23 @@ export class TurboStatsService {
       timestamp: Number(matchData.start_time ?? matchData.startDateTime ?? Math.floor(Date.now() / 1000)),
       radiantWon: Boolean(matchData.radiant_win ?? matchData.didRadiantWin),
       averageRank,
+      enemyRank,
       source,
       players: participants
     };
   }
 
-  private mergeLedgerMatch(incoming: TurboTrackedMatch): { changed: boolean; inserted: boolean } {
+  private mergeLedgerMatch(incoming: TurboTrackedMatch): { changed: boolean; inserted: boolean; aggregatesChanged: boolean } {
     const matches = this.turboStats.matches || (this.turboStats.matches = []);
     const existing = matches.find(match => match.matchId === incoming.matchId);
     if (!existing) {
       matches.push(incoming);
-      return { changed: true, inserted: true };
+      return { changed: true, inserted: true, aggregatesChanged: true };
     }
+
+    // Enemy ranks feed +turbopull only; filling them in must not trigger an aggregate rebuild.
+    const annotated = !existing.enemyRank && Boolean(incoming.enemyRank);
+    if (annotated) existing.enemyRank = incoming.enemyRank;
 
     let changed = false;
     if (existing.source !== incoming.source && existing.source !== 'both') {
@@ -195,7 +215,7 @@ export class TurboStatsService {
         changed = true;
       }
     }
-    return { changed, inserted: false };
+    return { changed: changed || annotated, inserted: false, aggregatesChanged: changed };
   }
 
   private addMatchToAggregates(match: TurboTrackedMatch) {
@@ -412,6 +432,107 @@ export class TurboStatsService {
       .slice(0, limit);
   }
 
+  /**
+   * Each tracked player's pull rating: how strong an opposition matchmaking finds when they are in
+   * the party. Fitted as `enemyMMR ≈ mean(party members' ratings)`, because a Dota party queues on
+   * its average. That model predicts held-out enemy rank with RMSE 614 against 674 for an additive
+   * one and 1250 for the plain mean, and on stacks rated from solo games alone, a pure average beats
+   * every blend toward the strongest member. Fitted on the oldest 70% of games it still cuts error on
+   * the newest 30% (739 against 1177), and the shifts it predicts between one player's different
+   * parties come out right-sized (observed-on-predicted slope 1.00).
+   *
+   * This is not `+turborank`. It is fitted from the games a player actually stacks in, so someone
+   * whose solo lobbies read Divine can still pull Ancient enemies with their usual party, and the
+   * pull is what a party feels.
+   *
+   * Same-team tracked players are treated as one party: of 305 multi-tracked teams, none had them in
+   * different parties - the rest only lacked party data. Tracked players under `minGames` share one
+   * "other" slot; untracked members are invisible, so a party is averaged over its tracked members.
+   * Ratings are shrunk toward the pool mean by 3 games' worth (held-out error is flat from 0.5 to 3
+   * and worsens past 10). `samples` is a fixed-seed bootstrap over whole play days, not single games:
+   * one evening's games share form and lobby conditions, and resampling games alone gave intervals
+   * up to a third too narrow. Callers can put an interval on any party they build from these ratings.
+   */
+  getPullRatings(enemyByMatch: Map<string, number>, minGames = 20, sinceTimestamp?: number) {
+    type Team = { ids: string[]; y: number; day: number };
+    const teams: Team[] = [];
+    const steamIds = new Map<string, string>();
+    for (const match of this.matchesForScope('all', sinceTimestamp)) {
+      // Prefer the +turborank reading, which the model was validated on; the ledger's own enemy
+      // medals fill the stacked games it never sampled.
+      const ledgerEnemy = match.enemyRank && match.enemyRank.visible >= 2 ? match.enemyRank.mmr : undefined;
+      const y = enemyByMatch.get(String(match.matchId)) ?? ledgerEnemy;
+      if (y === undefined) continue;
+      // Observers never sit on opposite teams in a joined match, so the enemy figure belongs to the
+      // only team holding tracked players. Guard anyway rather than credit it to both sides.
+      const sides = (['radiant', 'dire'] as const).filter(team => match.players.some(player => player.team === team));
+      if (sides.length !== 1) continue;
+      const ids = [...new Set(match.players.map(player => player.discordId))];
+      for (const player of match.players) steamIds.set(player.discordId, player.steamId);
+      teams.push({ ids, y, day: Math.floor(match.timestamp / 86400) });
+    }
+
+    const games = new Map<string, number>();
+    for (const team of teams) for (const id of team.ids) games.set(id, (games.get(id) || 0) + 1);
+    const rated = [...games].filter(([, n]) => n >= minGames).map(([id]) => id);
+    if (!rated.length) return { players: [], scoredTeams: teams.length };
+    const slot = new Map(rated.map((id, i) => [id, i]));
+    const other = rated.length;
+    const size = rated.length + 1;
+    const prior = teams.reduce((sum, team) => sum + team.y, 0) / teams.length;
+    const RIDGE = 3;
+
+    const fit = (sample: Team[]) => {
+      const A = Array.from({ length: size }, () => new Array(size).fill(0));
+      const b = new Array(size).fill(0);
+      for (const team of sample) {
+        const x = new Array(size).fill(0);
+        for (const id of team.ids) x[slot.get(id) ?? other] += 1 / team.ids.length;
+        for (let i = 0; i < size; i++) {
+          if (!x[i]) continue;
+          b[i] += x[i] * team.y;
+          for (let j = 0; j < size; j++) A[i][j] += x[i] * x[j];
+        }
+      }
+      for (let i = 0; i < rated.length; i++) {
+        A[i][i] += RIDGE;
+        b[i] += RIDGE * prior;
+      }
+      // The "other" slot is unpenalised and can be absent from a resample; pin it to the prior then.
+      if (!A[other][other]) {
+        A[other][other] = 1;
+        b[other] = prior;
+      }
+      return solveLinear(A, b);
+    };
+
+    const point = fit(teams);
+    let seed = 20261017;
+    const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const BOOTSTRAP = 200;
+    const byDay = new Map<number, Team[]>();
+    for (const team of teams) byDay.set(team.day, [...(byDay.get(team.day) || []), team]);
+    const days = [...byDay.values()];
+    const samples: number[][] = rated.map(() => []);
+    for (let t = 0; t < BOOTSTRAP; t++) {
+      const resample: Team[] = [];
+      while (resample.length < teams.length) resample.push(...days[Math.floor(random() * days.length)]);
+      const weights = fit(resample);
+      for (let i = 0; i < rated.length; i++) samples[i].push(weights[i]);
+    }
+
+    return {
+      players: rated.map((discordId, i) => ({
+        discordId,
+        steamId: steamIds.get(discordId) || '',
+        rating: point[i],
+        games: games.get(discordId) || 0,
+        samples: samples[i]
+      })),
+      scoredTeams: teams.length
+    };
+  }
+
   getPlayerStats(discordId: string, scope: TurboStatsScope = 'all', sinceTimestamp?: number): TurboPlayerStats | undefined {
     const stats = this.shouldDeriveFromLedger(scope, sinceTimestamp) ? this.deriveStats(scope, sinceTimestamp).playerStats : this.turboStats.playerStats;
     return stats.find(player => player.discordId === discordId);
@@ -429,7 +550,9 @@ export class TurboStatsService {
     if (!result.changed) return false;
 
     if (!deferRebuild) {
-      if (result.inserted) {
+      if (!result.aggregatesChanged) {
+        this.saveTurboStats();
+      } else if (result.inserted) {
         this.addMatchToAggregates(normalized);
         this.addMatchToLegacyTrackedPairings(normalized);
         this.saveTurboStats();
@@ -548,4 +671,21 @@ export class TurboStatsService {
   getAllStats(): TurboStatsData {
     return this.turboStats;
   }
+}
+
+/** Gaussian elimination with partial pivoting; the systems here are ~20 unknowns. */
+function solveLinear(A: number[][], b: number[]): number[] {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let pivot = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[pivot][c])) pivot = r;
+    [M[c], M[pivot]] = [M[pivot], M[c]];
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const factor = M[r][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[r][k] -= factor * M[c][k];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
 }

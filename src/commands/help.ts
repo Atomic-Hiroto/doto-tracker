@@ -56,6 +56,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbopairs <days> [@user]` — a different rolling window, e.g. `+turbopairs 120`',
       '`+turbopairs hard [@user] [days]` — same board plus the enemy ranks each pair faced',
       '`+turbopairs alltime|history|legacy` — alternate teammate evidence views',
+      '`+turbopull [me|@user ...] [days]` — who brings harder enemies when they join your party',
       '`+turboparty best [days|alltime] [tracked|history]` — optimal party (60 days by default)',
       '`+turboparty @user [...]` — best parties that include those players (mention 1–4)',
       '`+turbobackfill [days] [per-player]` — owner-only deduplicated Stratz history sync',

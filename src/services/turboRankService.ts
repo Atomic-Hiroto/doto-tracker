@@ -1063,13 +1063,18 @@ export class TurboRankService {
    * lobby strength is actually recorded; the ledger's averageRank field is still empty because
    * nothing has backfilled it. Observations of the same match from different players agree on
    * the lobby but not on who the enemies were, so each is averaged rather than overwritten.
+   *
+   * `registeredOnly` drops discovered strangers, who can sit on the other team of a crew match and
+   * would then report the crew as the enemy. `minVisibleEnemies` drops readings resting on one medal.
    */
-  getEnemyStrengthByMatch(): Map<string, number> {
+  getEnemyStrengthByMatch({ registeredOnly = false, minVisibleEnemies = 1 } = {}): Map<string, number> {
     const sums = new Map<string, { total: number; count: number }>();
     for (const player of this.data.players) {
+      if (registeredOnly && !player.discordId) continue;
       for (const observation of player.observations || []) {
         const enemyMMR = observation.enemyMMR;
         if (!Number.isFinite(enemyMMR) || !enemyMMR) continue;
+        if (minVisibleEnemies > 1 && (observation.enemyVisibleRanks ?? 0) < minVisibleEnemies) continue;
         const key = String(observation.matchId);
         const entry = sums.get(key) || { total: 0, count: 0 };
         entry.total += enemyMMR;
