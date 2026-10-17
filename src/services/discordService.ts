@@ -129,7 +129,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.turboBackfill(message, args, userDataService, turboStatsService);
       break;
     case Commands.TURBO_PARTY:
-      await commandHandlers.turboParty(message, args, userDataService, turboStatsService);
+      await commandHandlers.turboParty(message, turboStatsService, args);
       break;
     case Commands.TURBO_RANK:
       await commandHandlers.turboRank(message, args, userDataService);
