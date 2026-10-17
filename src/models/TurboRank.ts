@@ -11,7 +11,7 @@ export interface TurboRankObservation {
   allyVisibleRanks?: number;
   /** Visible ranked enemy players. */
   enemyVisibleRanks?: number;
-  /** How many party members the tracked player had (1 = solo). */
+  /** How many party members the tracked player had (1 = solo, 0 = unknown: read before OpenDota parsed it). */
   partySize: number;
   /** Weight derived from party size (1.0 solo → 0.001 five-stack). Only used in party fallback. */
   partyWeight: number;
@@ -141,4 +141,6 @@ export interface TurboRankData {
   players: TurboRankPlayerData[];
   /** Unix ms of last full calibration run. */
   lastCalibrated: number | null;
+  /** 2 once live games with a guessed party size were relabelled unknown. Absent = 1. */
+  observationsVersion?: number;
 }
