@@ -15,7 +15,7 @@ import { ProcessConstants } from '../constants';
  * their ranked medal they actually play). Pure flavour on top of the estimate.
  */
 function turboArchetype(e: TurboRankEstimate): { emoji: string; title: string } {
-  if (e.partyFallback || e.confidence < 30 || e.soloSampleSize < 5) return { emoji: '❓', title: 'Unproven' };
+  if (!isLeaderboardQuality(e)) return { emoji: '❓', title: 'Unproven' };
   const immortal = (e.rankedTier ?? 0) >= 80;
   if (e.lean == null || immortal) return { emoji: '🎖️', title: 'Verified Calibre' };
   const lean = e.lean;
@@ -148,10 +148,12 @@ async function resolveTarget(
 
 // ── Shared rendering helpers ─────────────────────────────────────────────────
 
-/** "2 Immortal, 1 Divine, 6 unranked" — readable lobby make-up. Null if tiers weren't stored. */
-function lobbyComposition(obs: TurboRankObservation): string | null {
+const MEDAL_SHORT = ['', 'Her', 'Gua', 'Cru', 'Arc', 'Leg', 'Anc', 'Div', 'Imm'];
+
+/** "2 Div · 3 Anc · 4 ?" — the lobby make-up on one line. Empty if tiers weren't stored. */
+function lobbyComposition(obs: TurboRankObservation): string {
   const tiers = obs.tiers ?? []; // older persisted observations may lack tiers
-  if (tiers.length === 0) return null;
+  if (tiers.length === 0) return '';
   const counts = new Map<number, number>(); // tier int → count
   for (const t of tiers) {
     const tier = Math.floor(t / 10);
@@ -160,16 +162,19 @@ function lobbyComposition(obs: TurboRankObservation): string | null {
   const parts: string[] = [];
   for (const tier of [8, 7, 6, 5, 4, 3, 2, 1]) {
     const c = counts.get(tier);
-    if (c) parts.push(`${c} ${rankTierToMedal(tier * 10)}`);
+    if (c) parts.push(`${c} ${MEDAL_SHORT[tier]}`);
   }
   const unranked = 9 - (obs.visibleRanks ?? tiers.length);
-  if (unranked > 0) parts.push(`${unranked} unranked`);
-  return parts.join(', ');
+  if (unranked > 0) parts.push(`${unranked} ?`);
+  return parts.join(' · ');
 }
 
-function confidenceBar(confidence: number): string {
-  const filled = Math.round(confidence / 10);
-  return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
+function ageText(timestamp: number): string {
+  const days = Math.max(0, Math.floor((Date.now() / 1000 - timestamp) / 86400));
+  return days === 0 ? 'today'
+    : days < 30 ? `${days}d ago`
+      : days < 365 ? `${Math.round(days / 30)}mo ago`
+        : `${Math.round(days / 365)}y ago`;
 }
 
 function matchLink(matchId: number): string {
@@ -178,14 +183,7 @@ function matchLink(matchId: number): string {
 
 function formatMatchDate(timestamp: number): string {
   const date = new Date(timestamp * 1000);
-  const iso = date.toISOString().slice(0, 10);
-  const ageDays = Math.max(0, Math.floor((Date.now() / 1000 - timestamp) / 86400));
-  const age = ageDays === 0 ? 'today'
-    : ageDays === 1 ? '1d ago'
-      : ageDays < 30 ? `${ageDays}d ago`
-        : ageDays < 365 ? `${Math.round(ageDays / 30)}mo ago`
-          : `${Math.round(ageDays / 365)}y ago`;
-  return `${iso} (${age})`;
+  return `${date.toISOString().slice(0, 10)} (${ageText(timestamp)})`;
 }
 
 function usedObservations(observations: TurboRankObservation[], partyFallback: boolean): TurboRankObservation[] {
@@ -223,38 +221,34 @@ function recentLobbies(observations: TurboRankObservation[], partyFallback: bool
   if (recent.length === 0) return '_No games on record_';
   return recent
     .map(o => {
-      const date = formatMatchDate(o.timestamp);
-      const type = o.partySize === 1 ? 'Solo' : o.partySize === 0 ? 'Party unknown' : `${o.partySize}-stack`;
-      const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '—';
-      const head = `${matchLink(o.matchId)} · **${mmrToMedal(o.lobbyMMR).medal}** lobby · ${type} · ${outcome} · ${date}`;
+      const outcome = o.won === true ? '✅' : o.won === false ? '❌' : '➖';
+      const stack = partyFallback ? ` (${o.partySize}-stack)` : '';
+      const link = `[${ageText(o.timestamp)}](https://stratz.com/matches/${o.matchId})`;
       const comp = lobbyComposition(o);
-      return comp ? `${head}\n${comp}` : head;
+      return `${outcome} **${mmrToMedal(o.lobbyMMR).medal}**${stack}${comp ? ` — ${comp}` : ''} · ${link}`;
     })
-    .join('\n\n');
+    .join('\n');
 }
 
 const HOW_TEXT =
-  'Dota balances every lobby around your hidden MMR, so the average rank of the other 9 players is a read on your own level. To keep that read accurate, each game is weighted by how trustworthy it is:\n' +
-  '• **Solo only** — party games match you to your *stack\'s* average, not yours, so they\'re excluded entirely (used only if you never solo-queue).\n' +
-  '• **Recency** — a 60-day half-life means recent games dominate, so the estimate tracks your *current* form rather than old skill.\n' +
-  '• **Lobby completeness** — a lobby where 8 players are ranked is far more reliable than one with 3, so thin, mostly-unranked lobbies are down-weighted instead of trusted blindly.\n' +
-  '• **Honest uncertainty** — the confidence % and likely range scale with how much solid data backs the estimate, so a 3-game read shows low confidence and a wider range rather than false precision.';
+  'Dota matches you by hidden MMR, so the average medal of the other 9 players in your **solo** games reads your level. ' +
+  'Recent games (60-day half-life) and fully ranked lobbies count most; party games are left out. ' +
+  'The range stays wide on purpose: lobby average and true skill differ by ~600 MMR however many games you play.';
 
 /**
- * Turbo-lean line: how far above/below their visible ranked medal the player
- * actually plays in turbo. The headline finding of the whole estimator.
+ * Turbo-lean phrase: how far above/below their visible ranked medal the player
+ * actually plays in turbo. Null without a ranked medal to compare against.
  */
 function formatLean(estimate: { lean?: number | null; rankedTier?: number | null }): string | null {
   if (estimate.lean == null || !estimate.rankedTier) return null;
   const rankedMedal = rankTierToMedal(estimate.rankedTier);
+  // Immortal has no ceiling to measure against, and lobbies top out below it.
+  if (estimate.rankedTier >= 80) return `ranked **${rankedMedal}**, above where turbo lobbies can place anyone`;
   const lean = estimate.lean;
-  if (lean >= 150) {
-    return `📈 Plays **+${lean}** MMR above their **${rankedMedal}** ranked medal in turbo.`;
-  }
-  if (lean <= -150) {
-    return `📉 Plays **${lean}** MMR below their **${rankedMedal}** ranked medal in turbo.`;
-  }
-  return `Plays right around their **${rankedMedal}** ranked medal in turbo.`;
+  // Same ±250 band as the archetype: anything smaller is well inside the error.
+  if (lean >= 250) return `plays **+${lean}** above their **${rankedMedal}** ranked medal`;
+  if (lean <= -250) return `plays **${lean}** below their **${rankedMedal}** ranked medal`;
+  return `plays right around their **${rankedMedal}** ranked medal`;
 }
 
 function formatMmrDelta(value: number): string {
@@ -288,69 +282,59 @@ function medalIconUrl(tier: number): string {
 }
 
 function buildRankEmbed(target: RankTarget, estimate: NonNullable<ReturnType<typeof turboRankService.getEstimateBySteamId>>, observations: TurboRankObservation[]): EmbedBuilder {
-  const confLabel = estimate.confidence >= 80 ? 'High confidence'
-    : estimate.confidence >= 50 ? 'Moderate confidence'
-    : 'Low confidence — needs more solo games';
+  const proven = isLeaderboardQuality(estimate);
+  const usedObs = usedObservations(observations, estimate.partyFallback);
+  const games = estimate.partyFallback ? usedObs.length : estimate.soloSampleSize;
+  const gamesText = `${games} ${estimate.partyFallback ? 'party' : 'solo'} game${games === 1 ? '' : 's'}`;
 
-  const desc: string[] = [`**${estimate.medal}**  ·  est. ~${estimate.estimatedMMR} MMR`];
+  const desc: string[] = [`## ${estimate.medal}  ·  ~${estimate.estimatedMMR} MMR`];
   if (estimate.rangeLow && estimate.rangeHigh && estimate.rangeLow !== estimate.rangeHigh) {
     // 80% interval, dominated by the structural lobby-average-vs-rank gap rather than
     // by sample size — so it stays wide even for players with hundreds of games.
-    desc.push(`80% range: ${estimate.rangeLow} – ${estimate.rangeHigh}`
-      + (estimate.precisionSD ? ` _(±${estimate.precisionSD} MMR typical error)_` : ''));
-  }
-  const leanLine = formatLean(estimate);
-  if (leanLine) desc.push(leanLine);
-  const type = turboArchetype(estimate);
-  desc.push(`${type.emoji} **${type.title}**`);
-  if (estimate.partyFallback) {
-    desc.push('_Party-based estimate — this player never solo-queues, so it may be skewed by stackmates._');
+    desc.push(`Likely between **${estimate.rangeLow}** and **${estimate.rangeHigh}**`);
   }
 
-  const now = Date.now() / 1000;
-  const usedObs = usedObservations(observations, estimate.partyFallback);
+  // One warning for thin data, in place of a banner, a 10% bar, "Unproven" and a lean read
+  // off a game or two. The lean only shows once there is something to compare.
+  if (estimate.partyFallback) {
+    desc.push(`⚠️ **Rough guess** — never solo-queues, so this comes from ${gamesText}, which match the stack's level rather than theirs.`);
+  } else if (!proven) {
+    desc.push(`⚠️ **Rough guess from ${gamesText}** — off the leaderboard until there's more solo data.`);
+  } else {
+    const type = turboArchetype(estimate);
+    const lean = formatLean(estimate);
+    const inTurbo = lean && (estimate.rankedTier ?? 0) < 80 ? ' in turbo' : '';
+    desc.push(`${type.emoji} **${type.title}**${lean ? ` — ${lean}${inTurbo}` : ''}`);
+  }
+
   const newestTs = usedObs.reduce((m, o) => Math.max(m, o.timestamp), 0);
-  const ageDays = newestTs ? Math.floor((now - newestTs) / 86400) : 0;
+  const ageDays = newestTs ? Math.floor((Date.now() / 1000 - newestTs) / 86400) : 0;
   const months = Math.max(1, Math.round(ageDays / 30));
   const stale = !estimate.partyFallback && ageDays > 100;
   if (estimate.oldGamesFallback) {
-    desc.push(`📜 **No solo games in the last year — this reaches back to their last active turbo stretch (newest ~${months} month${months > 1 ? 's' : ''} ago).** Treat as historical skill, not current form.`);
+    desc.push(`📜 **No solo games in the last year** — this is their last active stretch, ~${months} month${months > 1 ? 's' : ''} ago. Historical, not current form.`);
   } else if (stale) {
-    desc.push(`⚠️ **Based on old games — newest is ~${months} month${months > 1 ? 's' : ''} ago.** May be out of date; play recent solo turbo to refresh.`);
+    desc.push(`⚠️ **Newest solo game is ~${months} month${months > 1 ? 's' : ''} old** — may be out of date.`);
   }
 
   const embed = new EmbedBuilder()
-    .setColor(estimate.partyFallback || estimate.confidence < 40 || stale ? '#9ca3af' : estimate.confidence < 60 ? '#eab308' : '#8b5cf6')
+    .setColor(!proven || stale ? '#9ca3af' : estimate.confidence < 60 ? '#eab308' : '#8b5cf6')
     .setTitle(`🔮 Hidden Turbo Rank — ${target.name}`)
-    .setDescription(
-      (estimate.partyFallback
-        ? "⚠️ **Rough, party-based estimate — don't trust this as a real rank.**\n\n"
-        : estimate.confidence < 40
-          ? '⚠️ **Low-confidence estimate — treat as a rough guess, not a verified rank.**\n\n'
-          : '') + desc.join('\n'),
-    )
+    .setDescription(desc.join('\n'))
     .addFields(
+      // No coverage % here: it read as accuracy, and it caps at 40% for Immortals with
+      // hundreds of games. The game count and error say the same thing honestly.
+      { name: estimate.partyFallback ? 'Party games' : 'Solo games', value: `**${games}**`, inline: true },
+      { name: 'Typical error', value: estimate.precisionSD ? `±${estimate.precisionSD} MMR` : '—', inline: true },
+      { name: 'Last played', value: newestTs ? ageText(newestTs) : '—', inline: true },
       {
-        name: 'Confidence',
-        value: `${confidenceBar(estimate.confidence)}  ${estimate.confidence}% · ${confLabel}`,
-        inline: false,
-      },
-      {
-        name: 'Based on',
-        value: estimate.partyFallback
-          ? `${estimate.sampleSize} party matches (no solo games found)\nEffective sample: **${estimate.effectiveSample}** visible-rank-weighted lobbies`
-          : `${estimate.soloSampleSize} solo matches\nEffective sample: **${estimate.effectiveSample}** visible-rank-weighted lobbies`,
-        inline: false,
-      },
-      {
-        name: estimate.partyFallback ? 'Recent Lobbies' : 'Recent Solo Lobbies',
+        name: estimate.partyFallback ? 'Recent lobbies' : 'Recent solo lobbies',
         value: recentLobbies(observations, estimate.partyFallback),
         inline: false,
       },
-      { name: 'How this is calculated', value: HOW_TEXT, inline: false },
+      { name: 'How it works', value: HOW_TEXT, inline: false },
     )
-    .setFooter({ text: `updated ${new Date(estimate.lastUpdated).toLocaleDateString()}` })
-    .setTimestamp();
+    .setFooter({ text: '+turborank audit for every game used' });
 
   embed.setThumbnail(medalIconUrl(estimate.medalTier));
   return embed;
@@ -363,7 +347,7 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
     : 0;
   const newest = used[0]?.timestamp;
   const oldest = used[used.length - 1]?.timestamp;
-  const ageText = newest
+  const freshness = newest
     ? `${Math.floor((Date.now() / 1000 - newest) / 86400)}d since newest`
     : 'no usable observations';
   const qualityFlags: string[] = [];
@@ -392,7 +376,7 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
         value:
           `Used observations: **${used.length}** / stored **${observations.length}**\n` +
           `Solo observations: **${estimate.soloSampleSize}** | effective sample: **${estimate.effectiveSample}**\n` +
-          `Average visible ranks: **${visibleAvg.toFixed(1)}/9** | ${ageText}\n` +
+          `Average visible ranks: **${visibleAvg.toFixed(1)}/9** | ${freshness}\n` +
           `Window: ${oldest ? formatMatchDate(oldest) : 'n/a'} – ${newest ? formatMatchDate(newest) : 'n/a'}`,
         inline: false,
       },
@@ -958,13 +942,15 @@ async function turboRankAll(message: Message, showEveryone = false) {
       name = name ?? `Player ${i + 1}`;
 
       const place = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-      const conf = estimate.confidence >= 70 ? '✅' : estimate.confidence >= 40 ? '⚠️' : '❓';
+      // Error and solo count instead of the coverage %, which read as accuracy.
+      const provisionalMark = isLeaderboardQuality(estimate) ? '' : ' ❓';
+      const error = estimate.precisionSD ? ` · ±${estimate.precisionSD}` : '';
       const fallback = estimate.partyFallback ? ' · _party-est_' : '';
       const tag = showEveryone && discovered ? ' · _discovered_' : '';
 
       lines.push(
-        `${place}  **${name}** — ${estimate.medal} ${conf}\n` +
-        ` ~${estimate.estimatedMMR} MMR · ${estimate.confidence}% conf · ${estimate.soloSampleSize} solo${fallback}${tag}`,
+        `${place}  **${name}** — ${estimate.medal}${provisionalMark}\n` +
+        ` ~${estimate.estimatedMMR} MMR${error} · ${estimate.soloSampleSize} solo${fallback}${tag}`,
       );
     }
 
