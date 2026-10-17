@@ -67,9 +67,10 @@ export async function turboPull(message: Message, turboStatsService: TurboStatsS
         .setColor('#a855f7')
         .setTitle('🧲 Turbo Pull — who brings harder enemies')
         .setDescription(
-          `The rank matchmaking treats each player as when they're in your party · ${window.label}\n`
-          + 'A new member moves your enemies by (their pull − your party\'s) ÷ the new party size. '
-          + '`+turbopull me` or `+turbopull @a @b` shows it for a party.\n\n'
+          '**How strong your enemies get when this person is in your party.** '
+          + `It's the average real rank of the enemies we faced in ${scoredTeams} of our own games (${window.label}), `
+          + 'so stack with someone high on the list for tougher lobbies, or someone low for easier ones.\n'
+          + '`+turbopull me` or `+turbopull @a @b` checks a party.\n\n'
           + lines.join('\n')
         )
         .setFooter({ text: `${footer} · not the same number as +turborank` })
