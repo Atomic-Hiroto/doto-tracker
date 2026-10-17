@@ -148,7 +148,7 @@ export function weighObservations(observations: TurboRankObservation[]): Weighte
   const decayLambda = Math.LN2 / (RECENCY_HALF_LIFE_DAYS * 86400);
   const soloObs = observations.filter(o => o.partySize === 1);
   const partyFallback = soloObs.length === 0;
-  const targets = partyFallback ? observations : soloObs;
+  const targets = partyFallback ? observations.filter(o => o.partySize > 1) : soloObs;
 
   const weighted: WeightedObservation[] = [];
   let totalWeight = 0;
@@ -195,8 +195,37 @@ export function pointEstimateFrom(
   };
 }
 
-/** Max observations to keep per player (oldest pruned on save). */
+/** Max observations to keep per player, counted separately for solo and other games. */
 const MAX_OBSERVATIONS = 200;
+
+/**
+ * Keep the newest MAX_OBSERVATIONS solo games and, separately, the newest MAX_OBSERVATIONS
+ * others. With one shared window, a player who mostly stacks lost their solo history (the only
+ * games the estimate reads) to party games, which only feed the no-solo fallback and
+ * `+turbopull`'s enemy strengths. One player was left estimated from a single solo game.
+ */
+function pruneObservations(observations: TurboRankObservation[]): TurboRankObservation[] {
+  const newestFirst = [...observations].sort((a, b) => b.timestamp - a.timestamp);
+  const solo = newestFirst.filter(o => o.partySize === 1).slice(0, MAX_OBSERVATIONS);
+  const other = newestFirst.filter(o => o.partySize !== 1).slice(0, MAX_OBSERVATIONS);
+  return [...solo, ...other].sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/**
+ * Party size of the tracked player in an OpenDota match: 1 for solo, 0 when it can't be told.
+ *
+ * OpenDota fills `party_size`/`party_id` only once a match is parsed, and live polling reads
+ * matches before that. Treating the missing ids as "everyone is in the same party" filed every
+ * fresh game as a 10-stack (1,410 of them), so live play never added a solo game. Solo players
+ * get a party id of their own too, so `party_size` is the field to trust.
+ */
+export function openDotaPartySize(trackedPlayer: any, players: any[]): number {
+  const size = trackedPlayer.party_size;
+  if (Number.isFinite(size) && size > 0) return Math.min(size, 5);
+  const partyId = trackedPlayer.party_id;
+  if (Number.isFinite(partyId)) return Math.min(players.filter(p => p.party_id === partyId).length, 5);
+  return 0;
+}
 
 // ── Conversion helpers ───────────────────────────────────────────────────────
 
@@ -210,21 +239,28 @@ export function rankTierToMMR(rankTier: number): number | null {
   return floor + stars * MMR_PER_STAR;
 }
 
-/** Convert an MMR number to { tier, stars, medal } */
+/**
+ * Convert an MMR number to the nearest real rank, { tier, stars, medal }.
+ *
+ * Every medal below Immortal runs 1-5 stars (rankTierToMMR's floor + stars×153), so there is
+ * no starless "Legend". Snapping to the medal floor printed one for 9 of 61 estimates, even
+ * though a value just over a floor sits closer to the previous medal's 5 stars (Archon 5 = 3075)
+ * than to Legend 1 (3233).
+ */
 export function mmrToMedal(mmr: number): { tier: number; stars: number; medal: string } {
-  for (let t = 8; t >= 1; t--) {
-    if (mmr >= MEDAL_MMR_FLOORS[t]) {
-      const starsRaw = Math.round((mmr - MEDAL_MMR_FLOORS[t]) / MMR_PER_STAR);
-      const stars = Math.min(Math.max(starsRaw, 0), t === 8 ? 0 : 5);
-      const name = MEDAL_NAMES[t];
-      return {
-        tier: t,
-        stars,
-        medal: stars > 0 ? `${name} ${stars}` : name,
-      };
+  let best = { tier: 8, stars: 0, distance: Math.abs(mmr - MEDAL_MMR_FLOORS[8]) };
+  for (let t = 1; t <= 7; t++) {
+    for (let s = 1; s <= 5; s++) {
+      const distance = Math.abs(mmr - (MEDAL_MMR_FLOORS[t] + s * MMR_PER_STAR));
+      if (distance < best.distance) best = { tier: t, stars: s, distance };
     }
   }
-  return { tier: 1, stars: 0, medal: 'Herald' };
+  const name = MEDAL_NAMES[best.tier];
+  return {
+    tier: best.tier,
+    stars: best.stars,
+    medal: best.stars > 0 ? `${name} ${best.stars}` : name,
+  };
 }
 
 /** Medal string for a raw rank_tier int (e.g. 71 → "Divine 1"), 'Unranked' for none. */
@@ -445,6 +481,7 @@ export class TurboRankService {
       if (fs.existsSync(TURBO_RANK_FILE)) {
         this.data = JSON.parse(fs.readFileSync(TURBO_RANK_FILE, 'utf8'));
         logger.info(`Turbo rank data loaded — ${this.data.players.length} players`);
+        this.migrateUnknownPartySizes();
       }
     } catch (err) {
       logger.error('Error loading turbo rank data:', err);
@@ -452,15 +489,34 @@ export class TurboRankService {
     }
   }
 
-  private save() {
-    try {
-      for (const p of this.data.players) {
-        if (p.observations.length > MAX_OBSERVATIONS) {
-          p.observations = p.observations
-            .sort((a, b) => b.timestamp - a.timestamp)
-            .slice(0, MAX_OBSERVATIONS);
+  /**
+   * One-time relabel of live games stored under the old party detection. A 10-stack was an
+   * unparsed match, and a 2-stack could be a solo player in a party of their own. Neither says
+   * whether the game was solo, so both become unknown (0). They keep their enemy strengths for
+   * `+turbopull`; a recalibration brings the real solo games back in.
+   */
+  private migrateUnknownPartySizes() {
+    if ((this.data.observationsVersion ?? 1) >= 2) return;
+    let relabelled = 0;
+    for (const p of this.data.players) {
+      for (const o of p.observations) {
+        if (o.partySize === 2 || o.partySize > 5) {
+          o.partySize = 0;
+          o.partyWeight = 0;
+          relabelled++;
         }
       }
+      // A no-solo fallback estimate may have rested on exactly those games.
+      if (p.estimate?.partyFallback) p.estimate = this.computeEstimate(p.observations, p.estimate.rankedTier);
+    }
+    this.data.observationsVersion = 2;
+    logger.info(`Turbo rank: relabelled ${relabelled} observations with an unknown party size`);
+    this.save();
+  }
+
+  private save() {
+    try {
+      for (const p of this.data.players) p.observations = pruneObservations(p.observations);
       fs.writeFileSync(TURBO_RANK_FILE, JSON.stringify(this.data, null, 2));
     } catch (err) {
       logger.error('Error saving turbo rank data:', err);
@@ -478,7 +534,7 @@ export class TurboRankService {
     const byMatch = new Map<string, TurboRankObservation>();
     for (const observation of existing) byMatch.set(String(observation.matchId), observation);
     for (const observation of incoming) byMatch.set(String(observation.matchId), observation);
-    return [...byMatch.values()].sort((a, b) => b.timestamp - a.timestamp).slice(0, MAX_OBSERVATIONS);
+    return pruneObservations([...byMatch.values()]);
   }
 
   private getOrCreatePlayer(discordId: string, steamId: string): TurboRankPlayerData {
@@ -494,7 +550,10 @@ export class TurboRankService {
 
   // ── Observation extraction ───────────────────────────────────────────────
 
-  /** Live-match path (OpenDota). Solo = no party_id. */
+  /**
+   * Live-match path (OpenDota). An unparsed match is still kept, with partySize 0: the estimate
+   * ignores it, but its enemy medals feed `+turbopull`, and calibration overwrites it later.
+   */
   extractObservationFromOpenDota(
     matchData: any,
     steamId: string,
@@ -507,13 +566,7 @@ export class TurboRankService {
     );
     if (!trackedPlayer) return null;
 
-    const partyId = trackedPlayer.party_id;
-    const isSolo = partyId == null || partyId === 0
-      ? players.filter(p => p.party_id === partyId).length <= 1
-      : false;
-    const partySize = isSolo
-      ? 1
-      : Math.max(2, players.filter(p => p.party_id === partyId).length);
+    const partySize = openDotaPartySize(trackedPlayer, players);
 
     const isRadiant = trackedPlayer.player_slot < 128;
     const tiers: number[] = [];
@@ -546,7 +599,7 @@ export class TurboRankService {
       allyVisibleRanks: allyMMRValues.length,
       enemyVisibleRanks: enemyMMRValues.length,
       partySize,
-      partyWeight: PARTY_WEIGHTS[Math.min(partySize, 5)] ?? 0.1,
+      partyWeight: partySize === 0 ? 0 : PARTY_WEIGHTS[partySize] ?? 0.1,
       timestamp: matchData.start_time || Math.floor(Date.now() / 1000),
       visibleRanks: mmrValues.length,
       tiers,
@@ -639,7 +692,8 @@ export class TurboRankService {
 
     const soloObs = observations.filter(o => o.partySize === 1);
     const partyFallback = soloObs.length === 0;
-    const targets = partyFallback ? observations : soloObs;
+    // Games whose party size is unknown (0) can't stand in for solo or for a known party.
+    const targets = partyFallback ? observations.filter(o => o.partySize > 1) : soloObs;
 
     let weightedSum = 0;
     let totalWeight = 0;
@@ -720,7 +774,7 @@ export class TurboRankService {
   }
 
   /**
-   * Recompute the derived-on-read parts of a stored estimate: the experimental V2
+   * Recompute the derived-on-read parts of a stored estimate: the medal label, the experimental V2
    * read, and the precision/range block.
    *
    * Estimates are persisted, so a change to how uncertainty is computed would
@@ -738,9 +792,13 @@ export class TurboRankService {
     if (!weighted) return estimate;
 
     const { precisionSD, kishN, spread } = precisionFor(weighted, estimate.estimatedMMR);
+    const { tier, stars, medal } = mmrToMedal(estimate.estimatedMMR);
 
     return {
       ...estimate,
+      medalTier: tier,
+      stars,
+      medal,
       precisionSD,
       kishSample: Math.round(kishN * 100) / 100,
       rangeLow: mmrToMedal(Math.max(0, estimate.estimatedMMR - spread)).medal,
@@ -1059,9 +1117,9 @@ export class TurboRankService {
   }
 
   /**
-   * matchId -> average enemy MMR, across every player's observations. This is the only place
-   * lobby strength is actually recorded; the ledger's averageRank field is still empty because
-   * nothing has backfilled it. Observations of the same match from different players agree on
+   * matchId -> average enemy MMR, across every player's observations, including party games and
+   * games whose party size is unknown. The ledger's `enemyRank` covers matches missing here; this
+   * map is preferred where both exist. Observations of the same match from different players agree on
    * the lobby but not on who the enemies were, so each is averaged rather than overwritten.
    *
    * `registeredOnly` drops discovered strangers, who can sit on the other team of a crew match and

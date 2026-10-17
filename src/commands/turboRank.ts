@@ -189,7 +189,7 @@ function formatMatchDate(timestamp: number): string {
 }
 
 function usedObservations(observations: TurboRankObservation[], partyFallback: boolean): TurboRankObservation[] {
-  return partyFallback ? observations : observations.filter(o => o.partySize === 1);
+  return observations.filter(o => partyFallback ? o.partySize > 1 : o.partySize === 1);
 }
 
 function fitLines(lines: string[], emptyText: string, limit = 1000): string {
@@ -224,7 +224,7 @@ function recentLobbies(observations: TurboRankObservation[], partyFallback: bool
   return recent
     .map(o => {
       const date = formatMatchDate(o.timestamp);
-      const type = o.partySize === 1 ? 'Solo' : `${o.partySize}-stack`;
+      const type = o.partySize === 1 ? 'Solo' : o.partySize === 0 ? 'Party unknown' : `${o.partySize}-stack`;
       const outcome = o.won === true ? 'W' : o.won === false ? 'L' : '—';
       const head = `${matchLink(o.matchId)} · **${mmrToMedal(o.lobbyMMR).medal}** lobby · ${type} · ${outcome} · ${date}`;
       const comp = lobbyComposition(o);
@@ -373,7 +373,7 @@ function buildAuditEmbed(target: RankTarget, estimate: NonNullable<ReturnType<ty
   if (estimate.effectiveSample < 8) qualityFlags.push('low effective sample');
 
   const lines = used.slice(0, 12).map((obs) => {
-    const type = obs.partySize === 1 ? 'solo' : `${obs.partySize}-stack`;
+    const type = obs.partySize === 1 ? 'solo' : obs.partySize === 0 ? 'party unknown' : `${obs.partySize}-stack`;
     const outcome = obs.won === true ? 'W' : obs.won === false ? 'L' : '-';
     const date = formatMatchDate(obs.timestamp);
     const side = obs.allyMMR != null && obs.enemyMMR != null
