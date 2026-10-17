@@ -457,6 +457,7 @@ export class TurboStatsService {
     type Team = { ids: string[]; y: number; day: number };
     const teams: Team[] = [];
     const steamIds = new Map<string, string>();
+    const lastPlayed = new Map<string, number>();
     for (const match of this.matchesForScope('all', sinceTimestamp)) {
       // Prefer the +turborank reading, which the model was validated on; the ledger's own enemy
       // medals fill the stacked games it never sampled.
@@ -468,7 +469,10 @@ export class TurboStatsService {
       const sides = (['radiant', 'dire'] as const).filter(team => match.players.some(player => player.team === team));
       if (sides.length !== 1) continue;
       const ids = [...new Set(match.players.map(player => player.discordId))];
-      for (const player of match.players) steamIds.set(player.discordId, player.steamId);
+      for (const player of match.players) {
+        steamIds.set(player.discordId, player.steamId);
+        lastPlayed.set(player.discordId, Math.max(lastPlayed.get(player.discordId) || 0, match.timestamp));
+      }
       teams.push({ ids, y, day: Math.floor(match.timestamp / 86400) });
     }
 
@@ -527,6 +531,7 @@ export class TurboStatsService {
         steamId: steamIds.get(discordId) || '',
         rating: point[i],
         games: games.get(discordId) || 0,
+        lastPlayed: lastPlayed.get(discordId) || 0,
         samples: samples[i]
       })),
       scoredTeams: teams.length

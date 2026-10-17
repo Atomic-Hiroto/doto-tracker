@@ -1,116 +1,96 @@
 import { EmbedBuilder, Message } from 'discord.js';
-import { TurboStatsScope } from '../models/TurboStats';
 import { TurboStatsService } from '../services/turboStatsService';
-import { UserDataService } from '../services/userDataService';
+import { turboRankService, mmrToMedal } from '../services/turboRankService';
 import { logger } from '../services/loggerService';
+import { displayName, parseWindow } from './turboPull';
 
-function parseScope(args: string[]): TurboStatsScope {
-  if (args.some(arg => ['tracked', 'live'].includes(arg.toLowerCase()))) return 'tracked';
-  if (args.some(arg => ['history', 'historical', 'past'].includes(arg.toLowerCase()))) return 'history';
-  return 'all';
-}
+const ACTIVE_DAYS = 60;
+const HARDER_NOT_LOSSES = 'Tougher enemies don\'t mean more losses, since matchmaking keeps every party near 50%. '
+  + 'Pick easy for a chill game, tough for practice. `+turbopull` shows any single player\'s effect.';
 
-function parseWindow(args: string[]) {
-  const allTime = args.some(arg => ['all', 'alltime', 'all-time', 'forever'].includes(arg.toLowerCase()));
-  if (allTime) return { sinceTimestamp: undefined, label: 'all imported history' };
-  const requested = args.map(arg => Number.parseInt(arg, 10)).find(value => Number.isFinite(value));
-  const days = Math.max(7, Math.min(1825, requested || 60));
-  return {
-    sinceTimestamp: Math.floor(Date.now() / 1000) - days * 86400,
-    label: `last ${days} days`
-  };
-}
+type PullPlayer = ReturnType<TurboStatsService['getPullRatings']>['players'][number];
 
-export async function turboParty(message: Message, args: string[], users: UserDataService, stats: TurboStatsService) {
+/**
+ * `+turboparty [@user ...|me] [days]` — plan a Turbo five-stack for easier or tougher lobbies.
+ *
+ * It used to optimise win rate, but in forward tests duo and lineup records predicted nothing and
+ * the projection lost to a coin flip: Turbo matchmaking pulls every party back toward 50%. What a
+ * party does change is how strong its enemies are, close to the average of its members' pull
+ * ratings (`+turbopull`), so this fills the named players up to five from recently active players
+ * to make that as low or as high as it can go.
+ */
+export async function turboParty(message: Message, stats: TurboStatsService, args: string[] = []) {
   try {
-    const scope = parseScope(args);
     const window = parseWindow(args);
-    const nameOf = async (id: string) => {
-      try { return (await message.client.users.fetch(id)).username; } catch { return `<@${id}>`; }
+    const enemyByMatch = turboRankService.getEnemyStrengthByMatch({ registeredOnly: true, minVisibleEnemies: 2 });
+    const { players, scoredTeams } = stats.getPullRatings(enemyByMatch, 20, window.sinceTimestamp);
+    const byId = new Map(players.map(player => [player.discordId, player]));
+
+    const lockedIds = [...message.mentions.users.keys()];
+    const wantsSelf = args.some(arg => ['me', 'my', 'mine'].includes(arg.toLowerCase()));
+    // With nobody named, plan around the caller when they have a rating, else across everyone.
+    if ((wantsSelf || !lockedIds.length) && byId.has(message.author.id) && !lockedIds.includes(message.author.id)) {
+      lockedIds.unshift(message.author.id);
+    }
+    if (lockedIds.length > 5) return message.reply('A party is five players — name up to 5.');
+
+    const missing = lockedIds.filter(id => !byId.has(id));
+    if (missing.length) {
+      const names = await Promise.all(missing.map(async id => (await message.client.users.fetch(id).catch(() => null))?.username || id));
+      return message.reply(
+        `No pull rating yet for **${names.join(', ')}**: they need 20+ rank-scored Turbo games in ${window.label}. `
+        + '`+turbopull` lists everyone who has one.'
+      );
+    }
+
+    const locked = lockedIds.map(id => byId.get(id)!);
+    const activeSince = Math.floor(Date.now() / 1000) - ACTIVE_DAYS * 86400;
+    const pool = players.filter(player => !lockedIds.includes(player.discordId) && player.lastPlayed >= activeSince);
+    const need = 5 - locked.length;
+    if (pool.length < need) {
+      return message.reply(`Only ${pool.length} other rated players have played Turbo in the last ${ACTIVE_DAYS} days, not enough to fill the party.`);
+    }
+
+    const sortedPool = [...pool].sort((a, b) => a.rating - b.rating);
+    const describe = async (party: PullPlayer[]) => {
+      const rating = party.reduce((sum, player) => sum + player.rating, 0) / party.length;
+      const names = await Promise.all(party.map(async player => {
+        const name = await displayName(message, player);
+        return lockedIds.includes(player.discordId) ? name : `**${name}**`;
+      }));
+      return `${names.join(' · ')}\n→ **${mmrToMedal(rating).medal}** enemies on average (~${Math.round(rating)} MMR)`;
     };
 
-    // One to four mentions reads as "build a party around these players" — those get locked into
-    // every lineup considered. Five or more reads as "pick the best five out of exactly this pool".
-    const mentioned = [...message.mentions.users.keys()];
-    const required = mentioned.length > 0 && mentioned.length < 5 ? mentioned : [];
-    let candidateIds = required.length ? [] : mentioned;
-    if (!candidateIds.length) {
-      candidateIds = users.getAllUsers()
-        .map(user => ({ id: user.discordId, games: (() => { const s = stats.getPlayerStats(user.discordId, scope, window.sinceTimestamp); return s ? s.wins + s.losses : 0; })() }))
-        .filter(player => player.games > 0)
-        .sort((a, b) => b.games - a.games)
-        .slice(0, 20)
-        .map(player => player.id);
-      // A locked-in player belongs in the pool even if they are too thin to reach the top 20.
-      for (const id of required) if (!candidateIds.includes(id)) candidateIds.push(id);
-    }
-    if (candidateIds.length < 5) {
-      const next = scope === 'tracked'
-        ? 'The tracked ledger starts with the new system; use `+turboparty best` while new live matches accumulate.'
-        : 'Run `+turbobackfill` after registering more players.';
-      return message.reply(`Only ${candidateIds.length} registered players have ${scope} evidence. ${next}`);
-    }
+    const lockedNames = await Promise.all(locked.map(player => displayName(message, player)));
+    const embed = new EmbedBuilder()
+      .setColor('#8b5cf6')
+      .setFooter({ text: `${scoredTeams} rank-scored games · single games swing ±650 MMR around these averages` })
+      .setTimestamp();
 
-    const requiredNames = await Promise.all(required.map(nameOf));
-    const recommendations = stats.recommendParties(candidateIds, scope, 3, window.sinceTimestamp, required);
-    if (!recommendations.length) {
-      const next = scope === 'tracked'
-        ? 'Use `+turboparty best` while new live matches accumulate.'
-        : 'Run `+turbobackfill`, then try again.';
-      const who = required.length
-        ? ` No lineup containing ${requiredNames.join(' and ')} clears that bar — they need more games with the rest of the pool.`
-        : '';
-      return message.reply(`There is not enough connected evidence yet (at least 7 of 10 duo links need 5+ games).${who} ${next}`);
-    }
-
-    const fields = [];
-    for (let i = 0; i < recommendations.length; i++) {
-      const rec = recommendations[i];
-      const names = await Promise.all(rec.playerIds.map(nameOf));
-      const pairName = async (pair: typeof rec.strongestPair) => {
-        if (!pair) return 'n/a';
-        const resolved = await Promise.all([pair.player1, pair.player2].map(nameOf));
-        return `${resolved.join(' + ')} (${pair.wins}-${pair.losses})`;
-      };
-      fields.push({
-        name: `${i === 0 ? '🏆' : `${i + 1}.`} ${names.join(' · ')}`,
-        value: `Rank score **${rec.score.toFixed(1)}** — the projection minus a penalty for how thin its evidence is\n` +
-          `Projected WR: ${(rec.predictedWinRate * 100).toFixed(1)}% (${(rec.lowWinRate * 100).toFixed(1)}–${(rec.highWinRate * 100).toFixed(1)}%)\n` +
-          `Evidence: ${rec.coveredPairs}/10 duo links · ${rec.averagePairGames.toFixed(1)} avg games/link · exact lineup ${rec.exactLineupWins}/${rec.exactLineupGames}\n` +
-          `Strongest duo: ${await pairName(rec.strongestPair)}\nWeakest observed duo: ${await pairName(rec.weakestPair)}`,
-        inline: false
+    if (!need) {
+      return message.reply({
+        embeds: [embed
+          .setTitle(`🧩 Turbo Party — ${lockedNames.join(' + ')}`)
+          .setDescription(`This five-stack should draw:\n${await describe(locked)}\n\n${HARDER_NOT_LOSSES}`)]
       });
     }
 
-    // The ranking is only meaningful if the leader actually separates from the field. It usually
-    // does not at five-player granularity, so state that in the embed rather than implying a gap.
-    const leader = recommendations[0];
-    const share = leader.evaluatedLineups ? leader.indistinguishableLineups / leader.evaluatedLineups : 0;
-    fields.push({
-      name: 'How much to trust this',
-      value: `${leader.evaluatedLineups} lineups had enough evidence to rank. `
-        + `${leader.indistinguishableLineups} of them have a projection inside the leader's `
-        + `${(leader.lowWinRate * 100).toFixed(1)}–${(leader.highWinRate * 100).toFixed(1)}% interval.`
-        + (share >= 0.5
-          ? ' At that spread the order is a tiebreak on confidence, not a real gap — treat these as equivalent and pick on vibes.'
-          : ''),
-      inline: false
-    });
-
-    const embed = new EmbedBuilder()
-      .setColor('#8b5cf6')
-      .setTitle(required.length ? `🧩 Optimal Turbo Party — ${requiredNames.join(' + ')}` : '🧩 Optimal Turbo Party')
+    const lockedText = locked.length
+      ? `Filling **${lockedNames.join(' + ')}** up to five`
+      : 'Best five-stacks';
+    embed
+      .setTitle(locked.length ? `🧩 Turbo Party — ${lockedNames.join(' + ')}` : '🧩 Turbo Party Planner')
       .setDescription(
-        (required.length
-          ? `Best five-player combinations **containing ${requiredNames.join(' and ')}**, drawn from **${candidateIds.length}** candidates`
-          : `Best five-player combinations from **${candidateIds.length}** candidates`)
-        + ` · **${window.label}** · scope: **${scope}**`)
-      .addFields(fields)
-      .setFooter({ text: 'Projection: neutral 10–10 priors + duo synergy + exact-lineup evidence. Association, not a causal guarantee.' })
-      .setTimestamp();
+        `${lockedText} from ${pool.length} players active in the last ${ACTIVE_DAYS} days, by how strong the enemies get `
+        + `(pull from ${window.label}). New picks are in bold.\n\n${HARDER_NOT_LOSSES}`
+      )
+      .addFields(
+        { name: '😌 Easiest lobbies', value: await describe([...locked, ...sortedPool.slice(0, need)]) },
+        { name: '🔥 Toughest lobbies', value: await describe([...locked, ...sortedPool.slice(-need).reverse()]) }
+      );
     return message.reply({ embeds: [embed] });
   } catch (error) {
-    logger.error('Error in turbo party optimizer:', error);
-    return message.reply('An error occurred while calculating the optimal Turbo party. Please try again later.');
+    logger.error('Error in turbo party planner:', error);
+    return message.reply('An error occurred while planning the Turbo party. Please try again later.');
   }
 }

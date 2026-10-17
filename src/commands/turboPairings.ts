@@ -38,6 +38,17 @@ function parseOptions(args: string[]) {
 
 type Window = { sinceTimestamp?: number; label: string };
 
+// From the 2026-10-17 forward test: duo win rates spread no wider than luck, and the five best duos
+// of the older half of the ledger went from 66% to 48% in the newer half.
+const LUCK_NOTE = '🍀 **Mostly luck.** ± is how far a lucky or unlucky run alone could push it, and the top 5 duos '
+  + 'we checked earlier dropped to ~48% afterwards. A partner changes how tough your enemies are, not your odds: see `+turbopull`.';
+
+/** "61.2% ±12" win rate, where ± is the 95% range binomial luck allows at that many games. */
+function winRateText(wins: number, games: number) {
+  const rate = wins / games;
+  return `**${(rate * 100).toFixed(1)}%** ±${Math.round(196 * Math.sqrt(rate * (1 - rate) / games))}`;
+}
+
 /**
  * `+turbopairs hard [@user]` — the teammate board with the opposition each pair faced. The order is
  * plain win rate: enemy strength was measured against 502 scored crew games and predicts
@@ -70,7 +81,7 @@ async function rankAdjustedBoard(
   const embed = new EmbedBuilder()
     .setColor('#f59e0b')
     .setTitle(target ? `🤝 Turbo Teammates vs Rank — ${target.username}` : '🤝 Turbo Teammates vs Rank')
-    .setDescription(`**Ranked by win rate**, highest first · ${window.label} · min ${minGames} games together`)
+    .setDescription(`**Ranked by win rate**, highest first · ${window.label} · min ${minGames} games together\n${LUCK_NOTE}`)
     .setFooter({ text: 'Enemy rank is shown for context, not used in the ranking — in this crew\'s games it does not affect who wins.' })
     .setTimestamp();
 
@@ -88,7 +99,7 @@ async function rankAdjustedBoard(
       const mmr = Math.round(row.medianEnemyMMR);
       entries.push({
         name: `${medal} ${label}`,
-        value: `**${row.winRate.toFixed(1)}%** win rate · ${row.wins}W–${row.losses}L in ${row.games} games\n`
+        value: `${winRateText(row.wins, row.wins + row.losses)} win rate · ${row.wins}W–${row.losses}L in ${row.games} games\n`
           + `Usually up against **${mmrToMedal(mmr).medal}** (${mmr} MMR)`
       });
     } catch (error) {
@@ -118,9 +129,9 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
 
     const embed = new EmbedBuilder()
       .setColor('#ff6b6b')
-      .setTitle('🤝 Best Turbo Teammates')
+      .setTitle('🍀 Luckiest Turbo Duos')
       .setDescription(
-        `Win rate when you're on the same team · **${window.label}** · min ${minGames} games`
+        `Win rate when you're on the same team · **${window.label}** · min ${minGames} games\n${LUCK_NOTE}`
         + (useLegacy ? '\n⚠️ Legacy snapshot: no match-id dedupe, so these counts are unreliable. Prefer `+turbopairs 60`.' : '')
       )
       .setFooter({ text: 'Any game on the same team counts, solo queue or full stack. `+turbopairs hard` adds the ranks you played against.' })
@@ -138,7 +149,7 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
         entries.push({
           name: `${medal} ${user1.username} + ${user2.username}`,
-          value: `**${(pairing.wins / games * 100).toFixed(1)}%** win rate · ${pairing.wins}W–${pairing.losses}L in ${games} games`
+          value: `${winRateText(pairing.wins, games)} win rate · ${pairing.wins}W–${pairing.losses}L in ${games} games`
         });
       } catch (error) {
         logger.warn(`Could not fetch users for pairing ${pairing.player1} + ${pairing.player2}:`, error);
@@ -174,9 +185,9 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
 
     const embed = new EmbedBuilder()
       .setColor('#4ecdc4')
-      .setTitle(`🤝 Turbo Teammates — ${target.username}`)
+      .setTitle(`🍀 Luckiest Teammates — ${target.username}`)
       .setDescription(
-        `Win rate when you're on the same team · **${window.label}** · min 5 games`
+        `Win rate when you're on the same team · **${window.label}** · min 5 games\n${LUCK_NOTE}`
         + (useLegacy ? '\n⚠️ Legacy snapshot: no match-id dedupe, so these counts are unreliable.' : '')
       )
       .setFooter({ text: 'Any game on the same team counts, solo queue or full stack.' })
@@ -190,7 +201,7 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
         const games = pairing.wins + pairing.losses;
         entries.push({
           name: `${i + 1}. ${partner.username}`,
-          value: `**${(pairing.wins / games * 100).toFixed(1)}%** win rate · ${pairing.wins}W–${pairing.losses}L in ${games} games`
+          value: `${winRateText(pairing.wins, games)} win rate · ${pairing.wins}W–${pairing.losses}L in ${games} games`
         });
       } catch (error) {
         logger.warn('Could not fetch turbo teammate:', error);

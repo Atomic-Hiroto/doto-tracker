@@ -8,21 +8,21 @@ const MAX_LINES = 24;
 
 type PullPlayer = ReturnType<TurboStatsService['getPullRatings']>['players'][number];
 
-function parseWindow(args: string[]) {
+export function parseWindow(args: string[]) {
   const requested = args.map(arg => Number.parseInt(arg, 10)).find(value => Number.isFinite(value) && value > 0);
   if (!requested) return { sinceTimestamp: undefined, label: 'all imported history' };
   const days = Math.max(7, Math.min(1825, requested));
   return { sinceTimestamp: Math.floor(Date.now() / 1000) - days * 86400, label: `the last ${days} days` };
 }
 
-function quantile(values: number[], p: number) {
+export function quantile(values: number[], p: number) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.floor(p * (sorted.length - 1))];
 }
 
 const signed = (value: number) => `${value >= 0 ? '+' : '−'}${Math.abs(Math.round(value))}`;
 
-async function displayName(message: Message, player: { discordId: string; steamId: string }) {
+export async function displayName(message: Message, player: { discordId: string; steamId: string }) {
   const user = await message.client.users.fetch(player.discordId).catch(() => null);
   return user?.username || turboRankService.getSteamName(player.steamId) || player.steamId || player.discordId;
 }
