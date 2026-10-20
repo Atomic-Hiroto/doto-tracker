@@ -59,6 +59,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turbopull [me|@user ...] [days]` — who brings harder enemies when they join your party',
       '`+turboparty [me|@user ...] [days]` — strongest stacks by party MMR, plus potential five-stacks',
       '`+turboparty wins [me|@user ...] [days]` — the same stacks ranked by win rate (mostly luck, with ± ranges)',
+      '`+turboparty matches [me|@user ...] [days]` — the same stacks ranked by games played together',
       '`+turboparty plan [@user ...] [days]` — fill a five-stack for the easiest or toughest enemies (by pull)',
       '`+turbobackfill [days] [per-player]` — owner-only deduplicated Stratz history sync',
       '`+turbometa [patch] [rank]` — best turbo heroes per position (STRATZ, Wilson-ranked)',

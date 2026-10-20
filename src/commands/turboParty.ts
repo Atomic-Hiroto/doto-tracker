@@ -10,7 +10,11 @@ const MIN_PARTY_GAMES = 10;
 const MAX_ROWS = 10;
 /** `wins` mode pulls each record this many games toward 50%, so 8–2 beats 3–0 but not 30–10. */
 const WIN_PRIOR_GAMES = 10;
-const WINS_ARGS = ['wins', 'win', 'winrate', 'wr'];
+/** Words that switch the board from Party MMR to another ranking. */
+const SORT_ARGS: Record<string, 'wins' | 'games'> = {
+  wins: 'wins', win: 'wins', winrate: 'wins', wr: 'wins',
+  matches: 'games', games: 'games', played: 'games'
+};
 /** Top pull-rated active players considered when building potential stacks. */
 const POTENTIAL_POOL = 12;
 const HARDER_NOT_LOSSES = 'Tougher enemies don\'t mean more losses, since matchmaking keeps every party near 50%. '
@@ -129,6 +133,8 @@ function combinations<T>(items: T[], k: number): T[][] {
  * WIN_PRIOR_GAMES. That board is mostly luck (stack records didn't repeat in forward tests), so it
  * carries the same ± luck range and note as `+turbopairs`, and skips potential stacks, which have
  * no record.
+ *
+ * `+turboparty matches` ranks them by rank-scored games played together: the crew's regular stacks.
  */
 export async function turboParty(message: Message, stats: TurboStatsService, args: string[] = []) {
   if (args[0]?.toLowerCase() === 'plan') return turboPartyPlan(message, stats, args.slice(1));
@@ -144,7 +150,7 @@ export async function turboParty(message: Message, stats: TurboStatsService, arg
       lockedIds.unshift(message.author.id);
     }
     if (lockedIds.length > 5) return message.reply('A party is five players — name up to 5.');
-    const byWins = args.some(arg => WINS_ARGS.includes(arg.toLowerCase()));
+    const sortBy = args.map(arg => SORT_ARGS[arg.toLowerCase()]).find(Boolean) || 'mmr';
 
     const nameCache = new Map<string, string>();
     const nameOf = async (id: string) => {
@@ -166,9 +172,11 @@ export async function turboParty(message: Message, stats: TurboStatsService, arg
     };
 
     const shrunkWinRate = (party: typeof parties[number]) => (party.wins + WIN_PRIOR_GAMES / 2) / (party.games + WIN_PRIOR_GAMES);
-    const board = byWins
+    const board = sortBy === 'wins'
       ? [...parties].sort((a, b) => shrunkWinRate(b) - shrunkWinRate(a) || b.games - a.games)
-      : parties;
+      : sortBy === 'games'
+        ? [...parties].sort((a, b) => b.games - a.games || b.score - a.score)
+        : parties;
 
     // Ranks are server-wide, so a named party's rows keep the place they hold on the full board.
     const withLocked = (list: typeof parties) => list.filter(party => lockedIds.every(id => party.playerIds.includes(id)));
@@ -185,12 +193,17 @@ export async function turboParty(message: Message, stats: TurboStatsService, arg
         ? `likely ${Math.round(party.low)}–${Math.round(party.high)}`
         : `range unknown (${party.playDays} play day${party.playDays === 1 ? '' : 's'})`;
       const enemies = `faced ${mmrToMedal(party.enemyMMR).medal} enemies`;
-      if (byWins) {
+      const winRate = Math.round((party.wins / party.games) * 100);
+      if (sortBy === 'games') {
+        return `${place} **${party.games} games** · ${party.playDays} play day${party.playDays === 1 ? '' : 's'} · ${party.wins}W–${party.losses}L (${winRate}%)\n`
+          + `${await namesOf(party.playerIds)}\n`
+          + `Party MMR ${mmrText(party.score)} · ${enemies}`;
+      }
+      if (sortBy === 'wins') {
         return `${place} ${winRateText(party.wins, party.games)} · ${party.wins}W–${party.losses}L\n`
           + `${await namesOf(party.playerIds)}\n`
           + `Party MMR ${mmrText(party.score)} · ${enemies}`;
       }
-      const winRate = Math.round((party.wins / party.games) * 100);
       return `${place} ${mmrText(party.score)} · ${range}\n`
         + `${await namesOf(party.playerIds)}\n`
         + `${party.wins}W–${party.losses}L (${winRate}%) · ${enemies}`;
@@ -199,7 +212,7 @@ export async function turboParty(message: Message, stats: TurboStatsService, arg
     // Potential stacks: the strongest five-stacks around the named players that haven't played 10 games together.
     const potentialLines: string[] = [];
     const unrated = lockedIds.filter(id => !pullById.has(id));
-    if (!unrated.length && !byWins) {
+    if (!unrated.length && sortBy === 'mmr') {
       const activeSince = Math.floor(Date.now() / 1000) - ACTIVE_DAYS * 86400;
       const pool = players
         .filter(player => !lockedIds.includes(player.discordId) && player.lastPlayed >= activeSince)
@@ -225,22 +238,24 @@ export async function turboParty(message: Message, stats: TurboStatsService, arg
     const embed = new EmbedBuilder()
       .setColor('#8b5cf6')
       .setTitle(lockedIds.length
-        ? `🧩 Turbo Stacks — ${lockedNames.join(' + ')}${byWins ? ' · by win rate' : ''}`
-        : byWins ? '🍀 Winningest Turbo Stacks' : '🧩 Strongest Turbo Stacks')
-      .setDescription(byWins
-        ? '**Ranked by win rate**, pulled 10 games toward 50% so a short hot streak can\'t top it. '
+        ? `🧩 Turbo Stacks — ${lockedNames.join(' + ')}${{ mmr: '', wins: ' · by win rate', games: ' · by games' }[sortBy]}`
+        : { mmr: '🧩 Strongest Turbo Stacks', wins: '🍀 Winningest Turbo Stacks', games: '🎮 Most-Played Turbo Stacks' }[sortBy])
+      .setDescription(`${{
+        mmr: '**Party MMR** is the rank of the enemies a stack draws, plus a small bump per win and a dip per loss. '
+          + 'Matchmaking keeps regular stacks near 50%, so the enemy level counts most.',
+        wins: '**Ranked by win rate**, pulled 10 games toward 50% so a short hot streak can\'t top it. '
           + '🍀 Mostly luck: ± is how far a lucky or unlucky run alone could push it, and stack records '
-          + 'didn\'t repeat when we checked later games.\n'
-          + `-# ${scoredTeams} of our games · ${window.label}\n\n`
-          + '`+turboparty` ranks by Party MMR instead · `+turboparty plan` for easy or tough lobbies'
-        : '**Party MMR** is the rank of the enemies a stack draws, plus a small bump per win and a dip per loss. '
-          + 'Matchmaking keeps regular stacks near 50%, so the enemy level counts most.\n'
-          + `-# ${scoredTeams} of our games · ${window.label}\n\n`
-          + '`+turboparty me` · `+turboparty @a @b` · `+turboparty wins` · `+turboparty plan` for easy or tough lobbies')
+          + 'didn\'t repeat when we checked later games.',
+        games: '**Ranked by games played together**: the stacks that queue the most, with each one\'s record and Party MMR.'
+      }[sortBy]}\n`
+        + `-# ${scoredTeams} of our games · ${window.label}\n\n`
+        + '`+turboparty` by Party MMR · `wins` by win rate · `matches` by games · `me` / `@a @b` to filter · `plan` for easy or tough lobbies')
       .setFooter({
-        text: byWins
-          ? '± = 95% range luck allows at that many games · unregistered friends count after 10+ games with us'
-          : 'Few-game stacks are pulled toward the server average · likely = 90% range over play days · unregistered friends count after 10+ games with us'
+        text: {
+          mmr: 'Few-game stacks are pulled toward the server average · likely = 90% range over play days',
+          wins: '± = 95% range luck allows at that many games',
+          games: 'Counts games where we know the enemy ranks (most of them)'
+        }[sortBy] + ' · unregistered friends count after 10+ games with us'
       })
       .setTimestamp();
 
@@ -266,7 +281,7 @@ export async function turboParty(message: Message, stats: TurboStatsService, arg
     if (!fives.length && !cores.length) {
       embed.addFields({ name: '🏆 Proven parties', value: `No stack${lockedIds.length ? ' with them' : ''} has ${MIN_PARTY_GAMES}+ rank-scored games together in ${window.label}.` });
     }
-    if (!byWins) {
+    if (sortBy === 'mmr') {
       embed.addFields({
         name: '🔮 Potential five-stacks · not played together enough yet',
         value: unrated.length
