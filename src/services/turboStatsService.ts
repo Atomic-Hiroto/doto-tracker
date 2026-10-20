@@ -27,6 +27,9 @@ export class TurboStatsService {
     statsBuiltFromLedger: false
   };
 
+  /** Latest Steam name seen for each unregistered teammate. */
+  private readonly teammateNames = new Map<string, string>();
+
   constructor(private readonly filePath = TURBO_STATS_FILE) {
     this.loadTurboStats();
   }
@@ -169,6 +172,15 @@ export class TurboStatsService {
         enemyRank = { mmr: Math.round(medals.reduce((sum: number, mmr: number) => sum + mmr, 0) / medals.length), visible: medals.length };
       }
     }
+    // Anonymous accounts come through as 0 or 4294967295 and can't be told apart, so they're skipped.
+    let teammates: TurboTrackedMatch['teammates'] = [];
+    if (sides.size === 1) {
+      const ourRadiant = sides.has('radiant');
+      teammates = rawPlayers
+        .filter((raw: any) => (typeof raw.isRadiant === 'boolean' ? raw.isRadiant : Number(raw.player_slot ?? raw.playerSlot) < 128) === ourRadiant)
+        .map((raw: any) => ({ steamId: String(raw.account_id ?? raw.steamAccountId ?? ''), name: raw.steamAccount?.name ?? raw.personaname ?? undefined }))
+        .filter((mate: { steamId: string }) => mate.steamId && !['0', '4294967295'].includes(mate.steamId) && !bySteamId.has(mate.steamId));
+    }
     const rawRank = matchData.averageRank ?? matchData.avg_rank_tier;
     const averageRank = rawRank === null || rawRank === undefined || !Number.isFinite(Number(rawRank))
       ? null
@@ -179,6 +191,7 @@ export class TurboStatsService {
       radiantWon: Boolean(matchData.radiant_win ?? matchData.didRadiantWin),
       averageRank,
       enemyRank,
+      teammates,
       source,
       players: participants
     };
@@ -193,8 +206,13 @@ export class TurboStatsService {
     }
 
     // Enemy ranks feed +turbopull only; filling them in must not trigger an aggregate rebuild.
-    const annotated = !existing.enemyRank && Boolean(incoming.enemyRank);
+    let annotated = !existing.enemyRank && Boolean(incoming.enemyRank);
     if (annotated) existing.enemyRank = incoming.enemyRank;
+    // Teammates feed +turboparty only; like enemy ranks, filling them in needs no rebuild.
+    if (!existing.teammates && incoming.teammates) {
+      existing.teammates = incoming.teammates;
+      annotated = true;
+    }
 
     let changed = false;
     if (existing.source !== incoming.source && existing.source !== 'both') {
@@ -453,9 +471,12 @@ export class TurboStatsService {
    * one evening's games share form and lobby conditions, and resampling games alone gave intervals
    * up to a third too narrow. Callers can put an interval on any party they build from these ratings.
    */
-  getPullRatings(enemyByMatch: Map<string, number>, minGames = 20, sinceTimestamp?: number) {
-    type Team = { ids: string[]; y: number; day: number };
-    const teams: Team[] = [];
+  /**
+   * Our side of every Turbo game with a known enemy rank: the tracked players on it, the enemy team's
+   * average MMR (`y`), and whether they won.
+   */
+  private rankScoredTeams(enemyByMatch: Map<string, number>, sinceTimestamp?: number) {
+    const teams: { ids: string[]; mates: string[]; y: number; won: boolean; day: number }[] = [];
     const steamIds = new Map<string, string>();
     const lastPlayed = new Map<string, number>();
     for (const match of this.matchesForScope('all', sinceTimestamp)) {
@@ -468,13 +489,116 @@ export class TurboStatsService {
       // only team holding tracked players. Guard anyway rather than credit it to both sides.
       const sides = (['radiant', 'dire'] as const).filter(team => match.players.some(player => player.team === team));
       if (sides.length !== 1) continue;
-      const ids = [...new Set(match.players.map(player => player.discordId))];
+      const ids = [...new Set(match.players.map(player => player.discordId))].sort();
       for (const player of match.players) {
         steamIds.set(player.discordId, player.steamId);
         lastPlayed.set(player.discordId, Math.max(lastPlayed.get(player.discordId) || 0, match.timestamp));
       }
-      teams.push({ ids, y, day: Math.floor(match.timestamp / 86400) });
+      const won = sides[0] === 'radiant' ? match.radiantWon : !match.radiantWon;
+      const mates = (match.teammates || []).map(mate => mate.steamId);
+      for (const mate of match.teammates || []) if (mate.name) this.teammateNames.set(mate.steamId, mate.name);
+      teams.push({ ids, mates, y, won, day: Math.floor(match.timestamp / 86400) });
     }
+    return { teams, steamIds, lastPlayed };
+  }
+
+  /**
+   * Every exact stack of tracked players that has played `minGames`+ rank-scored Turbo games
+   * together, with a strength score: the average enemy MMR, plus `winWeight` MMR for each game won
+   * above 50% and minus it for each game lost (so the score is enemy MMR + winWeight × (2·WR − 1)).
+   *
+   * Matchmaking holds a regular stack near 50%, and turns its winning into tougher enemies, so the
+   * enemy level is most of the score and the win rate only breaks near-ties. A 10-point gap in win
+   * rate is worth 30 MMR, a tenth of a medal: a stack winning slightly more against stronger enemies
+   * ranks above one winning a lot against weaker ones. In a 70/30 time-split backtest, enemy level
+   * alone ranked held-out stacks best (Spearman 0.68), weight 150 cost little (0.64), and adding pair
+   * synergy terms only made it worse — so there are none here.
+   *
+   * Like `getPullRatings`, a score is shrunk toward the mean of all scored games by 3 games' worth,
+   * so a lucky 10-game stack cannot top the board on noise, and `low`–`high` is a 5–95% range from
+   * a fixed-seed bootstrap over the stack's play days, since one evening's games share form and lobbies.
+   *
+   * `pairGames` counts rank-scored games each tracked pair shared (key "idA:idB", ids sorted).
+   */
+  getPartyRecords(enemyByMatch: Map<string, number>, minGames = 10, sinceTimestamp?: number, winWeight = 150) {
+    const { teams: tracked, steamIds } = this.rankScoredTeams(enemyByMatch, sinceTimestamp);
+    // An unregistered teammate joins a stack only once they're a regular: in REGULAR_GAMES+ of our
+    // scored games. Random solo-queue teammates never get there, so they don't split a real stack
+    // into one-off lineups. Regulars get the id "steam:<steamId>".
+    const REGULAR_GAMES = 10;
+    const mateGames = new Map<string, number>();
+    for (const team of tracked) for (const mate of team.mates) mateGames.set(mate, (mateGames.get(mate) || 0) + 1);
+    const teams = tracked.map(team => ({
+      ...team,
+      ids: [...team.ids, ...team.mates.filter(mate => (mateGames.get(mate) || 0) >= REGULAR_GAMES).map(mate => `steam:${mate}`)].sort()
+    }));
+    const names = new Map<string, string>();
+    for (const [steamId, count] of mateGames) {
+      if (count < REGULAR_GAMES) continue;
+      steamIds.set(`steam:${steamId}`, steamId);
+      const name = this.teammateNames.get(steamId);
+      if (name) names.set(`steam:${steamId}`, name);
+    }
+    const stacks = new Map<string, { ids: string[]; ys: number[]; wins: number; scores: number[]; days: number[] }>();
+    const pairGames = new Map<string, number>();
+    for (const team of teams) {
+      for (let i = 0; i < team.ids.length; i++) for (let j = i + 1; j < team.ids.length; j++) {
+        const key = `${team.ids[i]}:${team.ids[j]}`;
+        pairGames.set(key, (pairGames.get(key) || 0) + 1);
+      }
+      if (team.ids.length < 3) continue;
+      const key = team.ids.join(',');
+      const stack = stacks.get(key) || { ids: team.ids, ys: [], wins: 0, scores: [], days: [] };
+      stack.ys.push(team.y);
+      if (team.won) stack.wins++;
+      stack.scores.push(team.y + (team.won ? winWeight : -winWeight));
+      stack.days.push(team.day);
+      stacks.set(key, stack);
+    }
+    if (!teams.length) return { parties: [], pairGames, steamIds, names, scoredTeams: 0 };
+
+    const RIDGE = 3;
+    const BOOTSTRAP = 200;
+    const prior = teams.reduce((sum, team) => sum + team.y + (team.won ? winWeight : -winWeight), 0) / teams.length;
+    const shrunk = (scores: number[]) => (scores.reduce((sum, value) => sum + value, 0) + RIDGE * prior) / (scores.length + RIDGE);
+    let seed = 20261020;
+    const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+
+    const mean = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length;
+    const parties = [...stacks.values()]
+      .filter(stack => stack.ys.length >= minGames)
+      .map(stack => {
+        const games = stack.ys.length;
+        const byDay = new Map<number, number[]>();
+        stack.scores.forEach((score, i) => byDay.set(stack.days[i], [...(byDay.get(stack.days[i]) || []), score]));
+        const days = [...byDay.values()];
+        const samples: number[] = [];
+        for (let t = 0; t < BOOTSTRAP; t++) {
+          const resample: number[] = [];
+          while (resample.length < games) resample.push(...days[Math.floor(random() * days.length)]);
+          samples.push(shrunk(resample));
+        }
+        samples.sort((a, b) => a - b);
+        return {
+          playerIds: stack.ids,
+          games,
+          wins: stack.wins,
+          losses: games - stack.wins,
+          enemyMMR: mean(stack.ys),
+          score: shrunk(stack.scores),
+          low: samples[Math.floor(0.05 * (BOOTSTRAP - 1))],
+          high: samples[Math.floor(0.95 * (BOOTSTRAP - 1))],
+          playDays: days.length
+        };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return { parties, pairGames, steamIds, names, scoredTeams: teams.length };
+  }
+
+  getPullRatings(enemyByMatch: Map<string, number>, minGames = 20, sinceTimestamp?: number) {
+    const { teams, steamIds, lastPlayed } = this.rankScoredTeams(enemyByMatch, sinceTimestamp);
+    type Team = (typeof teams)[number];
 
     const games = new Map<string, number>();
     for (const team of teams) for (const id of team.ids) games.set(id, (games.get(id) || 0) + 1);
