@@ -44,7 +44,7 @@ const LUCK_NOTE = '🍀 **Mostly luck.** ± is how far a lucky or unlucky run al
   + 'we checked earlier dropped to ~48% afterwards. A partner changes how tough your enemies are, not your odds: see `+turbopull`.';
 
 /** "61.2% ±12" win rate, where ± is the 95% range binomial luck allows at that many games. */
-function winRateText(wins: number, games: number) {
+export function winRateText(wins: number, games: number) {
   const rate = wins / games;
   return `**${(rate * 100).toFixed(1)}%** ±${Math.round(196 * Math.sqrt(rate * (1 - rate) / games))}`;
 }
