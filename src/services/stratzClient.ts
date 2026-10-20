@@ -267,7 +267,7 @@ query ($steamAccountId: Long!, $take: Int!, $skip: Int, $startDateTime: Long, $i
         playerSlot
         isRadiant
         partyId
-        steamAccount { seasonRank seasonLeaderboardRank }
+        steamAccount { name seasonRank seasonLeaderboardRank }
       }
     }
   }

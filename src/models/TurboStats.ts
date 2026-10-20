@@ -47,6 +47,12 @@ export interface TurboTrackedMatch {
    * player's current season medal, so on an old match this is who they are now, not who they were.
    */
   enemyRank?: { mmr: number; visible: number } | null;
+  /**
+   * Unregistered players on the tracked players' team, so `+turboparty` can see the friends who fill
+   * a stack. Kept apart from `players` so no win-rate or pairing board counts them. Absent on
+   * matches stored before it existed (a backfill fills it), empty when we sat on both sides.
+   */
+  teammates?: { steamId: string; name?: string }[];
   source: TurboMatchSource;
   players: TurboMatchParticipant[];
 }
