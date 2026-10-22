@@ -840,6 +840,18 @@ export class TurboRankService {
   }
 
   /**
+   * Registered players with a live game of unknown party size newer than their last calibration.
+   * The live path saves games before OpenDota parses them, so the solo estimate skips them until a
+   * Stratz calibration relabels the solo ones; these are the players the nightly refresh re-runs.
+   */
+  playersNeedingCalibration(): Array<{ discordId: string; steamId: string; name: string }> {
+    return this.data.players
+      .filter(player => player.discordId && player.observations.some(o =>
+        o.partySize === 0 && o.timestamp * 1000 > (player.calibratedAt ?? 0)))
+      .map(player => ({ discordId: player.discordId, steamId: player.steamId, name: player.steamName || player.steamId }));
+  }
+
+  /**
    * Retroactive calibration from Stratz. Works for registered (discordId) and
    * unregistered (discordId = '') players. Fetches solo games via isParty:false
    * (the reliable solo signal); only falls back to party games if the player has
@@ -850,6 +862,7 @@ export class TurboRankService {
     steamId: string,
     _take = 100,
     onProgress?: (fetched: number, total: number, phase?: string) => void,
+    { openDotaFallback = true }: { openDotaFallback?: boolean } = {},
   ): Promise<TurboRankEstimate | null> {
     const steamAccountId = parseInt(steamId, 10);
     if (isNaN(steamAccountId)) {
@@ -860,6 +873,7 @@ export class TurboRankService {
     try {
       const oneYearAgo = Math.floor(Date.now() / 1000) - 365 * 24 * 3600;
       const player = this.getOrCreatePlayer(discordId, steamId);
+      player.calibratedAt = Date.now();
 
       // Resolve display name (so unregistered players show a name, not an id).
       onProgress?.(0, 0, 'Resolving player…');
@@ -913,6 +927,10 @@ export class TurboRankService {
       }
 
       if (observations.length === 0) {
+        if (!openDotaFallback) {
+          this.save();
+          return null;
+        }
         logger.info(`No usable Stratz turbo matches for ${steamId}, trying OpenDota`);
         return this.calibratePlayerOpenDota(discordId, steamId, 100, onProgress, profile.seasonRank);
       }
@@ -931,6 +949,10 @@ export class TurboRankService {
       );
       return player.estimate;
     } catch (err) {
+      if (!openDotaFallback) {
+        logger.error(`Stratz calibration failed for ${steamId}:`, err);
+        return null;
+      }
       logger.error(`Stratz calibration failed for ${steamId}, falling back to OpenDota:`, err);
       return this.calibratePlayerOpenDota(discordId, steamId, 100, onProgress);
     }

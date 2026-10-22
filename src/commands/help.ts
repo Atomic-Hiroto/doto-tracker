@@ -41,7 +41,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turboherolb <hero>` — role-aware crew leaderboard for a Turbo hero',
       '`+turborank [@user]` — estimated hidden turbo rank',
       '`+turborank calibrate` — calibrate from match history',
-      '`+turborank calibrateall` — owner-only recalibrate everyone',
+      '`+turborank calibrateall` — owner-only recalibrate everyone (anyone who played is also refreshed nightly)',
       '`+turborank audit [@user]` — audit matches used by hidden rank',
       '`+turborank all` — hidden rank leaderboard',
       '`+turbolean [all]` — Turbo over/underperformers by ranked medal',
