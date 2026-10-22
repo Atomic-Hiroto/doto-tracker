@@ -1,17 +1,19 @@
 import { Message, EmbedBuilder } from 'discord.js';
-import { Replies, APIConstants } from '../constants';
+import { Replies } from '../constants';
 import { UserDataService } from '../services/userDataService';
 import { TurboStatsService } from '../services/turboStatsService';
 import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
+import { streakService } from '../services/streakService';
+import { rankTierToMedal, tierToEmoji } from '../services/turboRankService';
 import { safeTyping } from '../utils/channelHelpers';
+import { pullRatingsById, turboSummary } from './turboSummary';
 
 interface PlayerProfile {
     profile?: {
         personaname?: string;
         avatarfull?: string;
-        loccountrycode?: string;
     };
     rank_tier?: number;
     leaderboard_rank?: number;
@@ -32,35 +34,31 @@ interface HeroStats {
     hero_id: number;
     games: number;
     win: number;
-    last_played: number;
 }
 
-function getRankName(rankTier: number | undefined): string {
-    if (!rankTier) return 'Unranked';
-    const tier = Math.floor(rankTier / 10);
-    const stars = rankTier % 10;
-    const tiers: Record<number, string> = {
-        1: 'Herald', 2: 'Guardian', 3: 'Crusader',
-        4: 'Archon', 5: 'Legend', 6: 'Ancient', 7: 'Divine', 8: 'Immortal'
-    };
-    const tierName = tiers[tier] || 'Unknown';
-    if (tier === 8) return '⭐ Immortal';
-    return `${tierName} ${stars}`;
+const PODIUM = ['🥇', '🥈', '🥉'];
+
+function streakText(discordId: string): string | null {
+    const info = streakService.getStreakInfo(discordId);
+    if (!info || !info.current) return null;
+    const count = Math.abs(info.current);
+    return info.current > 0 ? `🔥 ${count}-win streak` : `💀 ${count}-loss streak`;
 }
 
+/**
+ * `+profile [@user]` (also `+turbostats`) — one card for a player: their visible ranked medal and
+ * all-mode record from OpenDota, then the Turbo block shared with `+compare` (hidden rank, pull,
+ * tracked record). The old Turbo "score" was a win-rate formula and is no longer shown: Turbo
+ * matchmaking holds everyone near 50%, so it ranked players by luck.
+ */
 export async function profile(
     message: Message,
     args: string[],
     userDataService: UserDataService,
     turboStatsService: TurboStatsService
 ) {
-    let discordId = message.author.id;
-    let targetUser = message.author;
-
-    if (args.length > 0 && message.mentions.users.size > 0) {
-        discordId = message.mentions.users.first()!.id;
-        targetUser = message.mentions.users.first()!;
-    }
+    const targetUser = message.mentions.users.first() ?? message.author;
+    const discordId = targetUser.id;
 
     const user = userDataService.getUserByDiscordId(discordId);
     if (!user) {
@@ -70,8 +68,8 @@ export async function profile(
     try {
         safeTyping(message.channel);
 
-        // significant=0 includes turbo/unranked so the "All Modes / Overall" labels
-        // below are accurate — the default would silently return ranked-standard only.
+        // significant=0 includes turbo/unranked so the "All modes" labels below are accurate;
+        // the default would silently return ranked-standard games only.
         const [profileRes, wlRes, totalsRes, heroesRes] = await Promise.all([
             opendotaClient.get<PlayerProfile>(`/players/${user.steamId}`),
             opendotaClient.get<WinLoss>(`/players/${user.steamId}/wl?significant=0`),
@@ -82,75 +80,56 @@ export async function profile(
         const playerProfile = profileRes.data;
         const wl = wlRes.data;
         const totals = totalsRes.data;
-        const heroes = heroesRes.data;
-
         const totalGames = wl.win + wl.lose;
         const winRate = totalGames > 0 ? ((wl.win / totalGames) * 100).toFixed(1) : '0';
 
-        const getAvg = (field: string): string => {
+        const avg = (field: string) => {
             const stat = totals.find(t => t.field === field);
-            if (!stat || stat.n === 0) return '0';
-            return (stat.sum / stat.n).toFixed(1);
+            return stat && stat.n ? stat.sum / stat.n : 0;
         };
 
-        const avgKills = getAvg('kills');
-        const avgDeaths = getAvg('deaths');
-        const avgAssists = getAvg('assists');
-        const avgGpm = getAvg('gold_per_min');
-        const avgXpm = getAvg('xp_per_min');
-
-        const topHeroes = heroes
+        const topHeroes = heroesRes.data
             .filter(h => h.games >= 1)
             .sort((a, b) => b.games - a.games)
             .slice(0, 3);
+        const heroLines = await Promise.all(topHeroes.map(async (hero, index) => {
+            const heroWinRate = ((hero.win / hero.games) * 100).toFixed(0);
+            return `${PODIUM[index]} **${await dotaDataService.getHeroName(hero.hero_id)}** · ${hero.games.toLocaleString()} games · ${heroWinRate}%`;
+        }));
 
-        const heroLines = await Promise.all(
-            topHeroes.map(async (hero, index) => {
-                const heroName = await dotaDataService.getHeroName(hero.hero_id);
-                const heroWinRate = hero.games > 0 ? ((hero.win / hero.games) * 100).toFixed(1) : '0';
-                const medals = ['🥇', '🥈', '🥉'];
-                return `${medals[index]} **${heroName}** • ${hero.games} games • ${heroWinRate}% WR`;
-            })
-        );
+        const turbo = turboSummary(turboStatsService, discordId, user.steamId, pullRatingsById(turboStatsService));
+        const streak = streakText(discordId);
 
-        const turboStats = turboStatsService.getPlayerStats(discordId);
+        const rankTier = playerProfile.rank_tier;
+        const rankedText = rankTier
+            ? `${tierToEmoji(Math.floor(rankTier / 10))} **${rankTierToMedal(rankTier)}**${playerProfile.leaderboard_rank ? ` · #${playerProfile.leaderboard_rank}` : ''}`
+            : '⚪ **Unranked**';
+        const name = playerProfile.profile?.personaname || targetUser.username;
 
         const embed = new EmbedBuilder()
             .setColor('#7c3aed')
-            .setTitle(`📊 Player Profile: ${playerProfile.profile?.personaname || targetUser.username}`)
-            .setDescription(`⭐ **${getRankName(playerProfile.rank_tier)}**${playerProfile.leaderboard_rank ? ` • Rank #${playerProfile.leaderboard_rank}` : ''}`)
+            .setAuthor({ name: targetUser.username, iconURL: targetUser.displayAvatarURL() })
+            .setTitle(`📊 ${name}`)
+            .setURL(`https://www.opendota.com/players/${user.steamId}`)
             .setThumbnail(playerProfile.profile?.avatarfull || targetUser.displayAvatarURL())
+            .setDescription(`Ranked ${rankedText}${streak ? `\n${streak}` : ''}`)
             .addFields(
                 {
-                    name: '📈 Overall Stats',
-                    value: `**Wins:** ${wl.win.toLocaleString()} | **Losses:** ${wl.lose.toLocaleString()} | **WR:** ${winRate}%\n**Total Games:** ${totalGames.toLocaleString()}`,
-                    inline: false
+                    name: '📈 All modes',
+                    value: `**${wl.win.toLocaleString()}W – ${wl.lose.toLocaleString()}L**\n${winRate}% · ${totalGames.toLocaleString()} games`,
+                    inline: true,
                 },
                 {
-                    name: '⚔️ Avg Performance',
-                    value: `**KDA:** ${avgKills}/${avgDeaths}/${avgAssists} | **GPM:** ${avgGpm} | **XPM:** ${avgXpm}`,
-                    inline: false
+                    name: '⚔️ Averages',
+                    value: `KDA **${avg('kills').toFixed(1)} / ${avg('deaths').toFixed(1)} / ${avg('assists').toFixed(1)}**\n`
+                        + `GPM **${Math.round(avg('gold_per_min'))}** · XPM **${Math.round(avg('xp_per_min'))}**`,
+                    inline: true,
                 },
-                {
-                    name: '🦸 Top Heroes (All Modes)',
-                    value: heroLines.length > 0 ? heroLines.join('\n') : 'No hero data available',
-                    inline: false
-                }
-            );
-
-        if (turboStats) {
-            const turboTotal = turboStats.wins + turboStats.losses;
-            const turboWr = turboTotal > 0 ? ((turboStats.wins / turboTotal) * 100).toFixed(1) : '0';
-            embed.addFields({
-                name: '⚡ Turbo Stats',
-                value: `**Score:** ${turboStats.rating} | **W/L:** ${turboStats.wins}/${turboStats.losses} (${turboWr}%)`,
-                inline: false
-            });
-        }
-
-        embed.setFooter({ text: `Steam ID: ${user.steamId}` });
-        embed.setURL(`https://www.opendota.com/players/${user.steamId}`);
-        embed.setTimestamp();
+                { name: '🦸 Most played', value: heroLines.length ? heroLines.join('\n') : 'No hero data yet', inline: false },
+                { name: '⚡ Turbo', value: turbo.lines.join('\n'), inline: false },
+            )
+            .setFooter({ text: 'All-mode stats from OpenDota · +turborank for the full rank card · +turbopull for party effects' })
+            .setTimestamp();
 
         await message.reply({ embeds: [embed] });
     } catch (error) {

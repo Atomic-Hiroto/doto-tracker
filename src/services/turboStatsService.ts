@@ -410,7 +410,9 @@ export class TurboStatsService {
     const rows = new Map<string, Row>();
 
     for (const match of matches) {
-      const difficulty = difficultyByMatch.get(String(match.matchId));
+      // Same source as +turbopull: the +turborank reading first, the ledger's enemy medals otherwise.
+      const ledgerEnemy = match.enemyRank && match.enemyRank.visible >= 2 ? match.enemyRank.mmr : undefined;
+      const difficulty = difficultyByMatch.get(String(match.matchId)) ?? ledgerEnemy;
       for (const team of ['radiant', 'dire'] as const) {
         const players = match.players.filter(player => player.team === team);
         const won = team === 'radiant' ? match.radiantWon : !match.radiantWon;
