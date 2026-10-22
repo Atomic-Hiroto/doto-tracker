@@ -455,6 +455,8 @@ export async function turboStudy(message: Message, args: string[], userDataServi
       return turboScorecard(message);
     }
     const crewOnly = ['friends', 'crew', 'mine', 'squad'].includes((args[0] ?? '').toLowerCase());
+    // The estimator diagnostics are for whoever is tuning it; everyone else gets the findings alone.
+    const withDiagnostics = args.some((arg) => ['full', 'diag', 'diagnostics', 'debug'].includes(arg.toLowerCase()));
     const scope: StudyScope = crewOnly ? 'crew' : 'all';
     const estimates = turboRankService.getAllEstimates()
       .filter(e => !crewOnly || !e.discovered);
@@ -539,9 +541,6 @@ export async function turboStudy(message: Message, args: string[], userDataServi
       y: r.estimate.estimatedMMR,
       w: 1 / Math.pow(r.estimate.precisionSD || 700, 2),
     })));
-    const scoreCorr = pearson(
-      rows.filter((r) => Number.isFinite(r.turboScore)).map((r) => ({ x: r.turboScore!, y: r.estimate.estimatedMMR })),
-    );
 
     // Range-restricted companion: the correlation among players who are actually
     // close together, which is what a reader means by "does it work?".
@@ -897,11 +896,6 @@ export async function turboStudy(message: Message, args: string[], userDataServi
           inline: false,
         },
         {
-          name: '📐 Is the flat slope real?',
-          value: fitNote,
-          inline: false,
-        },
-        {
           name: '🔮 Predictive value',
           value: predictive
             ? `Knowing Turbo rank narrows a guess at ranked MMR from **±${Math.round(predictive.priorSD)}** to ` +
@@ -916,6 +910,12 @@ export async function turboStudy(message: Message, args: string[], userDataServi
         },
         { name: 'Turbo-lean by measurable range', value: rangeLines.join('\n'), inline: false },
         { name: 'Turbo-lean by ranked bracket', value: bracketLines.join('\n'), inline: false },
+        {
+          name: '✅ Is the hidden rank accurate?',
+          value: 'Not what this report measures: it shows how far Turbo and ranked skill agree. '
+            + '`+turbostudy scorecard` checks the estimates against rank changes that came later.',
+          inline: false,
+        },
         {
           name: '⚠️ What this cannot say',
           value:
@@ -954,7 +954,7 @@ export async function turboStudy(message: Message, args: string[], userDataServi
         { name: 'Largest Turbo-lean', value: fitLines(largestGaps, 'None found.'), inline: false },
         { name: 'Lean Extremes', value: extremesLine, inline: true },
         { name: 'Trend vs Last Run', value: trendLine, inline: true },
-        { name: 'Turbo score vs Turbo rank', value: fmtCorr(scoreCorr), inline: false },
+        { name: '📐 Is the flat slope real?', value: fitNote, inline: false },
         { name: 'Inverse-variance weighted r', value: fmtCorr(weightedCorr), inline: false },
         { name: 'Next Actions', value: fitLines(actionLines, 'No immediate study actions.'), inline: false },
       ], diagTitle.length + diagDescription.length))
@@ -964,8 +964,9 @@ export async function turboStudy(message: Message, args: string[], userDataServi
     // Two messages, because Discord's 6000-character ceiling applies to the whole
     // message, not per embed. The findings land first and stand alone; if the
     // diagnostics follow-up fails the report is still complete.
+    findings.setFooter({ text: withDiagnostics ? 'Estimator diagnostics follow' : '+turbostudy full adds the estimator diagnostics' });
     await progress.edit({ content: null, embeds: [findings], files: [scatterAttachment, csvAttachment] });
-    if ('send' in message.channel) {
+    if (withDiagnostics && 'send' in message.channel) {
       await message.channel.send({ embeds: [diagnostics], files: [residualAttachment] });
     }
   } catch (error) {

@@ -2,7 +2,7 @@ import { EmbedBuilder, Message } from 'discord.js';
 import { TurboStatsScope } from '../models/TurboStats';
 import { logger } from '../services/loggerService';
 import { TurboStatsService } from '../services/turboStatsService';
-import { turboRankService, mmrToMedal } from '../services/turboRankService';
+import { turboRankService, mmrToMedal, mmrToEmoji } from '../services/turboRankService';
 
 function parseScope(args: string[]): TurboStatsScope {
   const words = args.map(arg => arg.toLowerCase());
@@ -24,16 +24,11 @@ function parseWindow(args: string[]) {
 }
 
 function parseOptions(args: string[]) {
-  // `legacy` is the only way to reach the pre-backfill snapshot. It used to be the no-argument
-  // default, which meant the headline teammate board was the one dataset that cannot self-correct:
-  // it counts no match ids, so its totals sit between 0.27x and 1.99x of the deduplicated ledger.
-  const useLegacy = args.some(arg => arg.toLowerCase() === 'legacy');
-  const adjusted = args.some(arg => ['hard', 'adjusted', 'difficulty'].includes(arg.toLowerCase()));
-  const scope = useLegacy ? 'tracked' as TurboStatsScope : parseScope(args);
-  const window = useLegacy
-    ? { days: null, sinceTimestamp: undefined, label: 'legacy snapshot' }
-    : parseWindow(args);
-  return { scope, window, minGames: useLegacy ? 10 : 30, useLegacy, adjusted };
+  const words = args.map(arg => arg.toLowerCase());
+  const adjusted = words.some(word => ['hard', 'adjusted', 'difficulty'].includes(word));
+  // `games` (also `+turbosquad`) orders by games together instead of win rate: who you actually play with.
+  const byGames = words.some(word => ['games', 'matches', 'played', 'most', 'squad'].includes(word));
+  return { scope: parseScope(args), window: parseWindow(args), minGames: 30, adjusted, byGames };
 }
 
 type Window = { sinceTimestamp?: number; label: string };
@@ -113,11 +108,15 @@ async function rankAdjustedBoard(
 
 export async function turboPairings(message: Message, turboStatsService: TurboStatsService, args: string[] = []) {
   try {
-    const { scope, window, minGames, useLegacy, adjusted } = parseOptions(args);
+    const { scope, window, minGames, adjusted, byGames } = parseOptions(args);
 
     if (adjusted) return rankAdjustedBoard(message, turboStatsService, scope, window);
 
-    const pairings = turboStatsService.getPairingLeaderboard(10, minGames, scope, window.sinceTimestamp, useLegacy);
+    const pairings = byGames
+      ? turboStatsService.getPairingLeaderboard(Infinity, minGames, scope, window.sinceTimestamp)
+        .sort((a, b) => (b.wins + b.losses) - (a.wins + a.losses))
+        .slice(0, 10)
+      : turboStatsService.getPairingLeaderboard(10, minGames, scope, window.sinceTimestamp);
     if (pairings.length === 0) {
       const hint = scope === 'history'
         ? ' Ask the bot owner to run `+turbobackfill` first.'
@@ -129,12 +128,11 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
 
     const embed = new EmbedBuilder()
       .setColor('#ff6b6b')
-      .setTitle('🍀 Luckiest Turbo Duos')
+      .setTitle(byGames ? '🎮 Most-Played Turbo Duos' : '🍀 Luckiest Turbo Duos')
       .setDescription(
-        `Win rate when you're on the same team · **${window.label}** · min ${minGames} games\n${LUCK_NOTE}`
-        + (useLegacy ? '\n⚠️ Legacy snapshot: no match-id dedupe, so these counts are unreliable. Prefer `+turbopairs 60`.' : '')
+        `${byGames ? 'Games on the same team' : 'Win rate when you\'re on the same team'} · **${window.label}** · min ${minGames} games\n${LUCK_NOTE}`
       )
-      .setFooter({ text: 'Any game on the same team counts, solo queue or full stack. `+turbopairs hard` adds the ranks you played against.' })
+      .setFooter({ text: 'Any game on the same team counts, solo queue or full stack · +turbopairs hard adds enemy ranks · +turbopairs games sorts by games together' })
       .setTimestamp();
 
     const entries: Array<{ name: string; value: string }> = [];
@@ -167,12 +165,15 @@ export async function turboPairings(message: Message, turboStatsService: TurboSt
 export async function myTurboPairings(message: Message, turboStatsService: TurboStatsService, args: string[] = []) {
   try {
     const target = message.mentions.users.first() ?? message.author;
-    const { scope, window, useLegacy, adjusted } = parseOptions(args);
+    const { scope, window, adjusted, byGames } = parseOptions(args);
 
     if (adjusted) return rankAdjustedBoard(message, turboStatsService, scope, window, target.id);
-    const pairings = turboStatsService.getPairingsForPlayer(target.id, scope, window.sinceTimestamp, useLegacy)
-      .filter(pair => pair.wins + pair.losses >= 5)
-      .sort((a, b) => (b.wins / (b.wins + b.losses)) - (a.wins / (a.wins + a.losses)) || (b.wins + b.losses) - (a.wins + a.losses))
+    const games = (pair: { wins: number; losses: number }) => pair.wins + pair.losses;
+    const pairings = turboStatsService.getPairingsForPlayer(target.id, scope, window.sinceTimestamp)
+      .filter(pair => games(pair) >= 5)
+      .sort((a, b) => byGames
+        ? games(b) - games(a)
+        : (b.wins / games(b)) - (a.wins / games(a)) || games(b) - games(a))
       .slice(0, 10);
     if (!pairings.length) {
       const hint = scope === 'history'
@@ -185,12 +186,11 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
 
     const embed = new EmbedBuilder()
       .setColor('#4ecdc4')
-      .setTitle(`🍀 Luckiest Teammates — ${target.username}`)
+      .setTitle(byGames ? `🎮 Most-Played Teammates — ${target.username}` : `🍀 Luckiest Teammates — ${target.username}`)
       .setDescription(
-        `Win rate when you're on the same team · **${window.label}** · min 5 games\n${LUCK_NOTE}`
-        + (useLegacy ? '\n⚠️ Legacy snapshot: no match-id dedupe, so these counts are unreliable.' : '')
+        `${byGames ? 'Games on the same team' : 'Win rate when you\'re on the same team'} · **${window.label}** · min 5 games\n${LUCK_NOTE}`
       )
-      .setFooter({ text: 'Any game on the same team counts, solo queue or full stack.' })
+      .setFooter({ text: `Any game on the same team counts, solo queue or full stack · ${byGames ? '+turbopairs me sorts by win rate' : '+turbopairs me games sorts by games together'}` })
       .setTimestamp();
     const entries: Array<{ name: string; value: string }> = [];
     for (let i = 0; i < pairings.length; i++) {
@@ -198,10 +198,11 @@ export async function myTurboPairings(message: Message, turboStatsService: Turbo
       try {
         const partnerId = pairing.player1 === target.id ? pairing.player2 : pairing.player1;
         const partner = await message.client.users.fetch(partnerId);
-        const games = pairing.wins + pairing.losses;
+        const played = games(pairing);
+        const hidden = turboRankService.getEstimate(partnerId);
         entries.push({
-          name: `${i + 1}. ${partner.username}`,
-          value: `${winRateText(pairing.wins, games)} win rate · ${pairing.wins}W–${pairing.losses}L in ${games} games`
+          name: `${i + 1}. ${partner.username}${hidden ? ` · ${mmrToEmoji(hidden.estimatedMMR)} ${hidden.medal}` : ''}`,
+          value: `${winRateText(pairing.wins, played)} win rate · ${pairing.wins}W–${pairing.losses}L in ${played} games`
         });
       } catch (error) {
         logger.warn('Could not fetch turbo teammate:', error);

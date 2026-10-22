@@ -1,17 +1,23 @@
-import { Message, EmbedBuilder, User } from 'discord.js';
+import { Message, EmbedBuilder } from 'discord.js';
 import { UserDataService } from '../services/userDataService';
 import { TurboStatsService } from '../services/turboStatsService';
 import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
-import { rankTierToMedal, tierToEmoji, MMR_PER_STAR } from '../services/turboRankService';
+import { turboRankService, rankTierToMedal, tierToEmoji, MMR_PER_STAR } from '../services/turboRankService';
 import { TurboRankEstimate } from '../models/TurboRank';
 import { safeTyping } from '../utils/channelHelpers';
 import { pullRatingsById, turboSummary } from './turboSummary';
 import { winRateText } from './turboPairings';
 
+interface Target {
+    discordId?: string;
+    steamId: string;
+    name: string;
+}
+
 interface Side {
-    user: User;
+    discordId?: string;
     name: string;
     rankTier?: number;
     winRate: number;
@@ -46,23 +52,50 @@ function verdict(a: Side, b: Side): string {
         + `above ${lower.name}, beyond the combined ±${error} error.`;
 }
 
-/** `+compare @a @b` — a side-by-side scouting report on two registered players. */
+/** "a vs b", or two tokens; a lone player is compared against whoever asked. */
+function splitVsArgs(args: string[]): [string, string] | [string] | null {
+    const raw = args.join(' ').trim();
+    const vs = raw.match(/^(.+?)\s+(?:vs|v|versus)\s+(.+)$/i);
+    if (vs) return [vs[1].trim(), vs[2].trim()];
+    if (args.length >= 2) return [args[0], args.slice(1).join(' ')];
+    return args.length === 1 ? [args[0]] : null;
+}
+
+/** A @mention, a Steam id, or a name the hidden-rank tracker knows. Unregistered players still compare by Steam id. */
+async function resolveTarget(message: Message, query: string, userDataService: UserDataService): Promise<Target | null> {
+    const mention = query.match(/^<@!?(\d+)>$/);
+    if (mention) {
+        const registered = userDataService.getUserByDiscordId(mention[1]);
+        if (!registered) return null;
+        const user = await message.client.users.fetch(mention[1]).catch(() => null);
+        return { discordId: mention[1], steamId: registered.steamId, name: user?.username ?? 'player' };
+    }
+    const player = /^\d{4,}$/.test(query) ? turboRankService.getPlayerBySteamId(query) : turboRankService.getPlayerByName(query);
+    const steamId = player?.steamId ?? (/^\d{4,}$/.test(query) ? query : undefined);
+    if (!steamId) return null;
+    const discordId = player?.discordId || userDataService.getUserBySteamId(steamId)?.discordId;
+    return { discordId, steamId, name: player?.steamName ?? query };
+}
+
+/** `+compare @a @b` (also `+turbovs`, names, or `a vs b`) — a side-by-side scouting report on two players. */
 export async function compare(
     message: Message,
     args: string[],
     userDataService: UserDataService,
     turboStatsService: TurboStatsService
 ) {
-    const mentionedUsers = [...message.mentions.users.values()];
-    if (mentionedUsers.length < 2) {
-        return message.reply('Mention two registered players to compare: `+compare @player1 @player2`');
+    const queries = splitVsArgs(args);
+    if (!queries) {
+        return message.reply('Compare two players: `+compare @player1 @player2`, `+compare name1 vs name2`, or `+compare @player` for you vs them.');
     }
-
-    const [user1, user2] = mentionedUsers;
-    const data1 = userDataService.getUserByDiscordId(user1.id);
-    const data2 = userDataService.getUserByDiscordId(user2.id);
-    if (!data1) return message.reply(`**${user1.username}** isn't registered yet.`);
-    if (!data2) return message.reply(`**${user2.username}** isn't registered yet.`);
+    const pair = queries.length === 1 ? [`<@${message.author.id}>`, queries[0]] : queries;
+    const [target1, target2] = await Promise.all(pair.map(query => resolveTarget(message, query, userDataService)));
+    if (!target1 || !target2) {
+        const missing = !target1 ? pair[0] : pair[1];
+        const who = missing === `<@${message.author.id}>` ? 'You aren\'t' : `\`${missing}\` isn't`;
+        return message.reply(`${who} registered or tracked yet. Use a @mention of a registered player, a Steam id, or a name from \`+turborank all\`.`);
+    }
+    if (target1.steamId === target2.steamId) return message.reply('That\'s the same player twice.');
 
     try {
         safeTyping(message.channel);
@@ -73,23 +106,23 @@ export async function compare(
             opendotaClient.get<any>(`/players/${steamId}/wl?significant=0`),
             opendotaClient.get<any[]>(`/players/${steamId}/heroes?significant=0`),
         ]);
-        const [raw1, raw2] = await Promise.all([fetchSide(data1.steamId), fetchSide(data2.steamId)]);
+        const [raw1, raw2] = await Promise.all([fetchSide(target1.steamId), fetchSide(target2.steamId)]);
         const pullById = pullRatingsById(turboStatsService);
 
-        const buildSide = (user: User, steamId: string, [profile, wl, heroes]: Awaited<ReturnType<typeof fetchSide>>): Side => {
+        const buildSide = (target: Target, [profile, wl, heroes]: Awaited<ReturnType<typeof fetchSide>>): Side => {
             const games = (wl.data.win || 0) + (wl.data.lose || 0);
             return {
-                user,
-                name: profile.data?.profile?.personaname || user.username,
+                discordId: target.discordId,
+                name: profile.data?.profile?.personaname || target.name,
                 rankTier: profile.data?.rank_tier,
                 winRate: games ? wl.data.win / games : 0,
                 games,
                 heroes: (heroes.data || []).filter((h: any) => h.games >= 3).sort((x: any, y: any) => y.games - x.games),
-                turbo: turboSummary(turboStatsService, user.id, steamId, pullById),
+                turbo: turboSummary(turboStatsService, target.discordId ?? '', target.steamId, pullById),
             };
         };
-        const a = buildSide(user1, data1.steamId, raw1);
-        const b = buildSide(user2, data2.steamId, raw2);
+        const a = buildSide(target1, raw1);
+        const b = buildSide(target2, raw2);
 
         const heroLine = async (h: any) => `**${await dotaDataService.getHeroName(h.hero_id)}** ${h.games}G · ${Math.round((h.win / h.games) * 100)}%`;
         const sideValue = async (side: Side) => {
@@ -111,13 +144,17 @@ export async function compare(
         const sharedIds = b.heroes.slice(0, 10).filter((h: any) => topIds.has(h.hero_id)).map((h: any) => h.hero_id);
         const sharedNames = await Promise.all(sharedIds.slice(0, 5).map((id: number) => dotaDataService.getHeroName(id)));
 
-        const sortedIds = [user1.id, user2.id].sort();
-        const pairing = turboStatsService.getAllStats().pairings.find(p => p.player1 === sortedIds[0] && p.player2 === sortedIds[1]);
+        // Same deduplicated ledger view `+turbopairs` reads.
+        const pairing = a.discordId && b.discordId
+            ? turboStatsService.getPairingsForPlayer(a.discordId, 'all').find(p => p.player1 === b.discordId || p.player2 === b.discordId)
+            : undefined;
         const duoGames = pairing ? pairing.wins + pairing.losses : 0;
         const duoText = duoGames
             ? `${winRateText(pairing!.wins, duoGames)} win rate · ${pairing!.wins}W–${pairing!.losses}L in ${duoGames} games\n`
               + '-# ± is how far luck alone could push it. Duo records didn\'t repeat in later games.'
-            : 'No tracked Turbo games on the same team yet.';
+            : a.discordId && b.discordId
+                ? 'No tracked Turbo games on the same team yet.'
+                : 'Only tracked between two registered players.';
 
         const embed = new EmbedBuilder()
             .setColor('#6366f1')

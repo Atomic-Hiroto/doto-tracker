@@ -6,6 +6,17 @@ import * as commandHandlers from '../commands';
 import { logger } from './loggerService';
 import { getAIText, channelDataService, handleAnalysisFollowUp } from './aiService';
 
+const STUDY_TOPICS: Record<string, 'heroes' | 'items' | 'players' | 'duration' | 'party'> = {
+  heroes: 'heroes', heros: 'heroes', hero: 'heroes',
+  items: 'items', item: 'items',
+  players: 'players', player: 'players',
+  duration: 'duration', length: 'duration',
+  party: 'party',
+};
+
+const RETIRED_STUDY_PARTY = '🧪 `+turbostudyparty` is retired. It asked whether party games skew the hidden rank, and the answer '
+  + 'was built in: `+turborank` reads solo lobbies only. For what parties do to the enemies you draw, see `+turbopull`.';
+
 export async function handleMessage(message: Message, userDataService: UserDataService, turboStatsService: TurboStatsService) {
   // Ignore bot messages
   if (message.author.bot) return;
@@ -94,15 +105,24 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_STATS:
       await commandHandlers.profile(message, args, userDataService, turboStatsService);
       break;
-    case Commands.TURBO_STUDY:
-      await commandHandlers.turboStudy(message, args, userDataService, turboStatsService);
+    case Commands.TURBO_STUDY: {
+      // +turbostudy <topic> is the one door into the research reports; the old one-word names below stay as aliases.
+      const topic = STUDY_TOPICS[(args[0] ?? '').toLowerCase()];
+      const rest = topic ? args.slice(1) : args;
+      if (topic === 'heroes') await commandHandlers.turboStudyHeroes(message, rest);
+      else if (topic === 'items') await commandHandlers.turboStudyItems(message, rest, userDataService);
+      else if (topic === 'players') await commandHandlers.turboHeroLeaderboard(message, rest, userDataService);
+      else if (topic === 'duration') await commandHandlers.durationStudy(message, rest, userDataService);
+      else if (topic === 'party') await message.reply(RETIRED_STUDY_PARTY);
+      else await commandHandlers.turboStudy(message, args, userDataService, turboStatsService);
       break;
+    }
     case Commands.TURBO_STUDY_HEROES:
     case Commands.TURBO_STUDY_HEROES_ALIAS:
       await commandHandlers.turboStudyHeroes(message, args);
       break;
     case Commands.TURBO_STUDY_PARTY:
-      await commandHandlers.turboStudyParty(message, args, userDataService);
+      await message.reply(RETIRED_STUDY_PARTY);
       break;
     case Commands.TURBO_STUDY_ITEMS:
       await commandHandlers.turboStudyItems(message, args, userDataService);
@@ -138,14 +158,16 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_LEAN:
       await commandHandlers.turboLean(message, args);
       break;
+    // +turbovs folded into +compare, which takes the same `a vs b` names.
     case Commands.TURBO_VS:
-      await commandHandlers.turboVs(message, args, userDataService, turboStatsService);
+      await commandHandlers.compare(message, args, userDataService, turboStatsService);
       break;
     case Commands.TURBO_CLIMB:
       await commandHandlers.turboClimb(message);
       break;
+    // +turbosquad folded into +turbopairs me, ordered by games together.
     case Commands.TURBO_SQUAD:
-      await commandHandlers.turboSquad(message, args, userDataService, turboStatsService);
+      await commandHandlers.myTurboPairings(message, turboStatsService, ['games', ...args]);
       break;
     case Commands.TURBO_WINRATE:
       await commandHandlers.turboWinRate(message, args, userDataService);
@@ -209,7 +231,7 @@ export async function handleMessage(message: Message, userDataService: UserDataS
       await commandHandlers.draft(message, args);
       break;
     case Commands.META:
-      await commandHandlers.meta(message);
+      await commandHandlers.meta(message, args);
       break;
     case Commands.TURBO_META:
       await commandHandlers.turboMeta(message, args);

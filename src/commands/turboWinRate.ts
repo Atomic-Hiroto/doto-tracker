@@ -15,16 +15,21 @@ function emptyBucket(): Bucket { return { wins: 0, games: 0 }; }
 function pct(b: Bucket): string {
   return b.games > 0 ? `${Math.round((b.wins / b.games) * 100)}%` : '—';
 }
+/** 95% luck range in percentage points: how far a fair coin's streaks alone move a rate at this many games. */
+function luck(b: Bucket): number {
+  const p = b.wins / b.games;
+  return Math.round(196 * Math.sqrt(p * (1 - p) / b.games));
+}
 /** 10-cell win-rate bar, e.g. 60% -> ██████░░░░ */
 function bar(b: Bucket): string {
   if (b.games === 0) return '·'.repeat(10);
   const filled = Math.max(0, Math.min(10, Math.round((b.wins / b.games) * 10)));
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
 }
-/** Aligned monospace row: "Divine      48g  █████░░░░░  46%" */
+/** Aligned monospace row: "Divine      48g  █████░░░░░  46% ±14" */
 function row(label: string, b: Bucket): string {
   if (b.games === 0) return `${label.padEnd(11)}${'0g'.padStart(5)}`;
-  return `${label.padEnd(11)}${(b.games + 'g').padStart(5)}  ${bar(b)} ${(pct(b)).padStart(4)}`;
+  return `${label.padEnd(11)}${(b.games + 'g').padStart(5)}  ${bar(b)} ${(pct(b)).padStart(4)} ${`±${luck(b)}`.padStart(3)}`;
 }
 
 type BracketSlot = { all: Bucket; solo: Bucket; party: Bucket };
@@ -46,12 +51,19 @@ function buildSummary(
   ];
   const dom = [...sizes].sort((a, b) => b[1].games - a[1].games)[0];
 
-  const strong = order
-    .filter(([, b]) => b.all.games >= 10)
-    .sort((a, b) => (b[1].all.wins / b[1].all.games) - (a[1].all.wins / a[1].all.games))[0];
-  const strongTxt = strong ? ` Best in **${MEDAL_NAMES[strong[0]]}** lobbies (${pct(strong[1].all)}).` : '';
+  // A bracket only gets called out when it beats the overall rate by more than its own luck range;
+  // with a few dozen games per bracket, the top one is usually just the luckiest.
+  const overallRate = overall.games ? overall.wins / overall.games : 0.5;
+  const standout = order
+    .filter(([, b]) => b.all.games >= 20)
+    .map(([tier, b]) => ({ tier, b: b.all, edge: b.all.wins / b.all.games - overallRate }))
+    .filter(({ b, edge }) => Math.abs(edge) * 100 > luck(b))
+    .sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge))[0];
+  const strongTxt = standout
+    ? ` ${standout.edge > 0 ? 'Stands out' : 'Struggles'} in **${MEDAL_NAMES[standout.tier]}** lobbies (${pct(standout.b)} ±${luck(standout.b)}).`
+    : ' No lobby bracket stands out beyond luck.';
 
-  return `**${overall.games}** Turbo games in the last year · overall **${pct(overall)}** — ${verdict}.\n`
+  return `**${overall.games}** Turbo games in the last year · overall **${pct(overall)}** ±${overall.games ? luck(overall) : 0} — ${verdict}.\n`
     + `Mostly plays in **${dom[0]}**.${strongTxt}`;
 }
 
@@ -189,7 +201,7 @@ export async function turboWinRate(message: Message, args: string[], userDataSer
           inline: false,
         },
       )
-      .setFooter({ text: 'Bars show win rate · last 12 months · "Group (size?)" = party games Stratz won\'t confirm a size for' })
+      .setFooter({ text: 'Bars show win rate · ± is how far luck alone could move it · last 12 months · "Group (?)" = party games Stratz won\'t confirm a size for' })
       .setTimestamp();
 
     await loading.edit({ content: '', embeds: [embed] });
