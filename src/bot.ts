@@ -9,6 +9,7 @@ import { dotaDataService } from './services/dotaDataService';
 import { registerInteractionHandler, registerSlashCommands } from './services/interactionService';
 import { closeDotabuffBrowser } from './services/dotabuffScraper';
 import { startTiPoller, stopTiPoller } from './services/tiService';
+import { startTurboRankNightly, stopTurboRankNightly } from './services/turboRankNightly';
 
 export async function initializeBot(client: Client) {
   const userDataService = new UserDataService();
@@ -22,6 +23,7 @@ export async function initializeBot(client: Client) {
     registerSlashCommands(client).catch((error) => logger.warn('Failed to register slash commands:', error));
     setTimeout(() => checkNewMatches(client, userDataService, turboStatsService), ProcessConstants.CHECK_INTERVAL);
     startTiPoller(client);
+    startTurboRankNightly();
   });
 
   client.on('messageCreate', async (message) => {
@@ -36,6 +38,7 @@ export async function initializeBot(client: Client) {
     logger.info(`Received ${signal} — shutting down gracefully...`);
     userDataService.saveUserData();
     stopTiPoller();
+    stopTurboRankNightly();
     await closeDotabuffBrowser().catch(() => null);
     client.destroy();
     process.exit(0);

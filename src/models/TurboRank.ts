@@ -132,6 +132,8 @@ export interface TurboRankPlayerData {
    * the default leaderboard; a manual `+turborank calibrate` clears the flag.
    */
   discovered?: boolean;
+  /** Unix ms of the last calibration attempt, successful or not. Drives the nightly refresh. */
+  calibratedAt?: number;
   observations: TurboRankObservation[];
   estimate: TurboRankEstimate | null;
 }
