@@ -87,11 +87,12 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.STORY:
       await commandHandlers.story(message, args);
       break;
+    // Old names kept as aliases: +turbolb is the hidden-rank board, +turbostats the profile card.
     case Commands.TURBO_LEADERBOARD:
-      await commandHandlers.turboLeaderboard(message, turboStatsService);
+      await commandHandlers.turboRank(message, ['all'], userDataService);
       break;
     case Commands.TURBO_STATS:
-      await commandHandlers.turboStats(message, turboStatsService);
+      await commandHandlers.profile(message, args, userDataService, turboStatsService);
       break;
     case Commands.TURBO_STUDY:
       await commandHandlers.turboStudy(message, args, userDataService, turboStatsService);

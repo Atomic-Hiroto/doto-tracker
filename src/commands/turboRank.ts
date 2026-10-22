@@ -1,4 +1,5 @@
 import { Message, EmbedBuilder } from 'discord.js';
+import { isLeaderboardQuality } from './turboSummary';
 import {
   turboRankService,
   rankTierToMedal,
@@ -882,13 +883,8 @@ async function turboRankAudit(message: Message, args: string[], userDataService:
 // ── Leaderboard ─────────────────────────────────────────────────────────────
 
 /** Quality bar for the default board — keeps out tiny-sample / low-conf / party guesses. */
-const LB_MIN_SOLO = 10;
-const LB_MIN_CONF = 40;
 /** Keep room for the per-page intro/footer beneath Discord's 4,096-char description cap. */
 const LB_PAGE_BODY_LIMIT = 3600;
-function isLeaderboardQuality(estimate: { confidence: number; soloSampleSize: number; partyFallback: boolean }): boolean {
-  return !estimate.partyFallback && estimate.confidence >= LB_MIN_CONF && estimate.soloSampleSize >= LB_MIN_SOLO;
-}
 
 function paginateLeaderboardLines(lines: string[]): string[][] {
   const pages: string[][] = [];
@@ -926,7 +922,7 @@ async function turboRankAll(message: Message, showEveryone = false) {
 
     if (ranked.length === 0) {
       return message.reply(
-        'No players meet the leaderboard quality bar yet (need >=10 solo games and >=40% confidence). ' +
+        'No one has 10+ solo Turbo games behind their estimate yet. ' +
         'Try `+turborank all everyone` to see every estimate.',
       );
     }

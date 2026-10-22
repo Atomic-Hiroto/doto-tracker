@@ -60,7 +60,7 @@ const MEDAL_EMOJI: Record<number, string> = {
  * (Was 77 — half the correct value — which squashed every rank into the lower half of
  * its medal band and made mixed-skill lobbies round ~one tier low.)
  */
-const MMR_PER_STAR = 153;
+export const MMR_PER_STAR = 153;
 
 /** Party-size to discount weight, used only when a player has zero solo games. */
 const PARTY_WEIGHTS: Record<number, number> = {

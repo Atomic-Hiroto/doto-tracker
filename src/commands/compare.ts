@@ -1,33 +1,52 @@
-import { Message, EmbedBuilder } from 'discord.js';
+import { Message, EmbedBuilder, User } from 'discord.js';
 import { UserDataService } from '../services/userDataService';
 import { TurboStatsService } from '../services/turboStatsService';
-import { Replies } from '../constants';
 import { logger } from '../services/loggerService';
 import { opendotaClient } from '../services/apiClient';
 import { dotaDataService } from '../services/dotaDataService';
+import { rankTierToMedal, tierToEmoji, MMR_PER_STAR } from '../services/turboRankService';
+import { TurboRankEstimate } from '../models/TurboRank';
 import { safeTyping } from '../utils/channelHelpers';
+import { pullRatingsById, turboSummary } from './turboSummary';
+import { winRateText } from './turboPairings';
 
-function getRankName(rankTier: number | undefined): string {
-    if (!rankTier) return 'Unranked';
-    const tier = Math.floor(rankTier / 10);
-    const stars = rankTier % 10;
-    const tiers: Record<number, string> = {
-        1: 'Herald', 2: 'Guardian', 3: 'Crusader', 4: 'Archon',
-        5: 'Legend', 6: 'Ancient', 7: 'Divine', 8: 'Immortal'
-    };
-    return tier === 8 ? 'Immortal' : `${tiers[tier] || 'Unranked'} ${stars}`;
-}
-
-interface SidePlayer {
+interface Side {
+    user: User;
     name: string;
     rankTier?: number;
-    rank: string;
-    wr: number;
-    totalGames: number;
-    turboRating?: number;
+    winRate: number;
+    games: number;
     heroes: any[];
+    turbo: ReturnType<typeof turboSummary>;
 }
 
+/**
+ * Who reads higher on the hidden Turbo rank, and whether the gap clears both estimates' error.
+ * That rank is the one ladder both players share; all-mode win rates sit in each player's own
+ * bracket, so they are never used to pick a winner.
+ */
+function verdict(a: Side, b: Side): string {
+    const ea: TurboRankEstimate | null = a.turbo.estimate;
+    const eb: TurboRankEstimate | null = b.turbo.estimate;
+    if (!ea || !eb) {
+        const missing = [!ea ? a.name : null, !eb ? b.name : null].filter(Boolean).join(' and ');
+        return `No call yet: **${missing}** needs a hidden Turbo rank first (\`+turborank calibrate\`). `
+            + 'All-mode win rates sit in different brackets, so they can\'t settle it.';
+    }
+    const gap = ea.estimatedMMR - eb.estimatedMMR;
+    const higher = gap >= 0 ? a : b;
+    const lower = gap >= 0 ? b : a;
+    const error = Math.round(Math.sqrt((ea.precisionSD ?? 0) ** 2 + (eb.precisionSD ?? 0) ** 2));
+    const stars = Math.round(Math.abs(gap) / MMR_PER_STAR);
+    if (Math.abs(gap) <= error) {
+        return `**Too close to call.** ${higher.name} reads ~${Math.abs(gap)} MMR higher on hidden Turbo rank, `
+            + `inside the combined ±${error} error.`;
+    }
+    return `**${higher.name}** reads higher on hidden Turbo rank: ~${Math.abs(gap)} MMR${stars ? ` (about ${stars}★)` : ''} `
+        + `above ${lower.name}, beyond the combined ±${error} error.`;
+}
+
+/** `+compare @a @b` — a side-by-side scouting report on two registered players. */
 export async function compare(
     message: Message,
     args: string[],
@@ -35,111 +54,83 @@ export async function compare(
     turboStatsService: TurboStatsService
 ) {
     const mentionedUsers = [...message.mentions.users.values()];
-
     if (mentionedUsers.length < 2) {
-        return message.reply('Please mention two registered players to compare. Usage: `+compare @player1 @player2`');
+        return message.reply('Mention two registered players to compare: `+compare @player1 @player2`');
     }
 
-    const [user1Discord, user2Discord] = [mentionedUsers[0], mentionedUsers[1]];
-    const user1Data = userDataService.getUserByDiscordId(user1Discord.id);
-    const user2Data = userDataService.getUserByDiscordId(user2Discord.id);
-
-    if (!user1Data) return message.reply(`${user1Discord.username} is not registered.`);
-    if (!user2Data) return message.reply(`${user2Discord.username} is not registered.`);
+    const [user1, user2] = mentionedUsers;
+    const data1 = userDataService.getUserByDiscordId(user1.id);
+    const data2 = userDataService.getUserByDiscordId(user2.id);
+    if (!data1) return message.reply(`**${user1.username}** isn't registered yet.`);
+    if (!data2) return message.reply(`**${user2.username}** isn't registered yet.`);
 
     try {
         safeTyping(message.channel);
 
         // significant=0 keeps this turbo-inclusive, matching the rest of the bot.
-        const [p1Profile, p1WL, p1Heroes, p2Profile, p2WL, p2Heroes] = await Promise.all([
-            opendotaClient.get<any>(`/players/${user1Data.steamId}`),
-            opendotaClient.get<any>(`/players/${user1Data.steamId}/wl?significant=0`),
-            opendotaClient.get<any[]>(`/players/${user1Data.steamId}/heroes?significant=0`),
-            opendotaClient.get<any>(`/players/${user2Data.steamId}`),
-            opendotaClient.get<any>(`/players/${user2Data.steamId}/wl?significant=0`),
-            opendotaClient.get<any[]>(`/players/${user2Data.steamId}/heroes?significant=0`),
+        const fetchSide = (steamId: string) => Promise.all([
+            opendotaClient.get<any>(`/players/${steamId}`),
+            opendotaClient.get<any>(`/players/${steamId}/wl?significant=0`),
+            opendotaClient.get<any[]>(`/players/${steamId}/heroes?significant=0`),
         ]);
+        const [raw1, raw2] = await Promise.all([fetchSide(data1.steamId), fetchSide(data2.steamId)]);
+        const pullById = pullRatingsById(turboStatsService);
 
-        const buildSide = (discord: typeof user1Discord, profile: any, wl: any, heroesRes: any): SidePlayer => {
-            const total = (wl.data.win || 0) + (wl.data.lose || 0);
+        const buildSide = (user: User, steamId: string, [profile, wl, heroes]: Awaited<ReturnType<typeof fetchSide>>): Side => {
+            const games = (wl.data.win || 0) + (wl.data.lose || 0);
             return {
-                name: profile.data?.profile?.personaname || discord.username,
+                user,
+                name: profile.data?.profile?.personaname || user.username,
                 rankTier: profile.data?.rank_tier,
-                rank: getRankName(profile.data?.rank_tier),
-                wr: total > 0 ? wl.data.win / total : 0,
-                totalGames: total,
-                turboRating: turboStatsService.getPlayerStats(discord.id)?.rating,
-                heroes: (heroesRes.data || []).filter((h: any) => h.games >= 3).sort((a: any, b: any) => b.games - a.games),
+                winRate: games ? wl.data.win / games : 0,
+                games,
+                heroes: (heroes.data || []).filter((h: any) => h.games >= 3).sort((x: any, y: any) => y.games - x.games),
+                turbo: turboSummary(turboStatsService, user.id, steamId, pullById),
             };
         };
+        const a = buildSide(user1, data1.steamId, raw1);
+        const b = buildSide(user2, data2.steamId, raw2);
 
-        const p1 = buildSide(user1Discord, p1Profile, p1WL, p1Heroes);
-        const p2 = buildSide(user2Discord, p2Profile, p2WL, p2Heroes);
-
-        const heroLine = async (h: any) => {
-            const heroName = await dotaDataService.getHeroName(h.hero_id);
-            const wr = h.games > 0 ? ((h.win / h.games) * 100).toFixed(0) : '0';
-            return `**${heroName}** · ${h.games}G ${wr}%`;
+        const heroLine = async (h: any) => `**${await dotaDataService.getHeroName(h.hero_id)}** ${h.games}G · ${Math.round((h.win / h.games) * 100)}%`;
+        const sideValue = async (side: Side) => {
+            const ranked = side.rankTier
+                ? `${tierToEmoji(Math.floor(side.rankTier / 10))} Ranked **${rankTierToMedal(side.rankTier)}**`
+                : '⚪ Ranked **Unranked**';
+            const heroes = await Promise.all(side.heroes.slice(0, 3).map(heroLine));
+            return [
+                ranked,
+                ...side.turbo.lines,
+                `📊 ${(side.winRate * 100).toFixed(1)}% all modes · ${side.games.toLocaleString()} games`,
+                '',
+                heroes.length ? heroes.join('\n') : '_No hero data_',
+            ].join('\n');
         };
-        const p1HeroLines = await Promise.all(p1.heroes.slice(0, 3).map(heroLine));
-        const p2HeroLines = await Promise.all(p2.heroes.slice(0, 3).map(heroLine));
 
-        // Shared heroes across each player's top pool (by games).
-        const p1Ids = new Set(p1.heroes.slice(0, 10).map((h: any) => h.hero_id));
-        const sharedIds = p2.heroes.slice(0, 10).filter((h: any) => p1Ids.has(h.hero_id)).map((h: any) => h.hero_id);
-        const sharedNames = await Promise.all(sharedIds.slice(0, 4).map((id: number) => dotaDataService.getHeroName(id)));
+        // Shared heroes across each player's top 10 by games.
+        const topIds = new Set(a.heroes.slice(0, 10).map((h: any) => h.hero_id));
+        const sharedIds = b.heroes.slice(0, 10).filter((h: any) => topIds.has(h.hero_id)).map((h: any) => h.hero_id);
+        const sharedNames = await Promise.all(sharedIds.slice(0, 5).map((id: number) => dotaDataService.getHeroName(id)));
 
-        // Duo synergy — the ONE directly comparable, shared-context stat: how they
-        // actually perform on the same team in turbo (tracked by the bot).
-        const sortedIds = [user1Discord.id, user2Discord.id].sort();
-        const pairing = turboStatsService.getAllStats().pairings.find(
-            (p) => p.player1 === sortedIds[0] && p.player2 === sortedIds[1]
-        );
-
-        const fmtSide = (p: SidePlayer, heroLines: string[]) => [
-            `📊 **${(p.wr * 100).toFixed(1)}%** WR · ${p.totalGames.toLocaleString()} games`,
-            `⭐ ${p.rank}`,
-            `⚡ Turbo score: ${p.turboRating != null ? `**${p.turboRating}**` : '—'}`,
-            heroLines.length ? `🦸 ${heroLines.join('\n     ')}` : '🦸 No hero data',
-        ].join('\n');
+        const sortedIds = [user1.id, user2.id].sort();
+        const pairing = turboStatsService.getAllStats().pairings.find(p => p.player1 === sortedIds[0] && p.player2 === sortedIds[1]);
+        const duoGames = pairing ? pairing.wins + pairing.losses : 0;
+        const duoText = duoGames
+            ? `${winRateText(pairing!.wins, duoGames)} win rate · ${pairing!.wins}W–${pairing!.losses}L in ${duoGames} games\n`
+              + '-# ± is how far luck alone could push it. Duo records didn\'t repeat in later games.'
+            : 'No tracked Turbo games on the same team yet.';
 
         const embed = new EmbedBuilder()
             .setColor('#6366f1')
-            .setTitle('⚔️ Scouting Report')
-            .setDescription(`**${p1.name}** vs **${p2.name}**`)
+            .setTitle(`⚔️ ${a.name} vs ${b.name}`)
+            .setDescription(verdict(a, b))
             .addFields(
-                { name: `👤 ${p1.name}`, value: fmtSide(p1, p1HeroLines), inline: true },
-                { name: `👤 ${p2.name}`, value: fmtSide(p2, p2HeroLines), inline: true },
-                { name: '🤝 Shared Heroes', value: sharedNames.length ? sharedNames.join(', ') : 'None in common', inline: false },
-            );
-
-        // Duo synergy field
-        if (pairing && pairing.wins + pairing.losses > 0) {
-            const games = pairing.wins + pairing.losses;
-            const wr = ((pairing.wins / games) * 100).toFixed(1);
-            embed.addFields({
-                name: '🔗 On the same team (turbo)',
-                value: `**${games}** games together · **${wr}%** win rate (${pairing.wins}W/${pairing.losses}L)`,
-                inline: false,
-            });
-        } else {
-            embed.addFields({ name: '🔗 On the same team (turbo)', value: "Haven't played tracked turbo games together yet.", inline: false });
-        }
-
-        // Honest verdict: only the shared turbo ladder is directly comparable.
-        // Raw WR sits in different rank brackets, so we never crown a winner on it.
-        let verdict: string;
-        if (p1.turboRating != null && p2.turboRating != null && p1.turboRating !== p2.turboRating) {
-            const higher = p1.turboRating > p2.turboRating ? p1 : p2;
-            verdict = `On the shared **turbo score** (conservative win-rate estimate), **${higher.name}** is ahead (${p1.turboRating} vs ${p2.turboRating}). Win rates aren't directly comparable — they're relative to each player's own rank bracket.`;
-        } else if (p1.turboRating != null && p2.turboRating != null) {
-            verdict = `Dead even on turbo score (${p1.turboRating} each). Win rates sit in different brackets, so they're not directly comparable.`;
-        } else {
-            verdict = 'Not enough shared turbo data to rank them fairly — win rates are relative to each player\'s own rank bracket, so they aren\'t directly comparable.';
-        }
-        embed.addFields({ name: '🧭 Read', value: verdict, inline: false });
-
-        embed.setFooter({ text: 'Turbo score is the only shared ladder • WR is bracket-relative' }).setTimestamp();
+                { name: `👤 ${a.name}`, value: await sideValue(a), inline: true },
+                { name: `👤 ${b.name}`, value: await sideValue(b), inline: true },
+                { name: '🤝 Together in Turbo', value: duoText, inline: false },
+                { name: '🦸 Shared heroes', value: sharedNames.length ? sharedNames.join(' · ') : 'None in common', inline: false },
+            )
+            .setFooter({ text: 'Hidden Turbo rank is the shared ladder · all-mode win rates sit in each player\'s own bracket' })
+            .setTimestamp();
 
         await message.reply({ embeds: [embed] });
     } catch (error) {

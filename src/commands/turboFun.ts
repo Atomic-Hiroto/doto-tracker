@@ -204,7 +204,7 @@ export async function turboClimb(message: Message) {
       })
       .filter(r => Math.abs(r.delta) >= 25);
 
-    if (rows.length === 0) return message.reply('Not enough calibration history yet. Run bulk recalibration over time, then `+turboclimb` will show movement.');
+    if (rows.length === 0) return message.reply('Not enough calibration history yet. The nightly refresh adds a snapshot for everyone who played, so check back in a few days.');
 
     const climbers = rows
       .filter(r => r.delta > 0)
@@ -219,7 +219,7 @@ export async function turboClimb(message: Message) {
     const embed = new EmbedBuilder()
       .setColor('#a855f7')
       .setTitle('⛰️ Turbo Climb')
-      .setDescription('Movement across saved calibration snapshots. This gets better every time `+turborank calibrateall` is run on different days.')
+      .setDescription('How each hidden Turbo rank has moved across saved calibrations. Everyone who played gets re-calibrated nightly, so this fills in on its own.')
       .addFields(
         { name: 'Biggest Climbers', value: fitLines(climbers.map(line), 'No positive movement yet.'), inline: false },
         { name: 'Biggest Drops', value: fitLines(fallers.map(line), 'No negative movement yet.'), inline: false },

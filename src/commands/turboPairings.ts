@@ -64,7 +64,7 @@ async function rankAdjustedBoard(
   // A single player's teammates are a much smaller pool, so the bar comes down with it.
   const minGames = targetId ? 10 : 30;
   const minScored = targetId ? 8 : 20;
-  const difficulty = turboRankService.getEnemyStrengthByMatch();
+  const difficulty = turboRankService.getEnemyStrengthByMatch({ registeredOnly: true, minVisibleEnemies: 2 });
   const rows = turboStatsService.getDuoDifficultyProfiles(
     difficulty, 10, minGames, minScored, scope, window.sinceTimestamp, targetId
   );
@@ -74,7 +74,7 @@ async function rankAdjustedBoard(
     const who = target ? ` with **${target.username}**` : '';
     return message.reply(
       `No pair of teammates${who} has ${minGames}+ games together with at least ${minScored} of them rank-scored in the ${window.label} yet. `
-      + 'Enemy ranks come from `+turborank calibrate`, so more calibrated players means more coverage.'
+      + 'Enemy ranks come from the medals visible in each game, so older games without them are skipped.'
     );
   }
 
