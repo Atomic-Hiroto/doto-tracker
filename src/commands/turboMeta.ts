@@ -246,14 +246,19 @@ function parseArgs(args: string[]): ParsedArgs {
   return { patch, brackets, rankLabel, unknown };
 }
 
-export async function turboMeta(message: Message, args: string[] = []) {
+/**
+ * `+turbometa [patch] [rank]`. Resolves to a one-line summary per position (top three heroes) once the
+ * board is posted, which `+meta` hands to doto-chan for a take; null when nothing was posted.
+ */
+export async function turboMeta(message: Message, args: string[] = []): Promise<string[] | null> {
   const opts = parseArgs(args);
   if (opts.unknown.length) {
-    return message.reply(
+    await message.reply(
       `Didn't recognise: \`${opts.unknown.join(' ')}\`. Usage: \`+turbometa [patch] [rank]\`\n` +
       'Ranks: `herald guardian crusader archon legend ancient divine immortal`, ranges like `divine+` or `archon-divine`, or groups `low`/`mid`/`high`.\n' +
       'Examples: `+turbometa immortal`, `+turbometa patch divine+`, `+turbometa patch`.',
     );
+    return null;
   }
 
   const windowHint = opts.patch ? 'last 30 days' : 'last 7 days';
@@ -269,7 +274,8 @@ export async function turboMeta(message: Message, args: string[] = []) {
     const hasRankedBaseline = Object.values(rankedBaseline.byPosition ?? {}).some((o) => Object.keys(o).length > 0);
     const hasData = Object.values(byPosition).some((rows) => rows && rows.length > 0);
     if (!hasData) {
-      return loading.edit('Could not fetch the Turbo meta from STRATZ right now (no data, or that filter is too narrow). Try again or widen the rank.');
+      await loading.edit('Could not fetch the Turbo meta from STRATZ right now (no data, or that filter is too narrow). Try again or widen the rank.');
+      return null;
     }
 
     // Preload hero names for every hero we might render.
@@ -307,6 +313,7 @@ export async function turboMeta(message: Message, args: string[] = []) {
       .setTimestamp();
 
     const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
+    const summary: string[] = [];
     const filtered = opts.patch || opts.brackets.length > 0;
     const totals = heroTotals(byPosition);
     let anyOffRoleHidden = false;
@@ -343,6 +350,11 @@ export async function turboMeta(message: Message, args: string[] = []) {
         // (54.8% on 375k games correctly outranking 54.9% on 76k), which reads as a sorting bug.
         return `${medal} **${name}** — ${(h.wilson * 100).toFixed(1)}% ⌊conf⌋ · ${(h.winRate * 100).toFixed(1)}% raw · ${fmtGames(h.matchCount)} games${spec}${marker}`;
       });
+      summary.push(`${POSITION_LABELS[pos].replace(/^\S+\s/, '')}: ` + topHeroes.slice(0, 3).map(h => {
+        const base = rankedPos?.[h.heroId];
+        const vsRanked = base ? `, ${h.winRate >= base.winRate ? '+' : ''}${((h.winRate - base.winRate) * 100).toFixed(1)}pp vs ranked` : '';
+        return `${nameMap.get(h.heroId) ?? `Hero ${h.heroId}`} ${(h.winRate * 100).toFixed(1)}%${vsRanked}`;
+      }).join(', '));
       const hiddenNote = offRoleHidden > 0 ? ` · ${offRoleHidden} off-role hidden` : '';
       fields.push({
         name: `${POSITION_LABELS[pos]}  _(min ${fmtGames(gate)} games${hiddenNote})_`,
@@ -385,8 +397,10 @@ export async function turboMeta(message: Message, args: string[] = []) {
 
     embed.addFields(safeFields(fields, title.length + description.length));
     await loading.edit({ content: null, embeds: [embed] });
+    return summary;
   } catch (error) {
     logger.error('Error in turbometa command:', error);
     await loading.edit('An error occurred while building the Turbo meta. Please try again later.').catch(() => {});
+    return null;
   }
 }

@@ -7,7 +7,6 @@ import { ProcessConstants } from './constants';
 import { logger } from './services/loggerService';
 import { dotaDataService } from './services/dotaDataService';
 import { registerInteractionHandler, registerSlashCommands } from './services/interactionService';
-import { closeDotabuffBrowser } from './services/dotabuffScraper';
 import { startTiPoller, stopTiPoller } from './services/tiService';
 import { startTurboRankNightly, stopTurboRankNightly } from './services/turboRankNightly';
 
@@ -39,7 +38,6 @@ export async function initializeBot(client: Client) {
     userDataService.saveUserData();
     stopTiPoller();
     stopTurboRankNightly();
-    await closeDotabuffBrowser().catch(() => null);
     client.destroy();
     process.exit(0);
   }
