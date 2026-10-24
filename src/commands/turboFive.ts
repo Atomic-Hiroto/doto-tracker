@@ -13,6 +13,8 @@ import { displayName, parseWindow } from './turboPull';
 const ACTIVE_DAYS = 60;
 /** Games with you before someone is considered for an open slot. */
 const MIN_DUO_GAMES = 3;
+/** Duo records with you are pulled this many games toward 50%, the same prior `+turbopairs` uses. */
+const DUO_PRIOR_GAMES = 20;
 /** Teammates considered for open slots, best duo record with you first. C(12, 4) = 495 lineups. */
 const POOL_SIZE = 12;
 /** Lineups whose positions and heroes are worked out; the rest can't catch up on role fit alone. */
@@ -25,20 +27,21 @@ const ROLE_GAMES = 200;
  * in easy lobbies don't take the slots, not enough to outvote a real record together.
  */
 const MMR_PER_WIN_POINT = 400;
-/** How much the lineup's hero-at-position fit counts next to its projected win rate. */
+/** How much the lineup's hero-at-position fit counts next to its win rate. */
 const ROLE_WEIGHT = 0.5;
 const POSITION_NAMES = ['', 'Safelane', 'Mid', 'Offlane', 'Soft Sup', 'Hard Sup'];
 const record = (wins: number, games: number) => `${wins}W–${games - wins}L`;
+const pct = (rate: number) => Math.round(rate * 100);
 
 /**
  * `+turbofive [@user ...] [days]` — your best Turbo five-stack, with a position and hero for everyone.
  *
  * Name nobody and it fills four slots; name some and it fills the rest; name four and it only slots
- * that party. Lineups come from `recommendParties` (each member's own record plus how every pair
- * does together, blended with the exact five's record when it exists), nudged by Party MMR from
- * the `+turbopull` ratings. The top few are then slotted into positions from each player's recent
- * Stratz games: no two players share a position or a hero, and a clash goes to whichever choice
- * leaves the party better off.
+ * that party. A lineup's win rate is half your own duo record with each of the other four and half
+ * `recommendParties` (every member's record, every pair, and the exact five when it has played),
+ * nudged by Party MMR from the `+turbopull` ratings. The top few are then slotted into positions
+ * from each player's recent Stratz games: no two players share a position or a hero, and a clash
+ * goes to whichever choice leaves the party better off.
  */
 export async function turboFive(message: Message, args: string[], users: UserDataService, stats: TurboStatsService) {
   try {
@@ -59,12 +62,16 @@ export async function turboFive(message: Message, args: string[], users: UserDat
     // Open slots go to people you actually play with, best record with you first.
     const duoWithMe = new Map(stats.getPairingsForPlayer(me.discordId, 'all', window.sinceTimestamp)
       .map(pair => [pair.player1 === me.discordId ? pair.player2 : pair.player1, pair]));
+    const duoRate = (id: string) => {
+      const pair = duoWithMe.get(id);
+      return ((pair?.wins || 0) + DUO_PRIOR_GAMES / 2) / ((pair ? pair.wins + pair.losses : 0) + DUO_PRIOR_GAMES);
+    };
     const activeSince = Date.now() - ACTIVE_DAYS * 86400_000;
     const need = 5 - lockedIds.length;
     const pool = need === 0 ? [] : [...duoWithMe.entries()]
       .filter(([id, pair]) => !lockedIds.includes(id) && steamOf.has(id) && pair.wins + pair.losses >= MIN_DUO_GAMES)
       .filter(([id]) => (stats.getPlayerStats(id)?.lastUpdated ?? 0) >= activeSince)
-      .sort(([, a], [, b]) => (b.wins + 5) / (b.wins + b.losses + 10) - (a.wins + 5) / (a.wins + a.losses + 10))
+      .sort(([a], [b]) => duoRate(b) - duoRate(a))
       .slice(0, POOL_SIZE)
       .map(([id]) => id);
     if (pool.length < need) {
@@ -87,7 +94,10 @@ export async function turboFive(message: Message, args: string[], users: UserDat
     const scored = lineups
       .map(lineup => {
         const pull = partyPull(lineup.playerIds);
-        return { lineup, pull, base: lineup.predictedWinRate + (pull - crewPull) / MMR_PER_WIN_POINT / 100 };
+        const others = lineup.playerIds.filter(id => id !== me.discordId);
+        const withYou = others.reduce((sum, id) => sum + duoRate(id), 0) / others.length;
+        const winRate = (lineup.predictedWinRate + withYou) / 2;
+        return { lineup, pull, withYou, winRate, base: winRate + (pull - crewPull) / MMR_PER_WIN_POINT / 100 };
       })
       .sort((a, b) => b.base - a.base)
       .slice(0, ROLE_CANDIDATES);
@@ -121,41 +131,49 @@ export async function turboFive(message: Message, args: string[], users: UserDat
 
     const names = new Map<string, string>();
     for (const id of toFetch) names.set(id, await displayName(message, { discordId: id, steamId: steamOf.get(id) || '' }));
-    const nameOf = (id: string) => `${names.get(id)}${id === me.discordId ? ' (you)' : lockedIds.includes(id) ? ' 📌' : ''}`;
+    const nameOf = (id: string) => `**${names.get(id)}**${id === me.discordId ? ' (you)' : lockedIds.includes(id) ? ' 📌' : ''}`;
 
-    const lineupLines = await Promise.all(best.roles.slots.map(async slot => {
-      const hero = slot.heroId !== null ? await dotaDataService.getHeroName(slot.heroId) : 'any hero';
-      const heroText = slot.heroId !== null
-        ? `${record(slot.wins, slot.games)} on it at pos ${slot.position}`
-        : historyGames.get(slot.playerId)
-          ? `no hero with ${MIN_HERO_GAMES}+ games here · ${slot.games ? `${record(slot.wins, slot.games)} at pos ${slot.position}` : `hasn't played pos ${slot.position} lately`}`
-          : 'no Stratz history';
-      const duo = duoWithMe.get(slot.playerId);
-      const duoText = slot.playerId === me.discordId ? '' : duo ? ` · ${record(duo.wins, duo.wins + duo.losses)} with you` : ' · never with you';
-      return `**${slot.position} · ${POSITION_NAMES[slot.position]}** — **${nameOf(slot.playerId)}** on **${hero}**\n-# ${heroText}${duoText}`;
+    // One block per player with a blank line between them: Discord's small-print `-#` lines run
+    // into the next row, so the detail goes on a plain second line instead.
+    const rows = await Promise.all(best.roles.slots.map(async slot => {
+      const hero = slot.heroId !== null ? await dotaDataService.getHeroName(slot.heroId) : null;
+      const pos = `pos ${slot.position}`;
+      const details: string[] = [];
+      if (!historyGames.get(slot.playerId)) {
+        details.push('no Stratz history');
+      } else {
+        if (hero) details.push(`${record(slot.wins, slot.games)} on ${hero} at ${pos}`);
+        else details.push(`no hero with ${MIN_HERO_GAMES}+ games at ${pos}${slot.games ? ` · ${record(slot.wins, slot.games)} there` : ''}`);
+        details.push(`${pct(slot.positionShare)}% of their games at ${pos}`);
+      }
+      if (slot.playerId !== me.discordId) {
+        const duo = duoWithMe.get(slot.playerId);
+        details.push(duo ? `${record(duo.wins, duo.wins + duo.losses)} with you` : 'never with you');
+      }
+      return `**${slot.position} · ${POSITION_NAMES[slot.position]}** — ${nameOf(slot.playerId)} on **${hero ?? 'any hero'}**\n${details.join(' · ')}`;
     }));
 
-    const { lineup, pull } = best;
+    const { lineup, pull, withYou } = best;
     const exact = lineup.exactLineupGames
       ? `${record(lineup.exactLineupWins, lineup.exactLineupGames)} as this exact five`
       : 'never queued as this exact five';
-    const pct = (rate: number) => Math.round(rate * 100);
     // Without any pull ratings every party sits at the same made-up average, so say nothing about MMR.
     const enemies = pullPlayers.length ? ` · draws **${mmrToMedal(pull).medal}** enemies (~${Math.round(pull)} MMR)` : '';
-    const summary = `**${pct(lineup.predictedWinRate)}%** projected (likely ${pct(lineup.lowWinRate)}–${pct(lineup.highWinRate)}%)${enemies}`
-      + `\n-# ${exact} · ${lineup.coveredPairs}/10 pairs have 5+ games together`;
+    const summary = `**${pct(best.winRate)}%** expected · **${pct(withYou)}%** with you on average${enemies}\n`
+      + `${exact} · ${lineup.coveredPairs}/10 pairs have 5+ games together`;
     const how = need
-      ? `Filled ${need} slot${need === 1 ? '' : 's'} from ${pool.length} players with ${MIN_DUO_GAMES}+ games with you, on win rate together plus a nudge for Party MMR. `
+      ? `Filled ${need} slot${need === 1 ? '' : 's'} from ${pool.length} players with ${MIN_DUO_GAMES}+ games with you: your record with them, how the five do together, a nudge for Party MMR, and how well they fit the positions. `
       : '';
-    const description = `${summary}\n\n${how}Each player gets a different position and hero, from their best records there. 📌 = named by you.`
+    const description = `${summary}\n\n${how}Everyone gets a different position and hero: heroes they've played ${MIN_HERO_GAMES}+ times there, favouring the positions they play most. 📌 = named by you.`
       + (STRATZ_API_KEY ? '' : '\n⚠️ Stratz isn\'t configured, so positions are a guess.');
 
-    const fields = [{ name: '🖐️ Lineup', value: lineupLines.join('\n') }];
+    const fields = [{ name: '🖐️ Lineup', value: rows.join('\n\n') }];
     const others = finalists.slice(1, 3);
     if (need && others.length) {
       fields.push({
         name: 'Close behind',
-        value: others.map(entry => `${pct(entry.lineup.predictedWinRate)}% · ${entry.lineup.playerIds.filter(id => id !== me.discordId).map(id => names.get(id)).join(' · ')}`).join('\n')
+        value: others.map(entry => `${pct(entry.winRate)}% expected · ${pct(entry.withYou)}% with you — `
+          + entry.lineup.playerIds.filter(id => id !== me.discordId).map(id => names.get(id)).join(' · ')).join('\n')
       });
     }
 
@@ -164,7 +182,7 @@ export async function turboFive(message: Message, args: string[], users: UserDat
       .setTitle(`🖐️ Turbo Five — ${lockedIds.map(id => names.get(id)).join(' + ')}`.slice(0, 256))
       .setDescription(description)
       .addFields(safeFields(fields, description.length + 100))
-      .setFooter({ text: `Heroes from each player's last ${ROLE_GAMES} Turbo games (Stratz), pulled toward 50% · pair records from ${window.label}` })
+      .setFooter({ text: `Heroes from each player's last ${ROLE_GAMES} Turbo games (Stratz) · records pulled toward 50% · pair records from ${window.label}` })
       .setTimestamp();
     return progress.edit({ content: '', embeds: [embed] });
   } catch (error) {
