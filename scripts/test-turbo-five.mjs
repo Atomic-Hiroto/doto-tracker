@@ -38,6 +38,15 @@ assert.ok(forced);
 assert.equal(forced.slots.filter(slot => slot.heroId === null).length, 4);
 assert.equal(forced.slots.find(slot => slot.position === 3).playerId, 'p', 'the best offlaner keeps offlane');
 
+// A short hot streak must not beat the hero someone mains, and a hero under the bar never counts.
+const mains = buildRoleTable([...games(60, 3, 5, 1), ...games(61, 3, 40, 30), ...games(62, 3, 3, 1)]).get(3);
+assert.equal(mains[0].heroId, 61, 'a 40-30 main outranks a 5-1');
+assert.ok(!mains.some(option => option.heroId === 62), 'a 4-game hero is below the bar');
+
+// A five-game hero shouldn't pull a support onto a position they almost never play.
+const support = buildRoleTable([...games(70, 2, 4, 1), ...games(71, 5, 50, 45)]);
+assert.ok(support.get(5)[0].value > support.get(2)[0].value, 'their main position scores higher');
+
 // No history at all still yields a full, valid lineup.
 const blank = assignRoles(['v', 'w', 'x', 'y', 'z'].map(id => ({ id, table: buildRoleTable([]) })));
 assert.ok(blank);

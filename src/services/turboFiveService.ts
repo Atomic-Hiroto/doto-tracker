@@ -1,13 +1,20 @@
 import { TurboRoleGame } from './stratzClient';
 
 /** Games on a hero at one position before it counts as something the player brings. */
-export const MIN_HERO_GAMES = 3;
-/** Hero records are pulled this many games toward 50%, so a 3–0 can't outrank a 30–20 by much. */
-const HERO_PRIOR_GAMES = 10;
-/** A slot with no qualifying hero is scored on the player's whole record there, pulled harder... */
-const FLEX_PRIOR_GAMES = 20;
-/** ...and docked this much, so a real comfort hero always beats "whatever they pick". */
-const FLEX_PENALTY = 0.05;
+export const MIN_HERO_GAMES = 5;
+/**
+ * Hero records are pulled this many games toward 50%. A player's record on one hero barely moves
+ * from 50% in Turbo, so the pull is heavy: 5–1 lands at 53.6% and 40–30 at 54.2%, which keeps a
+ * handful of lucky games from beating the hero someone actually mains (8–2 still edges it at 55%).
+ */
+const HERO_PRIOR_GAMES = 50;
+/** A slot with no qualifying hero is scored on the player's whole record there, docked this much. */
+const FLEX_PENALTY = 0.03;
+/**
+ * Bonus for how much of a player's Turbo they spend at a position: someone at pos 5 in 60% of
+ * their games gets +3.6 points there. It keeps a five-game hero from dragging a support to mid.
+ */
+const POSITION_SHARE_WEIGHT = 0.06;
 /** Heroes per position considered when resolving clashes; deeper picks never win a slot. */
 const HEROES_PER_SLOT = 6;
 
@@ -16,12 +23,16 @@ export interface HeroOption {
   heroId: number | null;
   games: number;
   wins: number;
-  /** Shrunk win rate the assignment maximises. */
+  /** Share of the player's games spent at this position, 0–1. */
+  positionShare: number;
+  /** What the assignment maximises: the shrunk win rate plus the position-share bonus. */
   value: number;
 }
 
 /** position (1–5) → options, best first. Every position has at least the flex option. */
 export type RoleTable = Map<number, HeroOption[]>;
+
+const shrunk = (wins: number, games: number) => (wins + HERO_PRIOR_GAMES / 2) / (games + HERO_PRIOR_GAMES);
 
 export function buildRoleTable(games: TurboRoleGame[]): RoleTable {
   const byPos = new Map<number, { games: number; wins: number; heroes: Map<number, { games: number; wins: number }> }>();
@@ -39,13 +50,16 @@ export function buildRoleTable(games: TurboRoleGame[]): RoleTable {
 
   const table: RoleTable = new Map();
   for (const [pos, slot] of byPos) {
+    const positionShare = games.length ? slot.games / games.length : 0;
+    const bonus = POSITION_SHARE_WEIGHT * positionShare;
     const options: HeroOption[] = [...slot.heroes]
       .filter(([, record]) => record.games >= MIN_HERO_GAMES)
       .map(([heroId, record]) => ({
         heroId,
         games: record.games,
         wins: record.wins,
-        value: (record.wins + HERO_PRIOR_GAMES / 2) / (record.games + HERO_PRIOR_GAMES),
+        positionShare,
+        value: shrunk(record.wins, record.games) + bonus,
       }))
       .sort((a, b) => b.value - a.value || b.games - a.games)
       .slice(0, HEROES_PER_SLOT);
@@ -53,7 +67,8 @@ export function buildRoleTable(games: TurboRoleGame[]): RoleTable {
       heroId: null,
       games: slot.games,
       wins: slot.wins,
-      value: (slot.wins + FLEX_PRIOR_GAMES / 2) / (slot.games + FLEX_PRIOR_GAMES) - FLEX_PENALTY,
+      positionShare,
+      value: shrunk(slot.wins, slot.games) + bonus - FLEX_PENALTY,
     });
     table.set(pos, options);
   }
@@ -76,9 +91,9 @@ function permutations(items: number[]): number[][] {
 
 /**
  * Gives each of five players a different position and a different hero, maximising the summed
- * hero-at-position win rate. Every one of the 120 position orders is tried and hero clashes are
- * searched exhaustively, so when two players want the same hero or lane the one whose record on
- * it is stronger keeps it only if that leaves the whole party better off. Ties go to the order the
+ * slot values. Every one of the 120 position orders is tried and hero clashes are searched
+ * exhaustively, so when two players want the same hero or lane the one whose record on it is
+ * stronger keeps it only if that leaves the whole party better off. Ties go to the order the
  * players were passed in, so callers list their strongest player first.
  */
 export function assignRoles(players: { id: string; table: RoleTable }[]): { slots: SlotAssignment[]; fit: number } | null {
