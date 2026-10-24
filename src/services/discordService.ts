@@ -152,6 +152,9 @@ export async function handleMessage(message: Message, userDataService: UserDataS
     case Commands.TURBO_PARTY:
       await commandHandlers.turboParty(message, turboStatsService, args);
       break;
+    case Commands.TURBO_FIVE:
+      await commandHandlers.turboFive(message, args, userDataService, turboStatsService);
+      break;
     case Commands.TURBO_RANK:
       await commandHandlers.turboRank(message, args, userDataService);
       break;

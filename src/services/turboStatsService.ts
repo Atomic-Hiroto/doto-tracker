@@ -701,9 +701,10 @@ export class TurboStatsService {
   /**
    * Best five-player lineups from a candidate pool. Anyone in `requiredIds` is locked into every
    * lineup considered, which is what answers "what is the best party *for me*" — the unconstrained
-   * top three routinely exclude a given player entirely.
+   * top three routinely exclude a given player entirely. `minCoveredPairs` is how many of the ten
+   * pairs need 5+ games together for a lineup to be ranked at all.
    */
-  recommendParties(candidateIds: string[], scope: TurboStatsScope = 'all', limit = 3, sinceTimestamp?: number, requiredIds: string[] = []): TurboPartyRecommendation[] {
+  recommendParties(candidateIds: string[], scope: TurboStatsScope = 'all', limit = 3, sinceTimestamp?: number, requiredIds: string[] = [], minCoveredPairs = 7): TurboPartyRecommendation[] {
     const uniqueIds = [...new Set(candidateIds)];
     if (uniqueIds.length < 5) return [];
     const required = [...new Set(requiredIds)].filter(id => uniqueIds.includes(id));
@@ -783,7 +784,7 @@ export class TurboStatsService {
     };
     choose(0, [...required]);
 
-    const ranked = recommendations.filter(rec => rec.coveredPairs >= 7).sort((a, b) => b.score - a.score);
+    const ranked = recommendations.filter(rec => rec.coveredPairs >= minCoveredPairs).sort((a, b) => b.score - a.score);
     const best = ranked[0];
     if (!best) return [];
     // A lineup whose point estimate sits inside the leader's interval is not distinguishable from

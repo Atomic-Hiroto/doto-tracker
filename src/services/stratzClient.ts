@@ -862,6 +862,65 @@ export async function fetchPlayerTurboPositions(
   }
 }
 
+/** One Turbo game reduced to what `+turbofive` slots a player by: hero, position 1–5, result. */
+export interface TurboRoleGame {
+  heroId: number;
+  position: number;
+  won: boolean;
+}
+
+const TURBO_ROLE_TTL_MS = 30 * 60 * 1000;
+const turboRoleCache = new Map<string, { ts: number; games: TurboRoleGame[] }>();
+
+/**
+ * A player's recent Turbo games as hero + Stratz-inferred position + result, newest first, up to
+ * `maxGames` (100 per request). Games without a position are dropped. Cached for 30 minutes so
+ * re-running `+turbofive` with different names costs no further calls for the same players.
+ */
+export async function fetchPlayerTurboRoles(steamAccountId: number, maxGames = 200): Promise<TurboRoleGame[]> {
+  if (!STRATZ_API_KEY) return [];
+  const cacheKey = `${steamAccountId}:${maxGames}`;
+  const cached = turboRoleCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < TURBO_ROLE_TTL_MS) return cached.games;
+
+  const games: TurboRoleGame[] = [];
+  try {
+    for (let skip = 0; skip < maxGames; skip += 100) {
+      const take = Math.min(100, maxGames - skip);
+      const response = await axios.post(
+        STRATZ_GQL,
+        {
+          query: `query ($id: Long!, $take: Int!, $skip: Int!) {
+            player(steamAccountId: $id) {
+              matches(request: { gameModeIds: [23], take: $take, skip: $skip, orderBy: DESC }) {
+                didRadiantWin
+                players { steamAccountId isRadiant heroId position }
+              }
+            }
+          }`,
+          variables: { id: steamAccountId, take, skip },
+        },
+        { headers: STRATZ_HEADERS, timeout: 30000 },
+      );
+      const matches = response.data?.data?.player?.matches ?? [];
+      for (const m of matches) {
+        const me = (m.players ?? []).find((p: any) => String(p.steamAccountId) === String(steamAccountId));
+        const position = Number(String(me?.position ?? '').replace('POSITION_', ''));
+        if (me?.heroId == null || !(position >= 1 && position <= 5)) continue;
+        if (typeof m.didRadiantWin !== 'boolean' || typeof me.isRadiant !== 'boolean') continue;
+        games.push({ heroId: Number(me.heroId), position, won: me.isRadiant === m.didRadiantWin });
+      }
+      if (matches.length < take) break;
+    }
+  } catch (error: any) {
+    logger.error(`Stratz turbo roles error for ${steamAccountId}:`, error?.response?.data ?? error?.message ?? error);
+    // A partial history is still useful, but don't cache it as if it were complete.
+    return games;
+  }
+  turboRoleCache.set(cacheKey, { ts: Date.now(), games });
+  return games;
+}
+
 /** Resolves a Steam account's display name + current ranked medal via Stratz. */
 export async function fetchStratzPlayerProfile(
   steamAccountId: number,

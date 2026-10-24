@@ -16,6 +16,7 @@ export { turboPairings, myTurboPairings } from './turboPairings';
 export { turboPull } from './turboPull';
 export { turboBackfill } from './turboBackfill';
 export { turboParty } from './turboParty';
+export { turboFive } from './turboFive';
 export { turboRank } from './turboRank';
 export { turboLean, turboClimb } from './turboFun';
 export { turboWinRate } from './turboWinRate';

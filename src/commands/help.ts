@@ -47,6 +47,7 @@ const SECTIONS: { name: string; lines: string[] }[] = [
       '`+turboparty [me|@user ...] [days]` — strongest stacks by Party MMR, plus untried five-stacks',
       '`+turboparty wins` · `+turboparty matches` — the same stacks by win rate or by games together',
       '`+turboparty plan [@user ...]` — fill a five-stack for the easiest or toughest enemies',
+      '`+turbofive [@user ...] [days]` — your best five-stack, with a position and hero for everyone',
       '`+turbopairs [me|@user] [days]` — luckiest duos with ± luck ranges · `games` for most-played · `hard` adds enemy ranks',
     ],
   },
