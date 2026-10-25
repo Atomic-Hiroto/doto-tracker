@@ -19,3 +19,14 @@ rich_prompt_totality_dump*.txt
 # local experiment scripts / rendered previews
 scratch/
 dotaConstants.json
+
+# Runtime state written by the bot
+channelData.json
+dotaConstants.json
+
+# Local-only files
+.claude/settings.local.json
+full_stratz_analysis_dump.txt
+rich_prompt_totality_check.txt
+scripts/dotabuff-rendered.html
+*.log

@@ -1,9 +1,8 @@
 ---
-description: Pull latest changes and restart the bot on the Oracle Cloud VPS
+description: Pull latest changes and restart the bot on your server
 ---
 
 To deploy the latest changes to the server:
 
-// turbo
-1. Run the following command:
-   `ssh -i path\to\your-ssh-key user@your-server "source ~/.nvm/nvm.sh && cd ~/doto-tracker && git pull origin ts_cope && npx tsc && sudo systemctl restart doto-tracker"`
+1. Set `DOTO_DEPLOY_HOST` (and optionally `DOTO_DEPLOY_KEY`) in your environment.
+2. Run `npm run remote-deploy`.

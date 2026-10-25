@@ -1,7 +1,8 @@
 import axios from 'axios';
+import 'dotenv/config';
 
 const STRATZ_GQL = 'https://api.stratz.com/graphql';
-const STRATZ_API_KEY = 'REDACTED_STRATZ_KEY';
+const STRATZ_API_KEY = process.env.STRATZ_API_KEY;
 
 const MATCH_QUERY = `
 query ($matchId: Long!) {

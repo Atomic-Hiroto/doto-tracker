@@ -18,4 +18,4 @@ export const PARSED_RECHECK_INTERVAL = parseInt(process.env.PARSED_RECHECK_INTER
 export const PARSED_PENDING_MAX_AGE_MS = parseInt(process.env.PARSED_PENDING_MAX_AGE_MS || String(24 * 60 * 60 * 1000), 10);
 export const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 export const STRATZ_API_KEY = process.env.STRATZ_API_KEY;
-export const BOT_OWNER_ID = process.env.BOT_OWNER_ID || '78168838910246912';
+export const BOT_OWNER_ID = process.env.BOT_OWNER_ID || '';

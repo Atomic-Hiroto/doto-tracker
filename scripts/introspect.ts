@@ -1,7 +1,8 @@
 import axios from 'axios';
+import 'dotenv/config';
 import fs from 'fs';
 
-const STRATZ_API_KEY = 'REDACTED_STRATZ_KEY';
+const STRATZ_API_KEY = process.env.STRATZ_API_KEY;
 const STRATZ_GQL = 'https://api.stratz.com/graphql';
 
 const introspectionQuery = `
